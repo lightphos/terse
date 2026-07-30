@@ -1,0 +1,14 @@
+// Higher-order functions demo
+fn apply(f: fn, x: i64) -> i64 = f(x)
+
+fn double(n: i64) -> i64 = n * 2
+
+fn add(a: i64, b: i64) -> i64 = a + b
+
+fn main() -> i64 {
+  let d = double
+  let r1 = apply(d, 21)
+  // lambda
+  let r2 = apply(|x| x + 100, 7)
+  r1 + r2
+}

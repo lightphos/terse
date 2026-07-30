@@ -1,0 +1,28 @@
+// Start server
+http.serve(8080) {
+  // Middleware
+  use auth.jwt
+
+  get "/users" => {
+    let users = db.query[User]("SELECT id, name, email FROM users")
+    json(users)
+  }
+
+  get "/users/:id" => |id| {
+    match db.query_one[User]("SELECT * FROM users WHERE id = ?", id) {
+      Some(u) => json(u)
+      None    => status(404)
+    }
+  }
+
+  post "/users" => |body: User| {
+    let id = db.exec("INSERT INTO users (name, email) VALUES (?, ?)", body.name, body.email)
+    status(201) + json({id})
+  }
+
+  // Nested routes, groups, etc.
+  group "/admin" {
+    use require_admin
+    get "/stats" => json(db.query("SELECT count(*) FROM users"))
+  }
+}

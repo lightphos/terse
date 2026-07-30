@@ -1,0 +1,4 @@
+// pure top-level HTTP entry
+http.serve(18082) {
+  get "/hi" => "terse"
+}

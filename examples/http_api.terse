@@ -1,0 +1,12 @@
+use std.http, std.db
+
+type User = {id: i64, name: str}
+
+fn main() -> i64 {
+  db.connect(env("DATABASE_URL"))
+  http.serve(18081) {
+    get "/hello" => "world"
+    get "/users" => json(db.query("SELECT id, name FROM users LIMIT 100"))
+    post "/echo" => |body| json(body)
+  }
+}

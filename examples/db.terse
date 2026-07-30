@@ -1,0 +1,20 @@
+// Connection (usually once at startup)
+db.connect("postgres://user:pass@localhost/db")
+
+// Query returning typed rows
+let users = db.query[User]("SELECT * FROM users WHERE active = ?", true)
+
+// Single row
+let user = db.query_one[User]("SELECT * FROM users WHERE id = ?", 42)
+
+// Execute / insert / update
+let rows = db.exec("UPDATE users SET name = ? WHERE id = ?", "Alice", 42)
+
+// Transactions
+db.tx {
+  db.exec("INSERT ...")
+  db.exec("UPDATE ...")
+}
+
+// Migrations (optional built-in)
+db.migrate("./migrations")

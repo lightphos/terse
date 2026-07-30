@@ -1,0 +1,5 @@
+// go { ... } entry alias
+go {
+  p("via go")
+  99
+}

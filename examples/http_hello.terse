@@ -1,0 +1,9 @@
+// minimal http.serve demo
+fn main() -> i64 {
+  http.serve(18080) {
+    get "/hello" => "world"
+    get "/n" => json(42)
+    get "/xs" => json([1, 2, 3])
+    post "/echo" => |body| body
+  }
+}
