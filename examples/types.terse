@@ -1,0 +1,12 @@
+
+fn f(s: str) {
+    p(s)
+}
+
+go {
+    let s: str = "s"
+    let i = 1
+    p(i)
+    f("hi")
+    p(s)
+}

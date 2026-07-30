@@ -141,7 +141,7 @@ class IfExpr(Expr):
     cond: Expr; then: Expr; els: Optional[Expr]
 @dataclass
 class LetExpr(Expr):
-    name: str; value: Expr; body: Expr
+    name: str; value: Expr; body: Expr; typ: Optional[TypeNode] = None
 @dataclass
 class Lambda(Expr):
     params: List[Param]; body: Expr
@@ -272,9 +272,13 @@ class Parser:
             if self.match(TT.LET):
                 self.adv()
                 name = self.expect(TT.IDENT).v
+                typ = None
+                if self.match(TT.COLON):
+                    self.adv()
+                    typ = self.parse_type()
                 self.expect(TT.ASSIGN)
                 val = self.parse_expr()
-                stmts.append(('let', name, val))
+                stmts.append(('let', name, val, typ))
             else:
                 stmts.append(('expr', self.parse_expr()))
             if self.match(TT.SEMI): self.adv()
@@ -285,8 +289,8 @@ class Parser:
         first = True
         for kind, *rest in reversed(stmts):
             if kind == 'let':
-                name, val = rest
-                body = LetExpr(name, val, body)
+                name, val, typ = rest
+                body = LetExpr(name, val, body, typ=typ)
             else:
                 e = rest[0]
                 if first:
@@ -457,9 +461,13 @@ class Parser:
             elif self.match(TT.LET):
                 self.adv()
                 name = self.expect(TT.IDENT).v
+                typ = None
+                if self.match(TT.COLON):
+                    self.adv()
+                    typ = self.parse_type()
                 self.expect(TT.ASSIGN)
                 val = self.parse_expr()
-                top_stmts.append(('let', name, val))
+                top_stmts.append(('let', name, val, typ))
                 if self.match(TT.SEMI): self.adv()
             else:
                 # top-level expression (side effects + final value)
@@ -476,8 +484,8 @@ class Parser:
                 first = True
                 for kind, *rest in reversed(top_stmts):
                     if kind == 'let':
-                        name, val = rest
-                        body = LetExpr(name, val, body)
+                        name, val, typ = rest
+                        body = LetExpr(name, val, body, typ=typ)
                     else:
                         e = rest[0]
                         if first:
@@ -539,7 +547,7 @@ class TypeChecker:
             if e.els: self.check(e.els)
             return t
         if isinstance(e, LetExpr):
-            t = self.check(e.value)
+            t = e.typ.name if e.typ else self.check(e.value)
             old = self.env.get(e.name)
             self.env[e.name] = t
             r = self.check(e.body)
@@ -618,9 +626,11 @@ static char* str_concat(const char* a, const char* b) {
 }
 static int64_t str_len(const char* s) { return (int64_t)strlen(s); }
 
-static void print_int(int64_t x) { printf("%lld\n", (long long)x); }
-static void print_str(const char* s) { printf("%s\n", s); }
+static int _terse_did_print = 0;
+static void print_int(int64_t x) { _terse_did_print = 1; printf("%lld\n", (long long)x); }
+static void print_str(const char* s) { _terse_did_print = 1; printf("%s\n", s); }
 static void print_list(List L) {
+  _terse_did_print = 1;
   printf("[");
   for (int64_t i = 0; i < L.n; i++) {
     if (i) printf(", ");
@@ -812,6 +822,8 @@ class CodeGen:
             return f"({c} ? {t} : {f})", tt
         if isinstance(e, LetExpr):
             v, vt = self.gen_expr(e.value)
+            if e.typ is not None:
+                vt = e.typ.name
             old = self.env.get(e.name)
             self.env[e.name] = vt
             body, bt = self.gen_expr(e.body)
@@ -904,7 +916,11 @@ class CodeGen:
         ret = f.ret.name if f.ret else 'i64'
         crt = {'fn':'void*','str':'const char*','list':'List'}.get(ret, 'int64_t')
         pstr = ", ".join(pcs) if pcs else "void"
+        old_env = self.env.copy()
+        for p in f.params:
+            self.env[p.name] = p.typ.name if p.typ else 'i64'
         body, _ = self.gen_expr(f.body)
+        self.env = old_env
         self.emit(f"{crt} {cname}({pstr}) {{")
         self.indent += 1
         self.emit(f"return {body};")
@@ -940,7 +956,9 @@ class CodeGen:
                 "",
                 "int main(int argc, char** argv) {",
                 "  int64_t result = terse_main();",
-                "  printf(\"%lld\\n\", (long long)result);",
+                "  /* skip trailing 0 when p/print already produced output */",
+                "  if (!(_terse_did_print && result == 0))",
+                "    printf(\"%lld\\n\", (long long)result);",
                 "  return 0;",
                 "}"
             ]

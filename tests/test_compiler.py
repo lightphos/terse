@@ -84,6 +84,20 @@ class TestControl(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out.strip(), "42")
 
+    def test_typed_let(self):
+        src = textwrap.dedent("""\
+            fn main() -> i64 {
+              let s: str = "s"
+              let i = 1
+              p(s)
+              p(i)
+            }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertIn("s", out)
+        self.assertIn("1", out)
+
 
 class TestHigherOrder(unittest.TestCase):
     def test_apply(self):
@@ -108,7 +122,7 @@ class TestHigherOrder(unittest.TestCase):
 
 class TestStringsLists(unittest.TestCase):
     def test_print_int(self):
-        rc, out, _ = compile_and_run('fn main() -> i64 { p(42); 0 }')
+        rc, out, _ = compile_and_run('fn main() -> i64 { p(42) }')
         self.assertEqual(rc, 0)
         self.assertIn("42", out)
 
@@ -118,7 +132,6 @@ class TestStringsLists(unittest.TestCase):
               let s = "hel" + "lo"
               p(s)
               p(len(s))
-              0
             }
         """)
         rc, out, _ = compile_and_run(src)
@@ -134,7 +147,6 @@ class TestStringsLists(unittest.TestCase):
               p(xs)
               p(len(xs))
               p(xs[1])
-              0
             }
         """)
         rc, out, _ = compile_and_run(src)
@@ -178,7 +190,6 @@ class TestJsonEnv(unittest.TestCase):
         src = textwrap.dedent("""\
             fn main() -> i64 {
               p(json(42))
-              0
             }
         """)
         rc, out, _ = compile_and_run(src)
@@ -189,7 +200,6 @@ class TestJsonEnv(unittest.TestCase):
         src = textwrap.dedent("""\
             fn main() -> i64 {
               p(json([1, 2, 3]))
-              0
             }
         """)
         rc, out, _ = compile_and_run(src)
@@ -218,7 +228,10 @@ class TestExamples(unittest.TestCase):
                 self.assertIn(s, out)
 
     def test_hello(self):
-        self._run_example("hello.terse", expect_exact="42")
+        self._run_example("hello.terse", expect_exact="hello")
+
+    def test_add_fn(self):
+        self._run_example("add.terse", expect_exact="42")
 
     def test_fact(self):
         self._run_example("fact.terse", expect_exact="3628800")

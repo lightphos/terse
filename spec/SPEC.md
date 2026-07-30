@@ -1,19 +1,19 @@
-# Terse Language Specification v0.1
+# Terse Language Specification v0.2
 
 **Terse** is a succinct, statically-typed systems language that compiles to native binaries.  
-It emphasizes minimal syntax, first-class higher-order functions, and built-in support for serving REST APIs and talking to databases.
+It emphasizes minimal syntax, first-class higher-order functions, and a small set of built-in conveniences for I/O, JSON, and lightweight HTTP services.
 
-This document describes the core language and the intended full feature set. The reference compiler (`tersec`) currently implements a solid subset focused on expressions, functions, and higher-order programming; REST and database features are specified and stubbed for future expansion.
+This document describes the language shape and the current reference compiler behavior. The reference compiler (`tersec`) currently implements a working subset focused on expressions, functions, higher-order programming, strings, lists, basic I/O, and a minimal HTTP server runtime; broader features such as full records, pattern matching, and database integration remain future work.
 
 ## 1. Design Goals
 
 - Extremely terse syntax with high signal-to-noise.
 - First-class functions and higher-order programming (pass, return, nest functions).
-- Ahead-of-time compilation to a single static (or mostly static) binary.
-- Zero or near-zero runtime overhead for common patterns.
-- Practical built-ins for HTTP servers and SQL databases.
-- Type inference by default; explicit types when desired.
-- Safe defaults (no nulls by default; Option[T] for absence).
+- Ahead-of-time compilation to a single native binary via a C-based backend.
+- Small runtime footprint and straightforward code generation for portability.
+- Practical built-ins for simple HTTP services and basic data I/O.
+- Type checking and basic inference for the implemented subset.
+- A pragmatic implementation path that favors working examples over a complete feature set.
 
 ## 2. Lexical Structure
 
@@ -134,7 +134,7 @@ let times3 = make_multiplier(3)
 times3(10)   // 30
 ```
 
-## 6. REST APIs (Language Feature)
+## 6. REST APIs (Current Implementation)
 
 ```
 use std.http
@@ -154,12 +154,12 @@ http.serve(port: i64) {
 }
 ```
 
-- Path parameters become function parameters.
-- Request body is automatically decoded from JSON into the annotated type.
-- Return values are automatically JSON-encoded (or status codes via `status(code)`).
-- The `http.serve` block is the main event loop of the process.
+- The current compiler implements a minimal `http.serve` construct for simple route handlers.
+- Route handlers may return strings or JSON values; the runtime responds with text/JSON output.
+- The implementation is intentionally small and does not yet provide full middleware, path-parameter plumbing, or framework-style request decoding.
+- The `http.serve` block is the main event loop of the process for the current runtime.
 
-## 7. Database Access (Language Feature)
+## 7. Database Access (Planned, Not Implemented)
 
 ```
 use std.db
@@ -171,7 +171,7 @@ db.exec(sql: str, args...) -> i64   // rows affected
 db.tx { ... }                   // transaction block
 ```
 
-Types are mapped automatically for common primitives and records. Prepared statements are used under the hood.
+Types are mapped automatically for common primitives and records in the intended design, but the current compiler does not implement database access or prepared statements.
 
 ## 8. Modules & Visibility
 ```
@@ -180,12 +180,12 @@ use mylib.{foo, bar}
 pub fn ...
 ```
 
-## 9. Memory & Safety Model (Target)
+## 9. Memory & Safety Model (Current Implementation)
 
-- Ownership + borrowing (Rust-inspired) for the full language.
-- No garbage collector in the default "systems" mode.
-- Optional ARC mode for rapid prototyping with cycles.
-- Current reference compiler uses a simplified model (mostly value types + function pointers).
+- The full language is still intended to evolve toward an ownership-and-borrowing model.
+- The current reference compiler uses a simplified runtime model with value-based semantics and function pointers.
+- There is no full borrow checker or ownership system in the current implementation.
+- The compiler is currently focused on correctness and portability over advanced safety features.
 
 ## 10. Compilation Model
 
@@ -195,28 +195,32 @@ tersec run main.terse
 tersec check main.terse
 ```
 
-- Frontend: lexer → parser → type checker → desugarer
+- Frontend: lexer → parser → type checker → code generation
 - Backend: currently C code generation + system C compiler (gcc/clang)
-- Future: direct LLVM IR emission for better optimization and cross-compilation.
+- Possible future backend: direct LLVM IR emission for better optimization and cross-compilation.
 
-## 11. Current Compiler Status (v0.1)
+## 11. Current Compiler Status (v0.2)
 
-Supported:
+Implemented:
 - Integer arithmetic and comparisons
 - Booleans and if-expressions
 - Named functions and recursion
 - Higher-order functions (function values / pointers)
-- Simple lambdas (no complex captures yet)
-- let bindings
+- Simple lambdas
+- let bindings and blocks
 - Basic type checking
 - Compilation to native binary via C
+- String literals, string concatenation, length, and indexing
+- Lists, list indexing, and printing
+- Built-in `p` / `print`, `len`, `json`, and a minimal `http.serve` runtime
+- Top-level expressions and a `go { ... }` entry-point alias
 
-Stubbed / Specified but not fully implemented:
-- Strings beyond literals in limited contexts
+Not yet implemented or still limited:
+- Full closures with environment capture
 - Full records / pattern matching
-- Real HTTP server and SQLite integration
-- Closures with environment capture
-- Generics beyond basic function types
+- Generics beyond the current subset
+- Full ownership / borrowing / borrow checking
+- Real database integration
 
 ## 12. Example Programs
 
@@ -270,6 +274,5 @@ fn main() -> i64 {
   print(xs[1])
   let s = "hel" + "lo"
   p(s)  // or print(s)
-  0
 }
 ```

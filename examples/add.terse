@@ -1,0 +1,6 @@
+// Simple arithmetic and main
+fn add() -> i64 = 40 + 2
+
+go {
+    p(add())
+}

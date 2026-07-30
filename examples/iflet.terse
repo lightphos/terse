@@ -1,7 +1,7 @@
 fn abs(x: i64) -> i64 =
   if x < 0 { 0 - x } else { x }
 
-fn main() -> i64 {
+go {
   let a = abs(0 - 42)
   let b = abs(17)
   a + b
