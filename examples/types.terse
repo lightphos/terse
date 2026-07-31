@@ -1,12 +1,12 @@
 
 fn f(s: str) {
-    p(s)
+    pr(s)
 }
 
 go {
     let s: str = "s"
     let i = 1
-    p(i)
+    pr(i)
     f("hi")
-    p(s)
+    pr(s)
 }

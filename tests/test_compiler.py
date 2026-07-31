@@ -89,8 +89,8 @@ class TestControl(unittest.TestCase):
             fn main() -> i64 {
               let s: str = "s"
               let i = 1
-              p(s)
-              p(i)
+              pr(s)
+              pr(i)
             }
         """)
         rc, out, _ = compile_and_run(src)
@@ -120,9 +120,23 @@ class TestHigherOrder(unittest.TestCase):
         self.assertEqual(out.strip(), "107")
 
 
+class TestRecords(unittest.TestCase):
+    def test_rec(self):
+        src = textwrap.dedent("""\
+            rec Point { x: i64, y: i64 }
+            fn main() -> i64 {
+              let p = Point { x: 1, y: 2 }
+              p.x + p.y
+            }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "3")
+
+
 class TestStringsLists(unittest.TestCase):
     def test_print_int(self):
-        rc, out, _ = compile_and_run('fn main() -> i64 { p(42) }')
+        rc, out, _ = compile_and_run('fn main() -> i64 { pr(42) }')
         self.assertEqual(rc, 0)
         self.assertIn("42", out)
 
@@ -130,8 +144,8 @@ class TestStringsLists(unittest.TestCase):
         src = textwrap.dedent("""\
             fn main() -> i64 {
               let s = "hel" + "lo"
-              p(s)
-              p(len(s))
+              pr(s)
+              pr(len(s))
             }
         """)
         rc, out, _ = compile_and_run(src)
@@ -144,9 +158,9 @@ class TestStringsLists(unittest.TestCase):
         src = textwrap.dedent("""\
             fn main() -> i64 {
               let xs = [10, 20, 30]
-              p(xs)
-              p(len(xs))
-              p(xs[1])
+              pr(xs)
+              pr(len(xs))
+              pr(xs[1])
             }
         """)
         rc, out, _ = compile_and_run(src)
@@ -156,7 +170,7 @@ class TestStringsLists(unittest.TestCase):
         self.assertIn("20", out)
 
     def test_print_alias(self):
-        rc, out, _ = compile_and_run('fn main() -> i64 { print("ok"); 0 }')
+        rc, out, _ = compile_and_run('fn main() -> i64 { pr("ok"); 0 }')
         self.assertEqual(rc, 0)
         self.assertIn("ok", out)
 
@@ -168,13 +182,13 @@ class TestEntryPoints(unittest.TestCase):
         self.assertEqual(out.strip(), "1")
 
     def test_toplevel(self):
-        rc, out, _ = compile_and_run("p(7)\n42")
+        rc, out, _ = compile_and_run("pr(7)\n42")
         self.assertEqual(rc, 0)
         self.assertIn("7", out)
         self.assertTrue(out.strip().endswith("42"))
 
     def test_go(self):
-        rc, out, _ = compile_and_run("go { p(3); 9 }")
+        rc, out, _ = compile_and_run("go { pr(3); 9 }")
         self.assertEqual(rc, 0)
         self.assertIn("3", out)
         self.assertTrue(out.strip().endswith("9"))
@@ -189,7 +203,7 @@ class TestJsonEnv(unittest.TestCase):
     def test_json_int(self):
         src = textwrap.dedent("""\
             fn main() -> i64 {
-              p(json(42))
+              pr(json(42))
             }
         """)
         rc, out, _ = compile_and_run(src)
@@ -199,7 +213,7 @@ class TestJsonEnv(unittest.TestCase):
     def test_json_list(self):
         src = textwrap.dedent("""\
             fn main() -> i64 {
-              p(json([1, 2, 3]))
+              pr(json([1, 2, 3]))
             }
         """)
         rc, out, _ = compile_and_run(src)

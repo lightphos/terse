@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Terse Compiler (tersec) v0.3
-Native binary via C. Strings, lists, p/print, http.serve (minimal socket server).
+Terse Compiler (tersec) 0.1beta
+Native binary via C. Strings, lists, pr, http.serve (minimal socket server).
 """
 import sys, os, shutil, subprocess, argparse
 from dataclasses import dataclass, field
@@ -11,7 +11,7 @@ from enum import Enum, auto
 # --- Lexer -----------------------------------------------
 class TT(Enum):
     EOF=auto(); IDENT=auto(); INT=auto(); STRING=auto()
-    FN=auto(); LET=auto(); IF=auto(); ELSE=auto()
+    FN=auto(); LET=auto(); IF=auto(); ELSE=auto(); REC=auto()
     TRUE=auto(); FALSE=auto(); RETURN=auto()
     USE=auto(); TYPE=auto(); GO=auto()
     ARROW=auto(); FATARROW=auto()
@@ -23,7 +23,7 @@ class TT(Enum):
     AND=auto(); OR=auto(); NOT=auto(); PIPE=auto(); COMPOSE=auto()
     UNDERSCORE=auto()
 
-KW = {'fn':TT.FN,'let':TT.LET,'if':TT.IF,'else':TT.ELSE,
+KW = {'fn':TT.FN,'let':TT.LET,'if':TT.IF,'else':TT.ELSE,'rec':TT.REC,
       'true':TT.TRUE,'false':TT.FALSE,'return':TT.RETURN,
       'use':TT.USE,'type':TT.TYPE,'go':TT.GO}
 
@@ -167,8 +167,17 @@ class HttpServe(Expr):
 class FnDecl:
     name: str; params: List[Param]; ret: Optional[TypeNode]; body: Expr
 @dataclass
+class RecDecl:
+    name: str
+    fields: List[Tuple[str, TypeNode]]
+@dataclass
+class RecordLit(Expr):
+    ctor: Expr
+    fields: List[Tuple[str, Expr]]
+@dataclass
 class Program:
     funcs: List[FnDecl]
+    recs: List[RecDecl]
     toplevel: Optional[Expr] = None  # top-level body or go body
 
 # --- Parser -----------------------------------------------
@@ -336,6 +345,18 @@ class Parser:
         self.expect(TT.RBRACE)
         return routes
 
+    def parse_record_lit(self, ctor: Expr):
+        self.expect(TT.LBRACE)
+        fields = []
+        while not self.match(TT.RBRACE):
+            name = self.expect(TT.IDENT).v
+            self.expect(TT.COLON)
+            value = self.parse_expr()
+            fields.append((name, value))
+            if self.match(TT.COMMA): self.adv()
+        self.expect(TT.RBRACE)
+        return RecordLit(ctor, fields)
+
     def parse_postfix(self):
         e = self.parse_primary()
         while True:
@@ -343,6 +364,11 @@ class Parser:
                 self.adv()
                 field = self.expect(TT.IDENT).v
                 e = Member(e, field)
+            elif self.match(TT.LBRACE):
+                if isinstance(e, (Var, Member)):
+                    e = self.parse_record_lit(e)
+                else:
+                    break
             elif self.match(TT.LPAREN):
                 self.adv()
                 args = []
@@ -426,6 +452,20 @@ class Parser:
         self.parse_type()
         if self.match(TT.SEMI): self.adv()
 
+    def parse_rec(self):
+        self.expect(TT.REC)
+        name = self.expect(TT.IDENT).v
+        self.expect(TT.LBRACE)
+        fields = []
+        while not self.match(TT.RBRACE):
+            field_name = self.expect(TT.IDENT).v
+            self.expect(TT.COLON)
+            field_type = self.parse_type()
+            fields.append((field_name, field_type))
+            if self.match(TT.COMMA): self.adv()
+        self.expect(TT.RBRACE)
+        return RecDecl(name, fields)
+
     def parse_fn(self):
         self.expect(TT.FN)
         name = self.expect(TT.IDENT).v
@@ -445,11 +485,14 @@ class Parser:
 
     def parse_program(self):
         fs = []
+        recs = []
         top_stmts = []
         go_body = None
         while not self.match(TT.EOF):
             if self.match(TT.USE):
                 self.skip_use()
+            elif self.match(TT.REC):
+                recs.append(self.parse_rec())
             elif self.match(TT.TYPE):
                 self.skip_type()
             elif self.match(TT.FN):
@@ -496,7 +539,7 @@ class Parser:
                 toplevel = body
             elif not fs:
                 toplevel = IntLit(0)
-        return Program(fs, toplevel)
+        return Program(fs, recs, toplevel)
 
 # --- Type check (light) -----------------------------------
 class TypeChecker:
@@ -504,7 +547,9 @@ class TypeChecker:
         self.funcs = {}
         self.env = {}
         self.errors = []
+        self.recs = {}
     def check_program(self, prog):
+        self.recs = {r.name: {n: t.name if t else 'i64' for n, t in r.fields} for r in prog.recs}
         for f in prog.funcs:
             ats = [p.typ.name if p.typ else 'i64' for p in f.params]
             self.funcs[f.name] = (ats, f.ret.name if f.ret else 'i64')
@@ -522,14 +567,21 @@ class TypeChecker:
         if isinstance(e, ListLit):
             for it in e.items: self.check(it)
             return 'list'
+        if isinstance(e, RecordLit):
+            for _, v in e.fields: self.check(v)
+            if isinstance(e.ctor, Var) and e.ctor.name in self.recs:
+                return e.ctor.name
+            return 'i64'
         if isinstance(e, Var):
             if e.name in self.env: return self.env[e.name]
-            if e.name in self.funcs or e.name in ('p','print','len','json','env','str'): return 'fn'
+            if e.name in self.funcs or e.name in ('pr','len','json','env','str'): return 'fn'
             if e.name in ('http','db'): return 'mod'
             return 'i64'
         if isinstance(e, Member):
-            self.check(e.obj)
-            return 'fn'
+            base = self.check(e.obj)
+            if base in self.recs:
+                return self.recs[base].get(e.field, 'i64')
+            return 'i64'
         if isinstance(e, Binary):
             self.check(e.left); self.check(e.right)
             return 'str' if e.op == '+' else ('bool' if e.op in '==!=<=>=<>&&||' else 'i64')
@@ -537,7 +589,7 @@ class TypeChecker:
         if isinstance(e, Call):
             self.check(e.func)
             for a in e.args: self.check(a)
-            if isinstance(e.func, Var) and e.func.name in ('p','print','json','env'): return 'str' if e.func.name in ('json','env') else 'i64'
+            if isinstance(e.func, Var) and e.func.name in ('pr','json','env'): return 'str' if e.func.name in ('json','env') else 'i64'
             if isinstance(e.func, Var) and e.func.name == 'len': return 'i64'
             return 'i64'
         if isinstance(e, Index):
@@ -734,6 +786,7 @@ class CodeGen:
         self.tmp = 0
         self.env = {}
         self.route_handlers = []  # generated C funcs for routes
+        self.record_field_types = {}
 
     def emit(self, s=""):
         self.lines.append("  " * self.indent + s)
@@ -741,6 +794,12 @@ class CodeGen:
     def fresh(self):
         self.tmp += 1
         return f"_t{self.tmp}"
+
+    def type_name(self, typ):
+        return typ.name if typ else 'i64'
+
+    def c_type(self, t):
+        return {'fn':'void*','str':'const char*','list':'List','i64':'int64_t','i32':'int32_t','u64':'uint64_t','bool':'bool','f64':'double'}.get(t, t)
 
     def gen_expr(self, e) -> Tuple[str, str]:
         if isinstance(e, IntLit):
@@ -750,13 +809,21 @@ class CodeGen:
         if isinstance(e, StrLit):
             s = e.value.replace('\\','\\\\').replace('"','\\"').replace('\n','\\n').replace('\t','\\t')
             return f'"{s}"', "str"
+        if isinstance(e, RecordLit):
+            rec_name = e.ctor.name if isinstance(e.ctor, Var) else 'record'
+            parts = []
+            for name, val in e.fields:
+                v, _ = self.gen_expr(val)
+                parts.append(f".{name} = {v}")
+            return f"(({rec_name}){{ {', '.join(parts)} }})", rec_name
         if isinstance(e, Var):
             if e.name in self.known:
                 return f"(void*){self.known[e.name]}", "fn"
             return e.name, self.env.get(e.name, "i64")
         if isinstance(e, Member):
-            # db.query / http.serve handled elsewhere; bare member - stub
-            return f'/* member {e.field} */ NULL', "fn"
+            base, btype = self.gen_expr(e.obj)
+            field_type = self.record_field_types.get(btype, {}).get(e.field, 'i64')
+            return f"(({base}).{e.field})", field_type
         if isinstance(e, Binary):
             l, lt = self.gen_expr(e.left)
             r, rt = self.gen_expr(e.right)
@@ -783,7 +850,7 @@ class CodeGen:
             return f"list_get({c}, {i})", "i64"
         if isinstance(e, Call):
             # builtins
-            if isinstance(e.func, Var) and e.func.name in ('p', 'print'):
+            if isinstance(e.func, Var) and e.func.name == 'pr':
                 a, at = self.gen_expr(e.args[0])
                 if at == 'str': return f"(print_str({a}), INT64_C(0))", "i64"
                 if at == 'list': return f"(print_list({a}), INT64_C(0))", "i64"
@@ -823,7 +890,7 @@ class CodeGen:
         if isinstance(e, LetExpr):
             v, vt = self.gen_expr(e.value)
             if e.typ is not None:
-                vt = e.typ.name
+                vt = self.type_name(e.typ)
             old = self.env.get(e.name)
             self.env[e.name] = vt
             body, bt = self.gen_expr(e.body)
@@ -831,10 +898,7 @@ class CodeGen:
             else: self.env.pop(e.name, None)
             if e.name == "_":
                 return f"({{ (void)({v}); {body}; }})", bt
-            if vt == 'str': decl = f"const char* {e.name} = {v}"
-            elif vt == 'list': decl = f"List {e.name} = {v}"
-            elif vt == 'fn': decl = f"void* {e.name} = {v}"
-            else: decl = f"int64_t {e.name} = {v}"
+            decl = f"{self.c_type(vt)} {e.name} = {v}"
             return f"({{ {decl}; {body}; }})", bt
         if isinstance(e, Lambda):
             self.lam_n += 1
@@ -842,17 +906,16 @@ class CodeGen:
             # HTTP body handlers often take str body
             ps_c = []
             for p in e.params:
-                tn = p.typ.name if p.typ else 'i64'
-                if tn == 'str': ps_c.append(f"const char* {p.name}")
-                else: ps_c.append(f"int64_t {p.name}")
+                tn = self.type_name(p.typ) if p.typ else 'i64'
+                ps_c.append(f"{self.c_type(tn)} {p.name}")
             ps = ", ".join(ps_c) or "void"
             # save env params
             old_env = self.env.copy()
             for p in e.params:
-                self.env[p.name] = p.typ.name if p.typ else 'i64'
+                self.env[p.name] = self.type_name(p.typ) if p.typ else 'i64'
             body, bt = self.gen_expr(e.body)
             self.env = old_env
-            ret_c = 'const char*' if bt == 'str' else 'int64_t'
+            ret_c = self.c_type(bt)
             self.extra.append(f"static {ret_c} {lname}({ps}) {{\n  return {body};\n}}\n")
             return f"(void*){lname}", "fn"
         if isinstance(e, HttpServe):
@@ -908,17 +971,14 @@ class CodeGen:
         cname = self.known[f.name]
         pcs = []
         for p in f.params:
-            tn = p.typ.name if p.typ else 'i64'
-            if tn == 'fn': pcs.append(f"void* {p.name}")
-            elif tn == 'str': pcs.append(f"const char* {p.name}")
-            elif tn == 'list': pcs.append(f"List {p.name}")
-            else: pcs.append(f"int64_t {p.name}")
-        ret = f.ret.name if f.ret else 'i64'
-        crt = {'fn':'void*','str':'const char*','list':'List'}.get(ret, 'int64_t')
+            tn = self.type_name(p.typ) if p.typ else 'i64'
+            pcs.append(f"{self.c_type(tn)} {p.name}")
+        ret = self.type_name(f.ret) if f.ret else 'i64'
+        crt = self.c_type(ret)
         pstr = ", ".join(pcs) if pcs else "void"
         old_env = self.env.copy()
         for p in f.params:
-            self.env[p.name] = p.typ.name if p.typ else 'i64'
+            self.env[p.name] = self.type_name(p.typ) if p.typ else 'i64'
         body, _ = self.gen_expr(f.body)
         self.env = old_env
         self.emit(f"{crt} {cname}({pstr}) {{")
@@ -934,15 +994,25 @@ class CodeGen:
             prog.funcs = list(prog.funcs) + [FnDecl('main', [], TypeNode('i64'), prog.toplevel)]
         for f in prog.funcs:
             self.known[f.name] = "terse_" + f.name
+        self.record_field_types = {r.name: {n: self.type_name(t) for n, t in r.fields} for r in prog.recs}
         out = [RUNTIME, ""]
+        for rec in prog.recs:
+            fields = []
+            for name, typ in rec.fields:
+                fields.append(f"  {self.c_type(self.type_name(typ))} {name};")
+            if fields:
+                out.append("typedef struct {")
+                out.extend(fields)
+                out.append(f"}} {rec.name};")
+                out.append("")
         for f in prog.funcs:
             cname = self.known[f.name]
             pcs = []
             for p in f.params:
-                tn = p.typ.name if p.typ else 'i64'
-                pcs.append({'fn':'void*','str':'const char*','list':'List'}.get(tn, 'int64_t'))
-            ret = f.ret.name if f.ret else 'i64'
-            crt = {'fn':'void*','str':'const char*','list':'List'}.get(ret, 'int64_t')
+                tn = self.type_name(p.typ) if p.typ else 'i64'
+                pcs.append(self.c_type(tn))
+            ret = self.type_name(f.ret) if f.ret else 'i64'
+            crt = self.c_type(ret)
             pstr = ", ".join(pcs) if pcs else "void"
             out.append(f"{crt} {cname}({pstr});")
         out.append("")
@@ -956,7 +1026,7 @@ class CodeGen:
                 "",
                 "int main(int argc, char** argv) {",
                 "  int64_t result = terse_main();",
-                "  /* skip trailing 0 when p/print already produced output */",
+                "  /* skip trailing 0 when pr already produced output */",
                 "  if (!(_terse_did_print && result == 0))",
                 "    printf(\"%lld\\n\", (long long)result);",
                 "  return 0;",

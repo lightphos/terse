@@ -1,4 +1,4 @@
 
 go {
-   p(env("MYENV"))
+   pr(env("MYENV"))
 }

@@ -1,5 +1,5 @@
 // go { ... } entry alias
 go {
-  p("via go")
+  pr("via go")
   99
 }

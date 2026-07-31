@@ -1,19 +1,18 @@
-// strings, lists, p (print alias), len — terse I/O demo
+// strings, lists, pr, len — terse I/O demo
 
 fn main() -> i64 {
-  p("hello terse")
-  p(40 + 2)
+  pr("hello terse")
+  pr(40 + 2)
 
   let xs = [10, 20, 30, 40]
-  p(xs)
-  p(len(xs))
-  p(xs[2])
+  pr(xs)
+  pr(len(xs))
+  pr(xs[2])
 
   let s = "hel" + "lo"
-  p(s)
-  p(len(s))
+  pr(s)
+  pr(len(s))
 
-  // print still works as alias
-  print("alias ok")
+  pr("alias ok")
 
 }

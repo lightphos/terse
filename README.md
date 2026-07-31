@@ -20,7 +20,7 @@ python3 compiler/tersec.py check examples/hof.terse
 
 See [docs/SPEC.md](docs/SPEC.md) for the full language specification.
 
-## Compiler Status (v0.1)
+## Compiler Status (0.1beta)
 
 The reference compiler (`compiler/tersec.py`) implements:
 
@@ -71,9 +71,9 @@ Future backends: direct LLVM IR.
 MIT (for this reference implementation)
 
 
-## v0.2 features
+## 0.1beta features
 
 - Strings: `"hi"`, `"a" + "b"`, `len(s)`, `s[i]`
-- Lists: `[1, 2, 3]`, `len(xs)`, `xs[i]`, `print(xs)`
-- `print(x)` for ints, strings, lists
+- Lists: `[1, 2, 3]`, `len(xs)`, `xs[i]`, `pr(xs)`
+- `pr(x)` for ints, strings, lists
 - See `examples/io.terse`

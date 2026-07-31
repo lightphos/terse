@@ -1,4 +1,4 @@
-# Terse Language Specification v0.2
+# Terse Language Specification 0.1-beta
 
 **Terse** is a succinct, statically-typed systems language that compiles to native binaries.  
 It emphasizes minimal syntax, first-class higher-order functions, and a small set of built-in conveniences for I/O, JSON, and lightweight HTTP services.
@@ -29,7 +29,7 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
 Keywords (reserved):  
-`fn`, `let`, `type`, `if`, `else`, `match`, `use`, `return`, `true`, `false`, `mut`, `struct`, `enum`, `impl`, `self`, `pub`, `as`, `in`, `for`, `while`, `loop`, `break`, `continue`, `None`, `Some`, `Ok`, `Err`, `get`, `post`, `put`, `delete`, `http`, `db`, `json`, `status`
+`fn`, `let`, `type`, `if`, `else`, `match`, `use`, `return`, `true`, `false`, `mut`, `struct`, `enum`, `impl`, `self`, `pub`, `as`, `in`, `for`, `while`, `loop`, `break`, `continue`, `None`, `Some`, `Ok`, `Err`, `get`, `post`, `pr`, `put`, `go`, `env`, `delete`, `http`, `db`, `json`, `status`
 
 ### Literals
 - Integer: `42`, `-7`, `0xFF` (i64 by default)
@@ -52,7 +52,7 @@ Function: `|params| body` (lambda), `>>` (compose), `_` (placeholder for partial
 
 ### Composite
 - Function types: `fn(T1, T2) -> R`
-- Records / structs: `{field: Type, ...}`
+- Records / structs: `rec {field: Type, ...}`
 - Option: `Option[T]` (Some(v) | None)
 - Result: `Result[T, E]`
 - Lists: `[T]`
@@ -133,8 +133,54 @@ fn make_multiplier(factor: i64) -> fn(i64) -> i64 {
 let times3 = make_multiplier(3)
 times3(10)   // 30
 ```
+## 6. Strings, Lists, Print, Basic I/O
 
-## 6. REST APIs (Current Implementation)
+### Strings
+```
+"hello"
+"hel" + "lo"          // concat
+len(s)                // length
+s[i]                  // byte/char code at index (i64)
+pr(s)
+```
+
+### Lists (of i64)
+```
+[1, 2, 3]
+len(xs)
+xs[i]
+pr(xs)             // prints [1, 2, 3]
+```
+
+Type annotation: `list` or `[i64]` in signatures when needed.
+
+### Printing
+```
+pr(42)
+pr("hi")
+pr([1, 2])
+pr(x)
+```
+`pr` is a builtin; returns `0`.
+
+### Basic I/O
+- `pr` → stdout (ints, strings, lists)
+- No file I/O or stdin yet (next)
+
+### Example
+```
+fn main() -> i64 {
+  pr("hello terse")
+  let xs = [10, 20, 30]
+  pr(xs)
+  pr(len(xs))
+  pr(xs[1])
+  let s = "hel" + "lo"
+  pr(s)
+}
+```
+
+## 7. REST APIs
 
 ```
 use std.http
@@ -159,7 +205,7 @@ http.serve(port: i64) {
 - The implementation is intentionally small and does not yet provide full middleware, path-parameter plumbing, or framework-style request decoding.
 - The `http.serve` block is the main event loop of the process for the current runtime.
 
-## 7. Database Access (Planned, Not Implemented)
+## 8. Database Access (Planned, Not Implemented)
 
 ```
 use std.db
@@ -173,21 +219,21 @@ db.tx { ... }                   // transaction block
 
 Types are mapped automatically for common primitives and records in the intended design, but the current compiler does not implement database access or prepared statements.
 
-## 8. Modules & Visibility
+## 9. Modules & Visibility
 ```
 use std.http
 use mylib.{foo, bar}
 pub fn ...
 ```
 
-## 9. Memory & Safety Model (Current Implementation)
+## 10. Memory & Safety Model (Current Implementation)
 
 - The full language is still intended to evolve toward an ownership-and-borrowing model.
 - The current reference compiler uses a simplified runtime model with value-based semantics and function pointers.
 - There is no full borrow checker or ownership system in the current implementation.
 - The compiler is currently focused on correctness and portability over advanced safety features.
 
-## 10. Compilation Model
+## 11. Compilation Model
 
 ```
 tersec build main.terse -o app
@@ -199,7 +245,7 @@ tersec check main.terse
 - Backend: currently C code generation + system C compiler (gcc/clang)
 - Possible future backend: direct LLVM IR emission for better optimization and cross-compilation.
 
-## 11. Current Compiler Status (v0.2)
+## 12. Current Compiler Status (0.1beta)
 
 Implemented:
 - Integer arithmetic and comparisons
@@ -212,67 +258,18 @@ Implemented:
 - Compilation to native binary via C
 - String literals, string concatenation, length, and indexing
 - Lists, list indexing, and printing
-- Built-in `p` / `print`, `len`, `json`, and a minimal `http.serve` runtime
+- Built-in `pr`, `len`, `json`, and a minimal `http.serve` runtime
 - Top-level expressions and a `go { ... }` entry-point alias
 
 Not yet implemented or still limited:
 - Full closures with environment capture
-- Full records / pattern matching
+- Tiny structs / records and basic pattern matching
 - Generics beyond the current subset
 - Full ownership / borrowing / borrow checking
 - Real database integration
 
-## 12. Example Programs
+## 13. Example Programs
 
 See `examples/` directory.
 
----
 
-*This specification is a living document for the Terse language project.*
-
-## 13. v0.2 Additions — Strings, Lists, Print, Basic I/O
-
-### Strings
-```
-"hello"
-"hel" + "lo"          // concat
-len(s)                // length
-s[i]                  // byte/char code at index (i64)
-p(s)  // or print(s)
-```
-
-### Lists (of i64)
-```
-[1, 2, 3]
-len(xs)
-xs[i]
-p(xs)             // prints [1, 2, 3]
-```
-
-Type annotation: `list` or `[i64]` in signatures when needed.
-
-### Printing
-```
-p(42)
-p("hi")
-p([1, 2])
-print(x)   // alias of p
-```
-`p` (and alias `print`) is a builtin; returns `0`.
-
-### Basic I/O
-- `print` → stdout (ints, strings, lists)
-- No file I/O or stdin yet (next)
-
-### Example
-```
-fn main() -> i64 {
-  p("hello terse")
-  let xs = [10, 20, 30]
-  p(xs)
-  print(len(xs))
-  print(xs[1])
-  let s = "hel" + "lo"
-  p(s)  // or print(s)
-}
-```
