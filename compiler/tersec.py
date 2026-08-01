@@ -11,7 +11,7 @@ from enum import Enum, auto
 # --- Lexer -----------------------------------------------
 class TT(Enum):
     EOF=auto(); IDENT=auto(); INT=auto(); STRING=auto()
-    FN=auto(); LET=auto(); IF=auto(); ELSE=auto(); REC=auto()
+    FN=auto(); LET=auto(); IF=auto(); ELSE=auto(); REC=auto(); LP=auto()
     TRUE=auto(); FALSE=auto(); RETURN=auto(); RET=auto()
     USE=auto(); TYPE=auto(); GO=auto()
     ARROW=auto(); FATARROW=auto()
@@ -23,7 +23,7 @@ class TT(Enum):
     AND=auto(); OR=auto(); NOT=auto(); PIPE=auto(); COMPOSE=auto()
     UNDERSCORE=auto()
 
-KW = {'fn':TT.FN,'let':TT.LET,'if':TT.IF,'else':TT.ELSE,'rec':TT.REC,
+KW = {'fn':TT.FN,'let':TT.LET,'if':TT.IF,'else':TT.ELSE,'rec':TT.REC,'lp':TT.LP,
       'true':TT.TRUE,'false':TT.FALSE,'return':TT.RETURN,'ret':TT.RET,
       'use':TT.USE,'type':TT.TYPE,'go':TT.GO}
 
@@ -149,6 +149,12 @@ class RetExpr(Expr):
 class Lambda(Expr):
     params: List[Param]; body: Expr
 @dataclass
+class LoopExpr(Expr):
+    init: Optional[Expr]
+    cond: Expr
+    post: Optional[Expr]
+    body: Expr
+@dataclass
 class Block(Expr):
     stmts: List[Expr]
 @dataclass
@@ -271,6 +277,7 @@ class Parser:
         if self.match(TT.PIPE): return self.parse_lambda()
         if self.match(TT.LBRACE): return self.parse_block()
         if self.match(TT.IF): return self.parse_if()
+        if self.match(TT.LP): return self.parse_loop()
         raise SyntaxError(f"unexpected {t.t.name} ('{t.v}') at {t.line}:{t.col}")
 
     def parse_lambda(self):
@@ -284,6 +291,40 @@ class Parser:
             if self.match(TT.COMMA): self.adv()
         self.expect(TT.PIPE)
         return Lambda(ps, self.parse_expr())
+
+    def parse_loop(self):
+        self.expect(TT.LP)
+        init = None
+        cond = None
+        post = None
+
+        if self.match(TT.LET):
+            self.adv()
+            name = self.expect(TT.IDENT).v
+            typ = None
+            if self.match(TT.COLON):
+                self.adv(); typ = self.parse_type()
+            self.expect(TT.ASSIGN)
+            val = self.parse_expr()
+            init = LetExpr(name, val, IntLit(0), typ=typ)
+        else:
+            init = self.parse_expr()
+
+        if self.match(TT.SEMI):
+            self.adv()
+            if self.match(TT.SEMI):
+                cond = BoolLit(True)
+            else:
+                cond = self.parse_expr()
+            self.expect(TT.SEMI)
+            if not self.match(TT.LBRACE):
+                post = self.parse_expr()
+        else:
+            cond = init
+            init = None
+
+        body = self.parse_expr()
+        return LoopExpr(init, cond, post, body)
 
     def parse_block(self):
         self.expect(TT.LBRACE)
@@ -443,8 +484,16 @@ class Parser:
             self.adv(); l = Binary('||', l, self.parse_and())
         return l
 
+    def parse_assign(self):
+        l = self.parse_or()
+        if self.match(TT.ASSIGN):
+            self.adv()
+            r = self.parse_assign()
+            return Binary('=', l, r)
+        return l
+
     def parse_expr(self):
-        return self.parse_or()
+        return self.parse_assign()
 
     def skip_use(self):
         # use std.http, std.db
@@ -616,6 +665,21 @@ class TypeChecker:
             self.check(e.cond); t=self.check(e.then)
             if e.els: self.check(e.els)
             return t
+        if isinstance(e, LoopExpr):
+            old_env = self.env.copy()
+            if e.init is not None:
+                if isinstance(e.init, LetExpr):
+                    t = e.init.typ.name if e.init.typ else self.check(e.init.value)
+                    old = self.env.get(e.init.name)
+                    self.env[e.init.name] = t
+                else:
+                    self.check(e.init)
+            self.check(e.cond)
+            self.check(e.body)
+            if e.post is not None:
+                self.check(e.post)
+            self.env = old_env
+            return 'i64'
         if isinstance(e, LetExpr):
             t = e.typ.name if e.typ else self.check(e.value)
             old = self.env.get(e.name)
@@ -938,6 +1002,36 @@ class CodeGen:
             t, tt = self.gen_expr(e.then)
             f, _ = self.gen_expr(e.els) if e.els else ("INT64_C(0)", "i64")
             return f"({c} ? {t} : {f})", tt
+        if isinstance(e, LoopExpr):
+            old_env = self.env.copy()
+            init_decl = None
+            init_stmt = None
+            if e.init is not None:
+                if isinstance(e.init, LetExpr):
+                    v, vt = self.gen_expr(e.init.value)
+                    if e.init.typ is not None:
+                        vt = self.type_name(e.init.typ)
+                    init_decl = f"{self.c_type(vt)} {e.init.name} = {v};"
+                    self.env[e.init.name] = vt
+                elif isinstance(e.init, Binary) and isinstance(e.init.left, Var) and e.init.left.name not in self.env:
+                    right, _ = self.gen_expr(e.init.right)
+                    init_decl = f"int64_t {e.init.left.name} = {right};"
+                    self.env[e.init.left.name] = 'i64'
+                else:
+                    init_e, _ = self.gen_expr(e.init)
+                    init_stmt = f"(void)({init_e});"
+            cond_c, _ = self.gen_expr(e.cond)
+            body_c, _ = self.gen_expr(e.body)
+            post_c = ''
+            if e.post is not None:
+                post_e, _ = self.gen_expr(e.post)
+                post_c = f"(void)({post_e});"
+            self.env = old_env
+            if init_decl is not None:
+                return (f"({{ {init_decl} while({cond_c}) {{ (void)({body_c}); {post_c} }} INT64_C(0); }})", "i64")
+            if init_stmt is not None:
+                return (f"({{ {init_stmt} while({cond_c}) {{ (void)({body_c}); {post_c} }} INT64_C(0); }})", "i64")
+            return (f"({{ while({cond_c}) {{ (void)({body_c}); {post_c} }} INT64_C(0); }})", "i64")
         if isinstance(e, LetExpr):
             v, vt = self.gen_expr(e.value)
             if e.typ is not None:

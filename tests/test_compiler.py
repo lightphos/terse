@@ -119,6 +119,36 @@ class TestControl(unittest.TestCase):
         self.assertIn("s", out)
         self.assertIn("1", out)
 
+    def test_loop_while(self):
+        src = textwrap.dedent("""\
+            fn main() -> i64 {
+              let i = 0
+              let sum = 0
+              lp i < 5 {
+                sum = sum + i
+                i = i + 1
+              }
+              sum
+            }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "10")
+
+    def test_loop_for(self):
+        src = textwrap.dedent("""\
+            fn main() -> i64 {
+              let sum = 0
+              lp i = 0; i < 10; i = i + 1 {
+                sum = sum + i
+              }
+              sum
+            }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "45")
+
 
 class TestHigherOrder(unittest.TestCase):
     def test_apply(self):

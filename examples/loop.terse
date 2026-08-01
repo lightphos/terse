@@ -1,0 +1,27 @@
+// loop.terse
+// Demonstrates while-style and for-style lp loops.
+
+fn sum_while() -> i64 {
+  let i = 0
+  let sum = 0
+  lp i < 5 {
+    sum = sum + i
+    // pr(i + ": " + sum)
+    i = i + 1
+  }
+  sum
+}
+
+fn sum_for() -> i64 {
+  let sum = 0
+  lp i = 0; i < 10; i = i + 1 {
+    sum = sum + i
+    // pr(i + ": " + sum)
+  }
+  sum
+}
+
+fn main() -> i64 {
+  pr("sum_while = " + sum_while())
+  pr("sum_for = " + sum_for())
+}

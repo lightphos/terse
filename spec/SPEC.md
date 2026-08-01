@@ -29,7 +29,7 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
 Keywords (reserved):  
-`fn`, `let`, `type`, `if`, `else`, `match`, `use`, `return`, `ret`, `true`, `false`, `mut`, `struct`, `enum`, `impl`, `self`, `pub`, `as`, `in`, `for`, `while`, `loop`, `break`, `continue`, `None`, `Some`, `Ok`, `Err`, `get`, `post`, `pr`, `put`, `go`, `env`, `delete`, `http`, `db`, `json`, `status`
+`fn`, `let`, `type`, `if`, `else`, `match`, `use`, `return`, `ret`, `true`, `false`, `mut`, `struct`, `enum`, `impl`, `self`, `pub`, `as`, `in`, `for`, `while`, `loop`, `lp`, `break`, `continue`, `None`, `Some`, `Ok`, `Err`, `get`, `post`, `pr`, `put`, `go`, `env`, `delete`, `http`, `db`, `json`, `status`
 
 ### Literals
 - Integer: `42`, `-7`, `0xFF` (i64 by default)
@@ -106,7 +106,13 @@ match expr {
   pat2 if guard => result2
   _ => default
 }
+
 ```
+lp cond { body }
+lp init; cond; post { body }
+```
+
+`lp` repeats its body while the condition remains true. Without semicolons, it behaves like a while loop; with `init; cond; post` it behaves like a for loop. It returns `0` when the loop exits normally.
 
 `ret` exits the current function or block immediately. When followed by an expression, it returns that value; otherwise, it returns the default integer value `0`.
 
