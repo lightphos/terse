@@ -72,6 +72,27 @@ class TestControl(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out.strip(), "10")
 
+    def test_ret_without_value(self):
+        src = textwrap.dedent("""\
+            fn main() -> i64 {
+              ret
+            }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "0")
+
+    def test_ret_with_value(self):
+        src = textwrap.dedent("""\
+            fn main() -> i64 {
+              let x = 10
+              ret x + 2
+            }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "12")
+
     def test_let(self):
         src = textwrap.dedent("""\
             fn main() -> i64 {
@@ -153,6 +174,17 @@ class TestStringsLists(unittest.TestCase):
         lines = [ln for ln in out.strip().splitlines() if ln]
         self.assertIn("hello", lines)
         self.assertIn("5", lines)
+
+    def test_pr_mixed_string_concat(self):
+        src = textwrap.dedent("""\
+            fn main() -> i64 {
+              let a = 7
+              pr("> " + a)
+            }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertIn("> 7", out)
 
     def test_list(self):
         src = textwrap.dedent("""\

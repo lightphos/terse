@@ -1,0 +1,13 @@
+// Recursion
+fn fib(n: i64, a: i64, b: i64) -> i64 {
+  pr("> " + a)
+  if (n <= 0) {
+    ret a
+  }
+  fib(n - 1, b, a + b)
+}
+
+
+go {
+ fib(7, 0, 1)
+}

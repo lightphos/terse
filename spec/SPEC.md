@@ -29,7 +29,7 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
 Keywords (reserved):  
-`fn`, `let`, `type`, `if`, `else`, `match`, `use`, `return`, `true`, `false`, `mut`, `struct`, `enum`, `impl`, `self`, `pub`, `as`, `in`, `for`, `while`, `loop`, `break`, `continue`, `None`, `Some`, `Ok`, `Err`, `get`, `post`, `pr`, `put`, `go`, `env`, `delete`, `http`, `db`, `json`, `status`
+`fn`, `let`, `type`, `if`, `else`, `match`, `use`, `return`, `ret`, `true`, `false`, `mut`, `struct`, `enum`, `impl`, `self`, `pub`, `as`, `in`, `for`, `while`, `loop`, `break`, `continue`, `None`, `Some`, `Ok`, `Err`, `get`, `post`, `pr`, `put`, `go`, `env`, `delete`, `http`, `db`, `json`, `status`
 
 ### Literals
 - Integer: `42`, `-7`, `0xFF` (i64 by default)
@@ -99,12 +99,16 @@ let mut name = expr
 ### Control Flow
 ```
 if cond { then } else { else }
+ret
+ret expr
 match expr {
   pat1 => result1
   pat2 if guard => result2
   _ => default
 }
 ```
+
+`ret` exits the current function or block immediately. When followed by an expression, it returns that value; otherwise, it returns the default integer value `0`.
 
 ### Function Application & Composition
 ```

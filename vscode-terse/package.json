@@ -1,0 +1,78 @@
+{
+  "name": "vscode-terse",
+  "displayName": "Terse Compiler",
+  "description": "Compile and run Terse files using compiler/tersec.py",
+  "version": "0.0.1",
+  "publisher": "your-name",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:terse.compile",
+    "onCommand:terse.run",
+    "onLanguage:terse"
+  ],
+  "main": "./out/extension.js",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-name/vscode-terse"
+  },
+  "homepage": "https://github.com/your-name/vscode-terse",
+  "keywords": ["terse","compiler","language","terse-lang"],
+  "license": "MIT",
+  "contributes": {
+    "commands": [
+      {
+        "command": "terse.compile",
+        "title": "Terse: Compile"
+      },
+      {
+        "command": "terse.run",
+        "title": "Terse: Run"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "terse.compile",
+        "key": "ctrl+alt+b",
+        "when": "editorTextFocus && resourceExtname == .terse"
+      },
+      {
+        "command": "terse.run",
+        "key": "ctrl+alt+r",
+        "when": "editorTextFocus && resourceExtname == .terse"
+      }
+    ],
+    "languages": [
+      {
+        "id": "terse",
+        "extensions": [".terse"],
+        "aliases": ["Terse", "terse"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "terse",
+        "scopeName": "source.terse",
+        "path": "./syntaxes/terse.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "npx tsc -p ./"
+    ,"package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/vscode": "^1.90.0",
+    "@types/node": "^20.0.0",
+    "@vscode/test-electron": "^2.4.1"
+  }
+}

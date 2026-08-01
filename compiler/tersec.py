@@ -12,7 +12,7 @@ from enum import Enum, auto
 class TT(Enum):
     EOF=auto(); IDENT=auto(); INT=auto(); STRING=auto()
     FN=auto(); LET=auto(); IF=auto(); ELSE=auto(); REC=auto()
-    TRUE=auto(); FALSE=auto(); RETURN=auto()
+    TRUE=auto(); FALSE=auto(); RETURN=auto(); RET=auto()
     USE=auto(); TYPE=auto(); GO=auto()
     ARROW=auto(); FATARROW=auto()
     LPAREN=auto(); RPAREN=auto(); LBRACE=auto(); RBRACE=auto()
@@ -24,7 +24,7 @@ class TT(Enum):
     UNDERSCORE=auto()
 
 KW = {'fn':TT.FN,'let':TT.LET,'if':TT.IF,'else':TT.ELSE,'rec':TT.REC,
-      'true':TT.TRUE,'false':TT.FALSE,'return':TT.RETURN,
+      'true':TT.TRUE,'false':TT.FALSE,'return':TT.RETURN,'ret':TT.RET,
       'use':TT.USE,'type':TT.TYPE,'go':TT.GO}
 
 @dataclass
@@ -143,6 +143,9 @@ class IfExpr(Expr):
 class LetExpr(Expr):
     name: str; value: Expr; body: Expr; typ: Optional[TypeNode] = None
 @dataclass
+class RetExpr(Expr):
+    value: Optional[Expr] = None
+@dataclass
 class Lambda(Expr):
     params: List[Param]; body: Expr
 @dataclass
@@ -247,6 +250,13 @@ class Parser:
         self.expect(TT.RBRACK)
         return ListLit(items)
 
+    def parse_ret(self):
+        self.expect(TT.RET)
+        value = None
+        if not self.match(TT.RBRACE, TT.SEMI, TT.EOF):
+            value = self.parse_expr()
+        return RetExpr(value)
+
     def parse_primary(self):
         t = self.cur()
         if self.match(TT.INT): self.adv(); return IntLit(t.v)
@@ -254,6 +264,7 @@ class Parser:
         if self.match(TT.FALSE): self.adv(); return BoolLit(False)
         if self.match(TT.STRING): self.adv(); return StrLit(t.v)
         if self.match(TT.IDENT): self.adv(); return Var(t.v)
+        if self.match(TT.RET): return self.parse_ret()
         if self.match(TT.LPAREN):
             self.adv(); e = self.parse_expr(); self.expect(TT.RPAREN); return e
         if self.match(TT.LBRACK): return self.parse_list()
@@ -288,26 +299,29 @@ class Parser:
                 self.expect(TT.ASSIGN)
                 val = self.parse_expr()
                 stmts.append(('let', name, val, typ))
+            elif self.match(TT.RET):
+                stmts.append(('ret', self.parse_ret()))
             else:
                 stmts.append(('expr', self.parse_expr()))
             if self.match(TT.SEMI): self.adv()
         self.expect(TT.RBRACE)
         if not stmts:
             return IntLit(0)
-        body = IntLit(0)
-        first = True
+
+        body = None
         for kind, *rest in reversed(stmts):
             if kind == 'let':
                 name, val, typ = rest
-                body = LetExpr(name, val, body, typ=typ)
+                body = LetExpr(name, val, body if body is not None else IntLit(0), typ=typ)
+            elif kind == 'ret':
+                body = rest[0]
             else:
                 e = rest[0]
-                if first:
+                if body is None:
                     body = e
-                    first = False
                 else:
                     body = LetExpr("_", e, body)
-        return body
+        return body if body is not None else IntLit(0)
 
     def parse_if(self):
         self.expect(TT.IF)
@@ -586,6 +600,10 @@ class TypeChecker:
             self.check(e.left); self.check(e.right)
             return 'str' if e.op == '+' else ('bool' if e.op in '==!=<=>=<>&&||' else 'i64')
         if isinstance(e, Unary): return self.check(e.expr)
+        if isinstance(e, RetExpr):
+            if e.value is not None:
+                return self.check(e.value)
+            return 'i64'
         if isinstance(e, Call):
             self.check(e.func)
             for a in e.args: self.check(a)
@@ -670,6 +688,18 @@ static int64_t list_get(List L, int64_t i) {
 }
 static int64_t list_len(List L) { return L.n; }
 
+static char* str_from_i64(int64_t x) {
+  char* b = (char*)malloc(32);
+  snprintf(b, 32, "%lld", (long long)x);
+  return b;
+}
+static char* str_from_bool(bool v) {
+  const char* s = v ? "true" : "false";
+  size_t n = strlen(s);
+  char* b = (char*)malloc(n + 1);
+  memcpy(b, s, n + 1);
+  return b;
+}
 static char* str_concat(const char* a, const char* b) {
   size_t na = strlen(a), nb = strlen(b);
   char* r = (char*)malloc(na + nb + 1);
@@ -680,7 +710,6 @@ static int64_t str_len(const char* s) { return (int64_t)strlen(s); }
 
 static int _terse_did_print = 0;
 static void print_int(int64_t x) { _terse_did_print = 1; printf("%lld\n", (long long)x); }
-static void print_str(const char* s) { _terse_did_print = 1; printf("%s\n", s); }
 static void print_list(List L) {
   _terse_did_print = 1;
   printf("[");
@@ -690,6 +719,10 @@ static void print_list(List L) {
   }
   printf("]\n");
 }
+
+static void print_i64(int64_t x) { _terse_did_print = 1; printf("%lld\n", (long long)x); }
+static void print_bool(bool v) { _terse_did_print = 1; printf(v ? "true\n" : "false\n"); }
+static void print_str(const char* s) { _terse_did_print = 1; printf("%s\n", s); }
 
 static char* json_int(int64_t x) {
   char* b = (char*)malloc(32);
@@ -828,11 +861,25 @@ class CodeGen:
             l, lt = self.gen_expr(e.left)
             r, rt = self.gen_expr(e.right)
             if e.op == '+' and (lt == 'str' or rt == 'str'):
-                return f"str_concat({l}, {r})", "str"
+                if lt == 'str' and rt == 'str':
+                    return f"str_concat({l}, {r})", "str"
+                if lt == 'str' and rt == 'i64':
+                    return f"str_concat({l}, str_from_i64({r}))", "str"
+                if lt == 'i64' and rt == 'str':
+                    return f"str_concat(str_from_i64({l}), {r})", "str"
+                if lt == 'str' and rt == 'bool':
+                    return f"str_concat({l}, str_from_bool({r}))", "str"
+                if lt == 'bool' and rt == 'str':
+                    return f"str_concat(str_from_bool({l}), {r})", "str"
             return f"({l} {e.op} {r})", ("bool" if e.op in ('==','!=','<','>','<=','>=','&&','||') else "i64")
         if isinstance(e, Unary):
             x, _ = self.gen_expr(e.expr)
             return f"({e.op}{x})", "i64"
+        if isinstance(e, RetExpr):
+            if e.value is not None:
+                v, vt = self.gen_expr(e.value)
+                return f"({{ return {v}; INT64_C(0); }})", vt
+            return "({ return INT64_C(0); INT64_C(0); })", "i64"
         if isinstance(e, ListLit):
             n = len(e.items)
             tmp = self.fresh()
@@ -852,9 +899,13 @@ class CodeGen:
             # builtins
             if isinstance(e.func, Var) and e.func.name == 'pr':
                 a, at = self.gen_expr(e.args[0])
-                if at == 'str': return f"(print_str({a}), INT64_C(0))", "i64"
-                if at == 'list': return f"(print_list({a}), INT64_C(0))", "i64"
-                return f"(print_int({a}), INT64_C(0))", "i64"
+                if at == 'str':
+                    return f"(print_str({a}), INT64_C(0))", "i64"
+                if at == 'list':
+                    return f"(print_list({a}), INT64_C(0))", "i64"
+                if at == 'bool':
+                    return f"(print_bool({a}), INT64_C(0))", "i64"
+                return f"(print_i64({a}), INT64_C(0))", "i64"
             if isinstance(e.func, Var) and e.func.name == 'len':
                 a, at = self.gen_expr(e.args[0])
                 return (f"str_len({a})", "i64") if at == 'str' else (f"list_len({a})", "i64")

@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Terse: Compile",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "compiler/tersec.py",
+        "build",
+        "${file}",
+        "-o",
+        "output/${fileBasenameNoExtension}${env:OS == 'Windows_NT' ? '.exe' : ''}"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Terse: Run",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "compiler/tersec.py",
+        "run",
+        "${file}"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

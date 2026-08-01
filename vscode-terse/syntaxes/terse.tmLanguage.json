@@ -1,0 +1,47 @@
+{
+  "scopeName": "source.terse",
+  "name": "Terse",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.terse", "match": "//.*$" },
+        { "name": "comment.block.terse", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        { "name": "string.quoted.double.terse", "begin": "\"", "end": "\"", "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.terse" }] }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.terse", "match": "-?\\b\\d+\\b" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.terse",
+          "match": "\\b(?:fn|let|if|else|rec|true|false|return|use|type|go)\\b"
+        },
+        {
+          "name": "keyword.operator.terse",
+          "match": "\\b(?:and|or|not)\\b|->|=>|==|!=|<=|>=|&&|\\|\\||>>"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        { "name": "variable.other.terse", "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b" }
+      ]
+    }
+  },
+  "uuid": "terse-grammar-0001"
+}
