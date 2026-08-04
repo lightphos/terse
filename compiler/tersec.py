@@ -11,8 +11,8 @@ from enum import Enum, auto
 # --- Lexer -----------------------------------------------
 class TT(Enum):
     EOF=auto(); IDENT=auto(); INT=auto(); STRING=auto()
-    FN=auto(); LET=auto(); IF=auto(); ELSE=auto(); REC=auto(); LP=auto()
-    TRUE=auto(); FALSE=auto(); RETURN=auto(); RET=auto()
+    FN=auto(); LET=auto(); IF=auto(); ELSE=auto(); LP=auto()
+    TRUE=auto(); FALSE=auto(); RETURN=auto(); RET=auto(); SIG=auto(); FIT=auto(); AS=auto()
     USE=auto(); TYPE=auto(); GO=auto()
     ARROW=auto(); FATARROW=auto()
     LPAREN=auto(); RPAREN=auto(); LBRACE=auto(); RBRACE=auto()
@@ -23,9 +23,9 @@ class TT(Enum):
     AND=auto(); OR=auto(); NOT=auto(); PIPE=auto(); COMPOSE=auto()
     UNDERSCORE=auto()
 
-KW = {'fn':TT.FN,'let':TT.LET,'if':TT.IF,'else':TT.ELSE,'rec':TT.REC,'lp':TT.LP,
+KW = {'fn':TT.FN,'let':TT.LET,'if':TT.IF,'else':TT.ELSE,'lp':TT.LP,
       'true':TT.TRUE,'false':TT.FALSE,'return':TT.RETURN,'ret':TT.RET,
-      'use':TT.USE,'type':TT.TYPE,'go':TT.GO}
+      'use':TT.USE,'type':TT.TYPE,'go':TT.GO,'sig':TT.SIG,'fit':TT.FIT,'as':TT.AS}
 
 @dataclass
 class Tok:
@@ -180,6 +180,15 @@ class RecDecl:
     name: str
     fields: List[Tuple[str, TypeNode]]
 @dataclass
+class SigDecl:
+    name: str
+    methods: List[Tuple[str, List[Param], Optional[TypeNode]]]
+@dataclass
+class FitDecl:
+    name: str
+    ifaces: List[str] = field(default_factory=list)
+    methods: List[FnDecl] = field(default_factory=list)
+@dataclass
 class RecordLit(Expr):
     ctor: Expr
     fields: List[Tuple[str, Expr]]
@@ -187,6 +196,8 @@ class RecordLit(Expr):
 class Program:
     funcs: List[FnDecl]
     recs: List[RecDecl]
+    sigs: List[SigDecl] = field(default_factory=list)
+    fits: List[FitDecl] = field(default_factory=list)
     toplevel: Optional[Expr] = None  # top-level body or go body
 
 # --- Parser -----------------------------------------------
@@ -516,8 +527,14 @@ class Parser:
         if self.match(TT.SEMI): self.adv()
 
     def parse_rec(self):
-        self.expect(TT.REC)
-        name = self.expect(TT.IDENT).v
+        if self.match(TT.IDENT):
+            tok = self.adv()
+            if tok.v in ('rec', 'struct'):
+                name = self.expect(TT.IDENT).v
+            else:
+                name = tok.v
+        else:
+            raise SyntaxError(f"expected record name at {self.cur().line}:{self.cur().col}")
         self.expect(TT.LBRACE)
         fields = []
         while not self.match(TT.RBRACE):
@@ -529,8 +546,43 @@ class Parser:
         self.expect(TT.RBRACE)
         return RecDecl(name, fields)
 
+    def parse_sig(self):
+        self.expect(TT.SIG)
+        name = self.expect(TT.IDENT).v
+        self.expect(TT.LBRACE)
+        methods = []
+        while not self.match(TT.RBRACE):
+            self.expect(TT.FN)
+            method_name = self.expect(TT.IDENT).v
+            params = self.parse_params()
+            ret = None
+            if self.match(TT.ARROW):
+                self.adv(); ret = self.parse_type()
+            methods.append((method_name, params, ret))
+            if self.match(TT.SEMI): self.adv()
+        self.expect(TT.RBRACE)
+        return SigDecl(name, methods)
+
+    def parse_fit(self):
+        self.expect(TT.FIT)
+        name = self.expect(TT.IDENT).v
+        ifaces = []
+        if self.match(TT.AS):
+            self.adv()
+            ifaces.append(self.expect(TT.IDENT).v)
+            while self.match(TT.COMMA):
+                self.adv()
+                ifaces.append(self.expect(TT.IDENT).v)
+        self.expect(TT.LBRACE)
+        methods = []
+        while not self.match(TT.RBRACE):
+            methods.append(self.parse_fn())
+        self.expect(TT.RBRACE)
+        return FitDecl(name, ifaces, methods)
+
     def parse_fn(self):
-        self.expect(TT.FN)
+        if self.match(TT.FN):
+            self.adv()
         name = self.expect(TT.IDENT).v
         params = self.parse_params()
         ret = None
@@ -549,15 +601,27 @@ class Parser:
     def parse_program(self):
         fs = []
         recs = []
+        sigs = []
+        fits = []
         top_stmts = []
         go_body = None
         while not self.match(TT.EOF):
             if self.match(TT.USE):
                 self.skip_use()
-            elif self.match(TT.REC):
-                recs.append(self.parse_rec())
+            elif self.match(TT.IDENT):
+                next_tok = self.toks[self.i + 1] if self.i + 1 < len(self.toks) else None
+                if (self.cur().v in ('rec', 'struct') and next_tok is not None and next_tok.t == TT.IDENT and self.i + 2 < len(self.toks) and self.toks[self.i + 2].t == TT.LBRACE) or (next_tok is not None and next_tok.t == TT.LBRACE):
+                    recs.append(self.parse_rec())
+                else:
+                    top_stmts.append(('expr', self.parse_expr()))
+                    if self.match(TT.SEMI): self.adv()
             elif self.match(TT.TYPE):
                 self.skip_type()
+            elif self.match(TT.SIG):
+                sigs.append(self.parse_sig())
+            elif self.match(TT.FIT):
+                fit = self.parse_fit()
+                fits.append(fit)
             elif self.match(TT.FN):
                 fs.append(self.parse_fn())
             elif self.match(TT.GO):
@@ -602,7 +666,7 @@ class Parser:
                 toplevel = body
             elif not fs:
                 toplevel = IntLit(0)
-        return Program(fs, recs, toplevel)
+        return Program(fs, recs, sigs, fits, toplevel)
 
 # --- Type check (light) -----------------------------------
 class TypeChecker:
@@ -884,6 +948,8 @@ class CodeGen:
         self.env = {}
         self.route_handlers = []  # generated C funcs for routes
         self.record_field_types = {}
+        self.method_names = {}
+        self.method_returns = {}
 
     def emit(self, s=""):
         self.lines.append("  " * self.indent + s)
@@ -897,6 +963,16 @@ class CodeGen:
 
     def c_type(self, t):
         return {'fn':'void*','str':'const char*','list':'List','i64':'int64_t','i32':'int32_t','u64':'uint64_t','bool':'bool','f64':'double'}.get(t, t)
+
+    def expr_type(self, e) -> str:
+        if isinstance(e, Var):
+            return self.env.get(e.name, 'i64')
+        if isinstance(e, RecordLit):
+            return e.ctor.name if isinstance(e.ctor, Var) else 'record'
+        if isinstance(e, Member):
+            base_type = self.expr_type(e.obj)
+            return self.record_field_types.get(base_type, {}).get(e.field, 'i64')
+        return 'i64'
 
     def gen_expr(self, e) -> Tuple[str, str]:
         if isinstance(e, IntLit):
@@ -988,6 +1064,13 @@ class CodeGen:
                 if e.func.field in ('query', 'query_one', 'exec'):
                     # return empty list / empty
                     return "list_new(0)", "list"
+            if isinstance(e.func, Member):
+                base_type = self.expr_type(e.func.obj)
+                method_key = (base_type, e.func.field)
+                if method_key in self.method_names:
+                    args = [self.gen_expr(e.func.obj)[0]] + [self.gen_expr(a)[0] for a in e.args]
+                    cname = self.method_names[method_key]
+                    return f"{cname}({', '.join(args)})", self.method_returns[method_key]
             if isinstance(e.func, Var) and e.func.name in self.known:
                 cname = self.known[e.func.name]
                 args = ", ".join(self.gen_expr(a)[0] for a in e.args)
@@ -1124,6 +1207,8 @@ class CodeGen:
         old_env = self.env.copy()
         for p in f.params:
             self.env[p.name] = self.type_name(p.typ) if p.typ else 'i64'
+        if f.params and f.params[0].name == 'self':
+            self.env['self'] = self.type_name(f.params[0].typ) if f.params[0].typ else 'i64'
         body, _ = self.gen_expr(f.body)
         self.env = old_env
         self.emit(f"{crt} {cname}({pstr}) {{")
@@ -1134,12 +1219,21 @@ class CodeGen:
         self.emit()
 
     def generate(self, prog: Program) -> str:
-        # Synthesize main from top-level / go if needed
-        if prog.toplevel is not None and not any(f.name == 'main' for f in prog.funcs):
-            prog.funcs = list(prog.funcs) + [FnDecl('main', [], TypeNode('i64'), prog.toplevel)]
-        for f in prog.funcs:
-            self.known[f.name] = "terse_" + f.name
         self.record_field_types = {r.name: {n: self.type_name(t) for n, t in r.fields} for r in prog.recs}
+        self.method_names = {}
+        self.method_returns = {}
+        funcs = list(prog.funcs)
+        for fit in prog.fits:
+            for m in fit.methods:
+                method_name = f"{fit.name}_{m.name}"
+                self.method_names[(fit.name, m.name)] = "terse_" + method_name
+                self.method_returns[(fit.name, m.name)] = self.type_name(m.ret) if m.ret else 'i64'
+                receiver = Param('self', TypeNode(fit.name))
+                funcs.append(FnDecl(method_name, [receiver] + list(m.params), m.ret, m.body))
+        if prog.toplevel is not None and not any(f.name == 'main' for f in funcs):
+            funcs = funcs + [FnDecl('main', [], TypeNode('i64'), prog.toplevel)]
+        for f in funcs:
+            self.known[f.name] = "terse_" + f.name
         out = [RUNTIME, ""]
         for rec in prog.recs:
             fields = []
@@ -1150,7 +1244,8 @@ class CodeGen:
                 out.extend(fields)
                 out.append(f"}} {rec.name};")
                 out.append("")
-        for f in prog.funcs:
+        # emit generated fit methods after record declarations so their receiver type is known
+        for f in funcs:
             cname = self.known[f.name]
             pcs = []
             for p in f.params:
@@ -1162,7 +1257,7 @@ class CodeGen:
             out.append(f"{crt} {cname}({pstr});")
         out.append("")
         self.lines = []
-        for f in prog.funcs:
+        for f in funcs:
             self.gen_fn(f)
         out.extend(self.extra)
         out.extend(self.lines)

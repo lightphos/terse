@@ -1,0 +1,29 @@
+Point { x: i64, y: i64 }
+
+sig Printable {
+  fn str() -> str
+}
+
+sig Coordinate {
+  fn cord() -> i64
+}
+
+fit Point as Printable, Coordinate {
+  fn show() -> i64 { 7 }
+  fn add() -> i64 { self.x + self.y }
+  fn str() -> str {
+    "Point { x: " + self.x + ", y: " + self.y + " }"
+  }
+  fn cord() -> i64 {
+    self.x + self.y
+  }
+}
+
+fn main() -> i64 { 
+    let p = Point {x: 1, y: 2};
+    p.show()
+    pr(p.str())
+    pr(p.add())
+    pr(" -> " + p.cord())
+    p.x
+ }

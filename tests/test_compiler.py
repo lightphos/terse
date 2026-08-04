@@ -184,6 +184,60 @@ class TestRecords(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out.strip(), "3")
 
+    def test_bare_structure(self):
+        src = textwrap.dedent("""\
+            Point { x: i64, y: i64 }
+            fn main() -> i64 {
+              let p = Point { x: 1, y: 2 }
+              p.x + p.y
+            }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "3")
+
+    def test_sig_and_fit(self):
+        src = textwrap.dedent("""\
+            Point { x: i64, y: i64 }
+            sig Printable {
+              fn str() -> str
+            }
+            fit Point as Printable {
+              fn show() -> i64 { 7 }
+              fn str() -> str {
+                "ok"
+              }
+            }
+            fn main() -> i64 { 0 }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "0")
+
+    def test_fit_multiple_interfaces(self):
+        src = textwrap.dedent("""\
+            Point { x: i64, y: i64 }
+            sig Printable {
+              fn str() -> str
+            }
+            sig Coordinate {
+              fn cord() -> i64
+            }
+            fit Point as Printable, Coordinate {
+              fn show() -> i64 { 7 }
+              fn str() -> str {
+                "ok"
+              }
+              fn cord() -> i64 {
+                self.x + self.y
+              }
+            }
+            fn main() -> i64 { 0 }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "0")
+
 
 class TestStringsLists(unittest.TestCase):
     def test_print_int(self):

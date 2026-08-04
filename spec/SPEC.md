@@ -29,7 +29,7 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
 Keywords (reserved):  
-`fn`, `let`, `type`, `if`, `else`, `match`, `use`, `return`, `ret`, `true`, `false`, `mut`, `struct`, `enum`, `impl`, `self`, `pub`, `as`, `in`, `for`, `while`, `loop`, `lp`, `break`, `continue`, `None`, `Some`, `Ok`, `Err`, `get`, `post`, `pr`, `put`, `go`, `env`, `delete`, `http`, `db`, `json`, `status`
+`fn`, `let`, `type`, `if`, `else`, `match`, `use`, `return`, `ret`, `true`, `false`, `mut`, `struct`, `enum`, `impl`, `self`, `pub`, `as`, `in`, `for`, `while`, `loop`, `lp`, `break`, `continue`, `None`, `Some`, `Ok`, `Err`, `get`, `post`, `pr`, `put`, `go`, `env`, `delete`, `http`, `db`, `json`, `status`, `sig`, `fit`
 
 ### Literals
 - Integer: `42`, `-7`, `0xFF` (i64 by default)
@@ -63,15 +63,23 @@ Type inference is Hindley-Milner inspired for local variables and lambdas. Top-l
 ## 4. Syntax (Core)
 
 ### Program
-A program is a sequence of top-level declarations (functions, types, uses) ending with an entry point `fn main()`.
+A program is a sequence of top-level declarations (functions, types, uses, signatures, and fits) ending with an entry point `fn main()`.
 
 ```
 program ::= item*
-item    ::= fn_decl | type_decl | use_decl
+item    ::= fn_decl | type_decl | use_decl | sig_decl | fit_decl
 ```
 
 ### Functions
 ```
+sig Printable {
+  fn str() -> str
+}
+
+fit Point {
+  fn show() -> i64 { 7 }
+}
+
 fn name(params) -> RetType = expr
 fn name(params) -> RetType { stmts }
 

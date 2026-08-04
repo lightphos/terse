@@ -29,7 +29,7 @@
       "patterns": [
         {
           "name": "keyword.control.terse",
-          "match": "\\b(?:fn|let|if|else|rec|true|false|return|use|type|go)\\b"
+          "match": "\\b(?:fn|let|if|else|sig|fit|as|true|false|ret|use|type|go|mut|impl|self|pub|for|while|loop|lp|break|continue)\\b"
         },
         {
           "name": "keyword.operator.terse",

@@ -18,6 +18,11 @@ go:
 	python3 compiler/tersec.py build examples/go_entry.terse -o output/go_entry
 	python3 compiler/tersec.py build examples/http_top.terse -o output/http_top
 
+vscode-terse:
+	cd vscode-terse && npm install && npm run compile && npm run package
+
+install-vscode-terse:
+	cd vscode-terse && code --install-extension *.vsix
 
 compile:
 	python3 compiler/tersec.py build examples/$1.terse -o output/$1

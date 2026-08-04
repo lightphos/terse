@@ -1,6 +1,10 @@
-rec Point { x: i64, y: i64 }
+Point { x: i64, y: i64 }
 
-go {
+fn main() {
   let p = Point { x: 1, y: 3 }
   pr(p.x + p.y)
+
+  p = Point{}
+  pr(p.x + p.y)
 }
+ 
