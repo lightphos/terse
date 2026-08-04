@@ -1,0 +1,18 @@
+{
+  "contextProviders": [
+    {
+      "name": "codebase",
+      "params": {}
+    },
+    {
+      "name": "folder",
+      "params": {
+        "folderPaths": ["C:\\Stuff\\dev\\git\\terse"]
+      }
+    },
+    {
+      "name": "file",
+      "params": {}
+    }
+  ]
+}
