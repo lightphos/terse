@@ -19,10 +19,14 @@ fit Point as Printable, Coordinate {
   }
 }
 
+fn print(p: Printable) {
+  pr(p.str())
+}
+
 fn main() -> i64 { 
     let p = Point {x: 1, y: 2};
     p.show()
-    pr(p.str())
+    print(p)
     pr(p.add())
     pr(" -> " + p.cord())
     p.x
