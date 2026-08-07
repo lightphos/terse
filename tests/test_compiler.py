@@ -196,17 +196,15 @@ class TestRecords(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out.strip(), "3")
 
-    def test_sig_and_fit(self):
+    def test_tr_implicit(self):
         src = textwrap.dedent("""\
             Point { x: i64, y: i64 }
-            sig Printable {
+            tr Printable {
               fn str() -> str
             }
-            fit Point as Printable {
-              fn show() -> i64 { 7 }
-              fn str() -> str {
-                "ok"
-              }
+            fn Point.show() -> i64 { 7 }
+            fn Point.str() -> str {
+              "ok"
             }
             fn main() -> i64 { 0 }
         """)
@@ -214,23 +212,21 @@ class TestRecords(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out.strip(), "0")
 
-    def test_fit_multiple_interfaces(self):
+    def test_struct_satisfies_multiple_traits(self):
         src = textwrap.dedent("""\
             Point { x: i64, y: i64 }
-            sig Printable {
+            tr Printable {
               fn str() -> str
             }
-            sig Coordinate {
+            tr Coordinate {
               fn cord() -> i64
             }
-            fit Point as Printable, Coordinate {
-              fn show() -> i64 { 7 }
-              fn str() -> str {
-                "ok"
-              }
-              fn cord() -> i64 {
-                self.x + self.y
-              }
+            fn Point.show() -> i64 { 7 }
+            fn Point.str() -> str {
+              "ok"
+            }
+            fn Point.cord() -> i64 {
+              self.x + self.y
             }
             fn main() -> i64 { 0 }
         """)
@@ -241,13 +237,11 @@ class TestRecords(unittest.TestCase):
     def test_interface_parameter_polymorphism(self):
         src = textwrap.dedent("""\
             Point { x: i64, y: i64 }
-            sig Printable {
+            tr Printable {
               fn str() -> str
             }
-            fit Point as Printable {
-              fn str() -> str {
-                "ok"
-              }
+            fn Point.str() -> str {
+              "ok"
             }
             fn print(p: Printable) {
               pr(p.str())

@@ -12,7 +12,7 @@ from enum import Enum, auto
 class TT(Enum):
     EOF=auto(); IDENT=auto(); INT=auto(); STRING=auto()
     FN=auto(); LET=auto(); IF=auto(); ELSE=auto(); LP=auto()
-    TRUE=auto(); FALSE=auto(); RETURN=auto(); RET=auto(); SIG=auto(); FIT=auto(); AS=auto()
+    TRUE=auto(); FALSE=auto(); RETURN=auto(); RET=auto(); TR=auto()
     USE=auto(); TYPE=auto(); GO=auto()
     ARROW=auto(); FATARROW=auto()
     LPAREN=auto(); RPAREN=auto(); LBRACE=auto(); RBRACE=auto()
@@ -25,7 +25,7 @@ class TT(Enum):
 
 KW = {'fn':TT.FN,'let':TT.LET,'if':TT.IF,'else':TT.ELSE,'lp':TT.LP,
       'true':TT.TRUE,'false':TT.FALSE,'return':TT.RETURN,'ret':TT.RET,
-      'use':TT.USE,'type':TT.TYPE,'go':TT.GO,'sig':TT.SIG,'fit':TT.FIT,'as':TT.AS}
+      'use':TT.USE,'type':TT.TYPE,'go':TT.GO,'tr':TT.TR}
 
 @dataclass
 class Tok:
@@ -180,14 +180,16 @@ class RecDecl:
     name: str
     fields: List[Tuple[str, TypeNode]]
 @dataclass
-class SigDecl:
+class TraitDecl:
     name: str
     methods: List[Tuple[str, List[Param], Optional[TypeNode]]]
 @dataclass
-class FitDecl:
-    name: str
-    ifaces: List[str] = field(default_factory=list)
-    methods: List[FnDecl] = field(default_factory=list)
+class MethodDecl:
+    receiver: str                # struct type name, e.g. "Point"
+    name: str                    # method name, e.g. "show"
+    params: List[Param]          # does NOT include self
+    ret: Optional[TypeNode]
+    body: Expr
 @dataclass
 class RecordLit(Expr):
     ctor: Expr
@@ -196,8 +198,8 @@ class RecordLit(Expr):
 class Program:
     funcs: List[FnDecl]
     recs: List[RecDecl]
-    sigs: List[SigDecl] = field(default_factory=list)
-    fits: List[FitDecl] = field(default_factory=list)
+    sigs: List[TraitDecl] = field(default_factory=list)
+    methods: List[MethodDecl] = field(default_factory=list)
     toplevel: Optional[Expr] = None  # top-level body or go body
 
 # --- Parser -----------------------------------------------
@@ -546,8 +548,8 @@ class Parser:
         self.expect(TT.RBRACE)
         return RecDecl(name, fields)
 
-    def parse_sig(self):
-        self.expect(TT.SIG)
+    def parse_trait(self):
+        self.expect(TT.TR)
         name = self.expect(TT.IDENT).v
         self.expect(TT.LBRACE)
         methods = []
@@ -561,29 +563,30 @@ class Parser:
             methods.append((method_name, params, ret))
             if self.match(TT.SEMI): self.adv()
         self.expect(TT.RBRACE)
-        return SigDecl(name, methods)
+        return TraitDecl(name, methods)
 
-    def parse_fit(self):
-        self.expect(TT.FIT)
-        name = self.expect(TT.IDENT).v
-        ifaces = []
-        if self.match(TT.AS):
-            self.adv()
-            ifaces.append(self.expect(TT.IDENT).v)
-            while self.match(TT.COMMA):
-                self.adv()
-                ifaces.append(self.expect(TT.IDENT).v)
-        self.expect(TT.LBRACE)
-        methods = []
-        while not self.match(TT.RBRACE):
-            methods.append(self.parse_fn())
-        self.expect(TT.RBRACE)
-        return FitDecl(name, ifaces, methods)
+    def parse_method(self, receiver: str, name: str):
+        # receiver and name already consumed (e.g. from `fn Point.show`).
+        # parse_params gives the user-visible parameter list; `self` is
+        # injected during code generation, not parsing.
+        params = self.parse_params()
+        ret = None
+        if self.match(TT.ARROW):
+            self.adv(); ret = self.parse_type()
+        if self.match(TT.ASSIGN): self.adv()
+        body = self.parse_expr()
+        return MethodDecl(receiver, name, params, ret, body)
 
     def parse_fn(self):
         if self.match(TT.FN):
             self.adv()
-        name = self.expect(TT.IDENT).v
+        name_tok = self.expect(TT.IDENT)
+        name = name_tok.v
+        # Detect `fn Point.show()` — method on receiver type `Point`.
+        if self.match(TT.DOT):
+            self.adv()
+            method_name = self.expect(TT.IDENT).v
+            return self.parse_method(name, method_name)
         params = self.parse_params()
         ret = None
         if self.match(TT.ARROW):
@@ -602,7 +605,7 @@ class Parser:
         fs = []
         recs = []
         sigs = []
-        fits = []
+        methods = []
         top_stmts = []
         go_body = None
         while not self.match(TT.EOF):
@@ -617,13 +620,14 @@ class Parser:
                     if self.match(TT.SEMI): self.adv()
             elif self.match(TT.TYPE):
                 self.skip_type()
-            elif self.match(TT.SIG):
-                sigs.append(self.parse_sig())
-            elif self.match(TT.FIT):
-                fit = self.parse_fit()
-                fits.append(fit)
+            elif self.match(TT.TR):
+                sigs.append(self.parse_trait())
             elif self.match(TT.FN):
-                fs.append(self.parse_fn())
+                decl = self.parse_fn()
+                if isinstance(decl, MethodDecl):
+                    methods.append(decl)
+                else:
+                    fs.append(decl)
             elif self.match(TT.GO):
                 if go_body is not None:
                     raise SyntaxError("multiple go entry points")
@@ -666,7 +670,7 @@ class Parser:
                 toplevel = body
             elif not fs:
                 toplevel = IntLit(0)
-        return Program(fs, recs, sigs, fits, toplevel)
+        return Program(fs, recs, sigs, methods, toplevel)
 
 # --- Type check (light) -----------------------------------
 class TypeChecker:
@@ -675,7 +679,48 @@ class TypeChecker:
         self.env = {}
         self.errors = []
         self.recs = {}
+        self.sigs = {}     # trait name -> list of (method_name, [param_type_names], ret_type_name)
+        self.methods = {}  # (receiver, method_name) -> ([param_type_names], ret_type_name)
+        self.satisfied = set()  # set of (sig_name, struct_name) pairs
+
+    def _type_name(self, t):
+        return t.name if t else 'i64'
+
+    def compute_satisfaction(self, prog):
+        """Determine which (trait, struct) pairs are satisfied by structural matching."""
+        self.sigs = {
+            sig.name: [
+                (m[0], [self._type_name(p.typ) for p in m[1]], self._type_name(m[2]))
+                for m in sig.methods
+            ]
+            for sig in prog.sigs
+        }
+        self.methods = {
+            (m.receiver, m.name): (
+                [self._type_name(p.typ) for p in m.params],
+                self._type_name(m.ret),
+            )
+            for m in prog.methods
+        }
+        self.satisfied = set()
+        for sig_name, sig_methods in self.sigs.items():
+            for rec in prog.recs:
+                struct_name = rec.name
+                ok = True
+                for mname, mparams, mret in sig_methods:
+                    key = (struct_name, mname)
+                    if key not in self.methods:
+                        ok = False
+                        break
+                    mp, mr = self.methods[key]
+                    if mp != mparams or mr != mret:
+                        ok = False
+                        break
+                if ok:
+                    self.satisfied.add((sig_name, struct_name))
+
     def check_program(self, prog):
+        self.compute_satisfaction(prog)
         self.recs = {r.name: {n: t.name if t else 'i64' for n, t in r.fields} for r in prog.recs}
         for f in prog.funcs:
             ats = [p.typ.name if p.typ else 'i64' for p in f.params]
@@ -1247,13 +1292,12 @@ class CodeGen:
         self.interface_methods = {sig.name: [m[0] for m in sig.methods] for sig in prog.sigs}
         self.interface_method_returns = {(sig.name, m[0]): self.type_name(m[2]) if m[2] else 'i64' for sig in prog.sigs for m in sig.methods}
         funcs = list(prog.funcs)
-        for fit in prog.fits:
-            for m in fit.methods:
-                method_name = f"{fit.name}_{m.name}"
-                self.method_names[(fit.name, m.name)] = "terse_" + method_name
-                self.method_returns[(fit.name, m.name)] = self.type_name(m.ret) if m.ret else 'i64'
-                receiver = Param('self', TypeNode(fit.name))
-                funcs.append(FnDecl(method_name, [receiver] + list(m.params), m.ret, m.body))
+        for m in prog.methods:
+            method_name = f"{m.receiver}_{m.name}"
+            self.method_names[(m.receiver, m.name)] = "terse_" + method_name
+            self.method_returns[(m.receiver, m.name)] = self.type_name(m.ret) if m.ret else 'i64'
+            receiver = Param('self', TypeNode(m.receiver))
+            funcs.append(FnDecl(method_name, [receiver] + list(m.params), m.ret, m.body))
         if prog.toplevel is not None and not any(f.name == 'main' for f in funcs):
             funcs = funcs + [FnDecl('main', [], TypeNode('i64'), prog.toplevel)]
         self.func_param_types = {f.name: [self.type_name(p.typ) if p.typ else 'i64' for p in f.params] for f in funcs}
@@ -1269,30 +1313,59 @@ class CodeGen:
             out.append(f"}} {sig.name};")
             out.append("")
         self.interface_helpers = {}
-        for fit in prog.fits:
-            for iface_name in fit.ifaces:
-                iface_methods = [m for sig in prog.sigs if sig.name == iface_name for m in sig.methods]
-                for method_name, _, ret_node in iface_methods:
-                    if any(m.name == method_name for m in fit.methods):
-                        helper_name = f"{iface_name}_from_{fit.name}"
-                        self.interface_helpers[(iface_name, fit.name)] = helper_name
-                        ret_type = self.type_name(ret_node) if ret_node else 'i64'
-                        c_ret_type = self.c_type(ret_type)
-                        wrapper_name = f"{fit.name}_{method_name}_adapter"
-                        self.extra.append(
-                            f"static {c_ret_type} {wrapper_name}(void* value) {{\n"
-                            f"  {fit.name}* self = ({fit.name}*)value;\n"
-                            f"  return ({c_ret_type}){self.known.get(f'{fit.name}_{method_name}', '0')}(*self);\n"
-                            f"}}\n"
-                        )
-                        self.extra.append(
-                            f"static {iface_name} {helper_name}({fit.name}* value) {{\n"
-                            f"  {iface_name} out = {{0}};\n"
-                            f"  out.value = (void*)value;\n"
-                            f"  out.{method_name} = (void*(*)(void*)){wrapper_name};\n"
-                            f"  return out;\n"
-                            f"}}\n"
-                        )
+        # Compute implicit satisfaction: which (sig, struct) pairs are satisfied
+        # by structural matching of method signatures.
+        type_name = lambda t: t.name if t else 'i64'
+        method_sigs = {
+            (m.receiver, m.name): (
+                [type_name(p.typ) for p in m.params],
+                type_name(m.ret),
+            )
+            for m in prog.methods
+        }
+        satisfied = set()
+        for sig in prog.sigs:
+            sig_methods = [
+                (m[0], [type_name(p.typ) for p in m[1]], type_name(m[2]))
+                for m in sig.methods
+            ]
+            for rec in prog.recs:
+                struct_name = rec.name
+                ok = True
+                for mname, mparams, mret in sig_methods:
+                    key = (struct_name, mname)
+                    if key not in method_sigs:
+                        ok = False
+                        break
+                    mp, mr = method_sigs[key]
+                    if mp != mparams or mr != mret:
+                        ok = False
+                        break
+                if ok:
+                    satisfied.add((sig.name, struct_name))
+        for iface_name, struct_name in satisfied:
+            iface_methods = [m for sig in prog.sigs if sig.name == iface_name for m in sig.methods]
+            for method_name, _, ret_node in iface_methods:
+                if (struct_name, method_name) in self.method_names:
+                    helper_name = f"{iface_name}_from_{struct_name}"
+                    self.interface_helpers[(iface_name, struct_name)] = helper_name
+                    ret_type = self.type_name(ret_node) if ret_node else 'i64'
+                    c_ret_type = self.c_type(ret_type)
+                    wrapper_name = f"{struct_name}_{method_name}_adapter"
+                    self.extra.append(
+                        f"static {c_ret_type} {wrapper_name}(void* value) {{\n"
+                        f"  {struct_name}* self = ({struct_name}*)value;\n"
+                        f"  return ({c_ret_type}){self.known.get(f'{struct_name}_{method_name}', '0')}(*self);\n"
+                        f"}}\n"
+                    )
+                    self.extra.append(
+                        f"static {iface_name} {helper_name}({struct_name}* value) {{\n"
+                        f"  {iface_name} out = {{0}};\n"
+                        f"  out.value = (void*)value;\n"
+                        f"  out.{method_name} = (void*(*)(void*)){wrapper_name};\n"
+                        f"  return out;\n"
+                        f"}}\n"
+                    )
         for rec in prog.recs:
             fields = []
             for name, typ in rec.fields:

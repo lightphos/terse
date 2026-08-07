@@ -1,3 +1,5 @@
+.PHONY: terse examples io serve go vscode-terse install-vscode-terse compile
+
 terse:
 	python3 compiler/tersec.py build examples/minicompiler.terse -o output/tersec
 
@@ -22,7 +24,7 @@ vscode-terse:
 	cd vscode-terse && npm install && npm run compile && npm run package
 
 install-vscode-terse:
-	cd vscode-terse && code --install-extension *.vsix
+	cd vscode-terse && code --install-extension vscode-terse-0.0.1.vsix
 
 compile:
 	python3 compiler/tersec.py build examples/$1.terse -o output/$1

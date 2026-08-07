@@ -29,7 +29,7 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
 Keywords (reserved):  
-`fn`, `let`, `type`, `if`, `else`, `match`, `use`, `return`, `ret`, `true`, `false`, `mut`, `struct`, `enum`, `impl`, `self`, `pub`, `as`, `in`, `for`, `while`, `loop`, `lp`, `break`, `continue`, `None`, `Some`, `Ok`, `Err`, `get`, `post`, `pr`, `put`, `go`, `env`, `delete`, `http`, `db`, `json`, `status`, `sig`, `fit`
+`fn`, `let`, `type`, `if`, `else`, `match`, `use`, `return`, `ret`, `true`, `false`, `mut`, `struct`, `enum`, `impl`, `self`, `pub`, `in`, `for`, `while`, `loop`, `lp`, `break`, `continue`, `None`, `Some`, `Ok`, `Err`, `get`, `post`, `pr`, `put`, `go`, `env`, `delete`, `http`, `db`, `json`, `status`, `tr`
 
 ### Literals
 - Integer: `42`, `-7`, `0xFF` (i64 by default)
@@ -63,22 +63,23 @@ Type inference is Hindley-Milner inspired for local variables and lambdas. Top-l
 ## 4. Syntax (Core)
 
 ### Program
-A program is a sequence of top-level declarations (functions, types, uses, signatures, and fits) ending with an entry point `fn main()`.
+A program is a sequence of top-level declarations (functions, types, uses, traits, and methods) ending with an entry point `fn main()`.
 
 ```
 program ::= item*
-item    ::= fn_decl | type_decl | use_decl | sig_decl | fit_decl
+item    ::= fn_decl | type_decl | use_decl | trait_decl | method_decl
 ```
 
 ### Functions
 ```
-sig Printable {
+tr Printable {
   fn str() -> str
 }
 
-fit Point {
-  fn show() -> i64 { 7 }
-}
+Point { x: i64, y: i64 }
+
+fn Point.show() -> i64 { 7 }       // method on Point
+fn Point.str() -> str { "ok" }     // satisfies Printable implicitly
 
 fn name(params) -> RetType = expr
 fn name(params) -> RetType { stmts }
@@ -276,12 +277,14 @@ Implemented:
 - Compilation to native binary via C
 - String literals, string concatenation, length, and indexing
 - Lists, list indexing, and printing
+- Structs / records and `tr`-defined interfaces
+- Implicit interface satisfaction (a struct satisfies a `tr` when its methods match)
 - Built-in `pr`, `len`, `json`, and a minimal `http.serve` runtime
 - Top-level expressions and a `go { ... }` entry-point alias
 
 Not yet implemented or still limited:
 - Full closures with environment capture
-- Tiny structs / records and basic pattern matching
+- Basic pattern matching
 - Generics beyond the current subset
 - Full ownership / borrowing / borrow checking
 - Real database integration

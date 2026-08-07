@@ -1,31 +1,31 @@
-
+// sig_fit.terse — implicit interface satisfaction.
+// A struct automatically satisfies a trait when it has methods with matching
+// signatures. No explicit `fit` / `as` declaration is needed.
 
 Point { x: i64, y: i64 }
 
-sig Printable {
+fn Point.show() -> i64 { pr(self.x + " " + self.y) }
+fn Point.add() -> i64 { self.x + self.y }
+fn Point.str() -> str {
+  "Point { x: " + self.x + ", y: " + self.y + " }"
+}
+fn Point.cord() -> i64 {
+  self.x + self.y
+}
+
+tr Printable {
   fn str() -> str
 }
 
-sig Coordinate {
+tr Coordinate {
   fn cord() -> i64
-}
-
-fit Point as Printable, Coordinate {
-  fn show() -> i64 { pr(self.x + " " + self.y)  }
-  fn add() -> i64 { self.x + self.y }
-  fn str() -> str {
-    "Point { x: " + self.x + ", y: " + self.y + " }"
-  }
-  fn cord() -> i64 {
-    self.x + self.y
-  }
 }
 
 fn print(p: Printable) {
   pr("poly " + p.str())
 }
 
-fn main() -> i64 { 
+fn main() -> i64 {
     let p = Point {x: 3, y: 2};
     p.show()
     print(p)
