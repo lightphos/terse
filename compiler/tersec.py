@@ -950,6 +950,10 @@ class CodeGen:
         self.record_field_types = {}
         self.method_names = {}
         self.method_returns = {}
+        self.interface_methods = {}
+        self.interface_method_returns = {}
+        self.interface_helpers = {}
+        self.func_param_types = {}
 
     def emit(self, s=""):
         self.lines.append("  " * self.indent + s)
@@ -995,6 +999,9 @@ class CodeGen:
             return e.name, self.env.get(e.name, "i64")
         if isinstance(e, Member):
             base, btype = self.gen_expr(e.obj)
+            if btype in self.interface_methods:
+                ret_type = self.interface_method_returns.get((btype, e.field), 'i64')
+                return f"(({base}).{e.field})", btype
             field_type = self.record_field_types.get(btype, {}).get(e.field, 'i64')
             return f"(({base}).{e.field})", field_type
         if isinstance(e, Binary):
@@ -1066,6 +1073,11 @@ class CodeGen:
                     return "list_new(0)", "list"
             if isinstance(e.func, Member):
                 base_type = self.expr_type(e.func.obj)
+                if base_type in self.interface_methods and e.func.field in self.interface_methods[base_type]:
+                    base_code, _ = self.gen_expr(e.func.obj)
+                    ret_type = self.interface_method_returns.get((base_type, e.func.field), 'i64')
+                    c_ret_type = self.c_type(ret_type)
+                    return f"((({c_ret_type}(*)(void*))(({base_code}).{e.func.field}))(({base_code}).value))", ret_type
                 method_key = (base_type, e.func.field)
                 if method_key in self.method_names:
                     args = [self.gen_expr(e.func.obj)[0]] + [self.gen_expr(a)[0] for a in e.args]
@@ -1073,8 +1085,18 @@ class CodeGen:
                     return f"{cname}({', '.join(args)})", self.method_returns[method_key]
             if isinstance(e.func, Var) and e.func.name in self.known:
                 cname = self.known[e.func.name]
-                args = ", ".join(self.gen_expr(a)[0] for a in e.args)
-                return f"{cname}({args})", "i64"
+                args = []
+                if e.func.name in self.func_param_types:
+                    for a, expected in zip(e.args, self.func_param_types[e.func.name]):
+                        arg_code, arg_type = self.gen_expr(a)
+                        if expected in self.interface_methods and arg_type in self.record_field_types and (expected, arg_type) in self.interface_helpers:
+                            args.append(f"{self.interface_helpers[(expected, arg_type)]}( &({arg_code}) )")
+                        else:
+                            args.append(arg_code)
+                else:
+                    args = [self.gen_expr(a)[0] for a in e.args]
+                args_str = ", ".join(args)
+                return f"{cname}({args_str})", "i64"
             fptr, _ = self.gen_expr(e.func)
             args = ", ".join(self.gen_expr(a)[0] for a in e.args)
             n = len(e.args)
@@ -1222,6 +1244,8 @@ class CodeGen:
         self.record_field_types = {r.name: {n: self.type_name(t) for n, t in r.fields} for r in prog.recs}
         self.method_names = {}
         self.method_returns = {}
+        self.interface_methods = {sig.name: [m[0] for m in sig.methods] for sig in prog.sigs}
+        self.interface_method_returns = {(sig.name, m[0]): self.type_name(m[2]) if m[2] else 'i64' for sig in prog.sigs for m in sig.methods}
         funcs = list(prog.funcs)
         for fit in prog.fits:
             for m in fit.methods:
@@ -1232,9 +1256,43 @@ class CodeGen:
                 funcs.append(FnDecl(method_name, [receiver] + list(m.params), m.ret, m.body))
         if prog.toplevel is not None and not any(f.name == 'main' for f in funcs):
             funcs = funcs + [FnDecl('main', [], TypeNode('i64'), prog.toplevel)]
+        self.func_param_types = {f.name: [self.type_name(p.typ) if p.typ else 'i64' for p in f.params] for f in funcs}
         for f in funcs:
             self.known[f.name] = "terse_" + f.name
         out = [RUNTIME, ""]
+        for sig in prog.sigs:
+            fields = ["  void* value;"]
+            for name, _, _ in sig.methods:
+                fields.append(f"  void* (*{name})(void*);")
+            out.append(f"typedef struct {{")
+            out.extend(fields)
+            out.append(f"}} {sig.name};")
+            out.append("")
+        self.interface_helpers = {}
+        for fit in prog.fits:
+            for iface_name in fit.ifaces:
+                iface_methods = [m for sig in prog.sigs if sig.name == iface_name for m in sig.methods]
+                for method_name, _, ret_node in iface_methods:
+                    if any(m.name == method_name for m in fit.methods):
+                        helper_name = f"{iface_name}_from_{fit.name}"
+                        self.interface_helpers[(iface_name, fit.name)] = helper_name
+                        ret_type = self.type_name(ret_node) if ret_node else 'i64'
+                        c_ret_type = self.c_type(ret_type)
+                        wrapper_name = f"{fit.name}_{method_name}_adapter"
+                        self.extra.append(
+                            f"static {c_ret_type} {wrapper_name}(void* value) {{\n"
+                            f"  {fit.name}* self = ({fit.name}*)value;\n"
+                            f"  return ({c_ret_type}){self.known.get(f'{fit.name}_{method_name}', '0')}(*self);\n"
+                            f"}}\n"
+                        )
+                        self.extra.append(
+                            f"static {iface_name} {helper_name}({fit.name}* value) {{\n"
+                            f"  {iface_name} out = {{0}};\n"
+                            f"  out.value = (void*)value;\n"
+                            f"  out.{method_name} = (void*(*)(void*)){wrapper_name};\n"
+                            f"  return out;\n"
+                            f"}}\n"
+                        )
         for rec in prog.recs:
             fields = []
             for name, typ in rec.fields:
@@ -1261,7 +1319,7 @@ class CodeGen:
             self.gen_fn(f)
         out.extend(self.extra)
         out.extend(self.lines)
-        if any(f.name == 'main' for f in prog.funcs):
+        if any(f.name == 'main' for f in funcs):
             out += [
                 "",
                 "int main(int argc, char** argv) {",

@@ -36,6 +36,7 @@ function buildTerse(sourcePath, outPath, cwd) {
     });
 }
 function runOutput(exePath, cwd) {
+    vscode.window.showInformationMessage(`Running ${path.basename(exePath)} in ${cwd}`);
     return new Promise((resolve, reject) => {
         (0, child_process_1.execFile)(exePath, { cwd }, (error, stdout, stderr) => {
             if (error) {

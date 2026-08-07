@@ -238,6 +238,30 @@ class TestRecords(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(out.strip(), "0")
 
+    def test_interface_parameter_polymorphism(self):
+        src = textwrap.dedent("""\
+            Point { x: i64, y: i64 }
+            sig Printable {
+              fn str() -> str
+            }
+            fit Point as Printable {
+              fn str() -> str {
+                "ok"
+              }
+            }
+            fn print(p: Printable) {
+              pr(p.str())
+            }
+            fn main() -> i64 {
+              let p = Point { x: 1, y: 2 }
+              print(p)
+              0
+            }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertIn("ok", out)
+
 
 class TestStringsLists(unittest.TestCase):
     def test_print_int(self):

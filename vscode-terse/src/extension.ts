@@ -38,6 +38,8 @@ function buildTerse(sourcePath: string, outPath: string, cwd: string): Promise<s
 }
 
 function runOutput(exePath: string, cwd: string): Promise<string> {
+  vscode.window.showInformationMessage(`Running ${path.basename(exePath)} in ${cwd}`);
+
   return new Promise((resolve, reject) => {
     execFile(exePath, { cwd }, (error, stdout, stderr) => {
       if (error) {

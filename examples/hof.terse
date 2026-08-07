@@ -7,8 +7,8 @@ fn add(a: i64, b: i64) -> i64 = a + b
 
 go {
   let d = double
-  let r1 = apply(d, 21)
+  let r1 = apply(d, 21) // 42
   // lambda
-  let r2 = apply(|x| x + 100, 7)
-  r1 + r2
+  let r2 = apply(|x| x + 100, 7) // 107
+  r1 + r2 // 149
 }

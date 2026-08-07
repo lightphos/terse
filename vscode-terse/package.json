@@ -43,7 +43,7 @@
       },
       {
         "command": "terse.run",
-        "key": "ctrl+alt+r",
+        "key": "ctrl+alt+n",
         "when": "editorTextFocus && resourceExtname == .terse"
       }
     ],

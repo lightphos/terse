@@ -10,3 +10,4 @@ wheels/
 .venv
 /output/
 /.claude/
+/vscode-terse/out/

@@ -1,3 +1,5 @@
+
+
 Point { x: i64, y: i64 }
 
 sig Printable {
@@ -9,7 +11,7 @@ sig Coordinate {
 }
 
 fit Point as Printable, Coordinate {
-  fn show() -> i64 { 7 }
+  fn show() -> i64 { pr(self.x + " " + self.y)  }
   fn add() -> i64 { self.x + self.y }
   fn str() -> str {
     "Point { x: " + self.x + ", y: " + self.y + " }"
@@ -20,11 +22,11 @@ fit Point as Printable, Coordinate {
 }
 
 fn print(p: Printable) {
-  pr(p.str())
+  pr("poly " + p.str())
 }
 
 fn main() -> i64 { 
-    let p = Point {x: 1, y: 2};
+    let p = Point {x: 3, y: 2};
     p.show()
     print(p)
     pr(p.add())
