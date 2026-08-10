@@ -59,7 +59,7 @@ async function compileCommand() {
   }
 
   const document = editor.document;
-  if (document.languageId !== 'terse' && path.extname(document.fileName) !== '.terse') {
+  if (document.languageId !== 'terse' && path.extname(document.fileName) !== '.te') {
     vscode.window.showErrorMessage('Active file is not a Terse source file');
     return;
   }
@@ -73,7 +73,7 @@ async function compileCommand() {
   }
 
   const sourcePath = path.relative(workspace.uri.fsPath, document.uri.fsPath);
-  const outputName = path.basename(document.fileName, '.terse');
+  const outputName = path.basename(document.fileName, '.te');
   const outPath = path.join('output', outputName + (process.platform === 'win32' ? '.exe' : ''));
   const outFsPath = path.join(workspace.uri.fsPath, outPath);
   ensureDirectory(outFsPath);
@@ -98,7 +98,7 @@ async function runCommand() {
   }
 
   const document = editor.document;
-  if (document.languageId !== 'terse' && path.extname(document.fileName) !== '.terse') {
+  if (document.languageId !== 'terse' && path.extname(document.fileName) !== '.te') {
     vscode.window.showErrorMessage('Active file is not a Terse source file');
     return;
   }
@@ -112,7 +112,7 @@ async function runCommand() {
   }
 
   const sourcePath = path.relative(workspace.uri.fsPath, document.uri.fsPath);
-  const outputName = path.basename(document.fileName, '.terse');
+  const outputName = path.basename(document.fileName, '.te');
   const outPath = path.join('output', outputName + (process.platform === 'win32' ? '.exe' : ''));
   const outFsPath = path.join(workspace.uri.fsPath, outPath);
   ensureDirectory(outFsPath);

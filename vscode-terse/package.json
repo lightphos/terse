@@ -39,18 +39,18 @@
       {
         "command": "terse.compile",
         "key": "ctrl+alt+b",
-        "when": "editorTextFocus && resourceExtname == .terse"
+        "when": "editorTextFocus && resourceExtname == .te"
       },
       {
         "command": "terse.run",
         "key": "f5",
-        "when": "editorTextFocus && resourceExtname == .terse"
+        "when": "editorTextFocus && resourceExtname == .te"
       }
     ],
     "languages": [
       {
         "id": "terse",
-        "extensions": [".terse"],
+        "extensions": [".te"],
         "aliases": ["Terse", "terse"],
         "configuration": "./language-configuration.json"
       }

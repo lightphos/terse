@@ -2,7 +2,7 @@
 
 This extension provides two commands for Terse source files:
 
-- `Terse: Compile` — compiles the current `.terse` file into `output/<name>`
+- `Terse: Compile` — compiles the current `.te` file into `output/<name>`
 - `Terse: Run` — compiles and executes the generated binary, showing stdout in the `Terse` output channel
 
 ## Setup
@@ -28,6 +28,6 @@ This extension provides two commands for Terse source files:
 
 ## Usage
 
-1. Open a `.terse` file in the workspace root.
+1. Open a `.te` file in the workspace root.
 2. Run the `Terse: Compile` or `Terse: Run` command from the command palette.
 3. The output binary is written into the `output/` folder relative to the workspace root.

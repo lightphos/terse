@@ -1,4 +1,0 @@
-
-go {
-  pr("go terse")
-}

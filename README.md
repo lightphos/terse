@@ -1,19 +1,19 @@
 # Terse
 
-A succinct language that compiles to native binaries, with first-class higher-order functions, and (specified) support for REST APIs and databases.
+A succinct language that compiles to native binaries, with structures, interfaces, first-class higher-order functions, and (specified) support for REST APIs and databases.
 
 ## Quick Start
 
 ```bash
 # Build a program to a binary
-python3 compiler/tersec.py build examples/hello.terse -o hello
+python3 compiler/tersec.py build examples/hello.te -o hello
 ./hello          # prints 42
 
 # Or compile + run in one step
-python3 compiler/tersec.py run examples/fact.terse
+python3 compiler/tersec.py run examples/fact.te
 
 # Type-check only
-python3 compiler/tersec.py check examples/hof.terse
+python3 compiler/tersec.py check examples/hof.te
 ```
 
 ## Language Spec
@@ -44,10 +44,10 @@ Not yet implemented (but specified):
 
 | File | Description | Output |
 |------|-------------|--------|
-| `examples/hello.terse` | Basic arithmetic | 42 |
-| `examples/fact.terse` | Recursion | 3628800 |
-| `examples/hof.terse` | Higher-order + lambda | 149 |
-| `examples/iflet.terse` | if + let | 59 |
+| `examples/hello.te` | Basic arithmetic | 42 |
+| `examples/fact.te` | Recursion | 3628800 |
+| `examples/hof.te` | Higher-order + lambda | 149 |
+| `examples/iflet.te` | if + let | 59 |
 
 ## Architecture
 
@@ -76,4 +76,4 @@ MIT (for this reference implementation)
 - Strings: `"hi"`, `"a" + "b"`, `len(s)`, `s[i]`
 - Lists: `[1, 2, 3]`, `len(xs)`, `xs[i]`, `pr(xs)`
 - `pr(x)` for ints, strings, lists
-- See `examples/io.terse`
+- See `examples/io.te`

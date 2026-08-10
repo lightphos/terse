@@ -1,6 +1,6 @@
-// sig_fit.terse — implicit interface satisfaction.
-// A struct automatically satisfies a trait when it has methods with matching
-// signatures. No explicit `fit` / `as` declaration is needed.
+// inter.terse — implicit interface satisfaction.
+// A structure automatically satisfies a trait when it has methods with matching
+// signatures. 
 
 Point { x: i64, y: i64 }
 
