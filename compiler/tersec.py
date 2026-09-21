@@ -765,11 +765,20 @@ class TypeChecker:
         if isinstance(e, Call):
             self.check(e.func)
             for a in e.args: self.check(a)
+            if isinstance(e.func, Index) and isinstance(e.func.coll, Member) \
+                    and isinstance(e.func.coll.obj, Var) and e.func.coll.obj.name == 'db' \
+                    and e.func.coll.field in ('query', 'query_one') \
+                    and isinstance(e.func.idx, Var):
+                return f'list_{e.func.idx.name}'
             if isinstance(e.func, Var) and e.func.name in ('pr','json','env'): return 'str' if e.func.name in ('json','env') else 'i64'
             if isinstance(e.func, Var) and e.func.name == 'len': return 'i64'
             return 'i64'
         if isinstance(e, Index):
-            self.check(e.coll); self.check(e.idx); return 'i64'
+            coll_type = self.check(e.coll)
+            self.check(e.idx)
+            if coll_type.startswith('list_'):
+                return coll_type[5:]
+            return 'i64'
         if isinstance(e, IfExpr):
             self.check(e.cond); t=self.check(e.then)
             if e.els: self.check(e.els)
@@ -823,6 +832,67 @@ RUNTIME = r'''
 #include <stdlib.h>
 #include <string.h>
 
+#define SQLITE_OK 0
+#define SQLITE_ROW 100
+#define SQLITE_DONE 101
+#define SQLITE_TRANSIENT ((void(*)(void*))-1)
+
+typedef struct sqlite3 sqlite3;
+typedef struct sqlite3_stmt sqlite3_stmt;
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+    static HMODULE terse_sqlite = NULL;
+    static int (*sqlite3_initialize)(void) = NULL;
+    static int (*sqlite3_open)(const char*, sqlite3**) = NULL;
+    static int (*sqlite3_close)(sqlite3*) = NULL;
+    static const char* (*sqlite3_errmsg)(sqlite3*) = NULL;
+    static int (*sqlite3_prepare_v2)(sqlite3*, const char*, int, sqlite3_stmt**, const char**) = NULL;
+    static int (*sqlite3_step)(sqlite3_stmt*) = NULL;
+    static int (*sqlite3_finalize)(sqlite3_stmt*) = NULL;
+    static int (*sqlite3_bind_int64)(sqlite3_stmt*, int, int64_t) = NULL;
+    static int (*sqlite3_bind_text)(sqlite3_stmt*, int, const char*, int, void(*)(void*)) = NULL;
+    static int64_t (*sqlite3_column_int64)(sqlite3_stmt*, int) = NULL;
+    static int (*sqlite3_column_int)(sqlite3_stmt*, int) = NULL;
+    static double (*sqlite3_column_double)(sqlite3_stmt*, int) = NULL;
+    static const unsigned char* (*sqlite3_column_text)(sqlite3_stmt*, int) = NULL;
+    static int (*sqlite3_column_count)(sqlite3_stmt*) = NULL;
+    static int (*sqlite3_changes)(sqlite3*) = NULL;
+    static void db_load_sqlite(void) {
+        if (terse_sqlite) return;
+        terse_sqlite = LoadLibraryA("sqlite3.dll");
+        if (!terse_sqlite) { fprintf(stderr, "sqlite3.dll not found\n"); exit(1); }
+        #define LOAD_SQLITE(name) name = (void*)GetProcAddress(terse_sqlite, #name)
+        LOAD_SQLITE(sqlite3_initialize);
+        LOAD_SQLITE(sqlite3_open); LOAD_SQLITE(sqlite3_close);
+        LOAD_SQLITE(sqlite3_errmsg); LOAD_SQLITE(sqlite3_prepare_v2);
+        LOAD_SQLITE(sqlite3_step); LOAD_SQLITE(sqlite3_finalize);
+        LOAD_SQLITE(sqlite3_bind_int64); LOAD_SQLITE(sqlite3_bind_text);
+        LOAD_SQLITE(sqlite3_column_int64); LOAD_SQLITE(sqlite3_column_int);
+        LOAD_SQLITE(sqlite3_column_double); LOAD_SQLITE(sqlite3_column_text);
+        LOAD_SQLITE(sqlite3_column_count);
+        LOAD_SQLITE(sqlite3_changes);
+        #undef LOAD_SQLITE
+    }
+#else
+    extern int sqlite3_open(const char*, sqlite3**);
+    extern int sqlite3_initialize(void);
+    extern int sqlite3_close(sqlite3*);
+    extern const char* sqlite3_errmsg(sqlite3*);
+    extern int sqlite3_prepare_v2(sqlite3*, const char*, int, sqlite3_stmt**, const char**);
+    extern int sqlite3_step(sqlite3_stmt*);
+    extern int sqlite3_finalize(sqlite3_stmt*);
+    extern int sqlite3_bind_int64(sqlite3_stmt*, int, int64_t);
+    extern int sqlite3_bind_text(sqlite3_stmt*, int, const char*, int, void(*)(void*));
+    extern int64_t sqlite3_column_int64(sqlite3_stmt*, int);
+    extern int sqlite3_column_int(sqlite3_stmt*, int);
+    extern double sqlite3_column_double(sqlite3_stmt*, int);
+    extern const unsigned char* sqlite3_column_text(sqlite3_stmt*, int);
+    extern int sqlite3_column_count(sqlite3_stmt*);
+    extern int sqlite3_changes(sqlite3*);
+    static void db_load_sqlite(void) {}
+#endif
+
 #ifdef _WIN32
   #define WIN32_LEAN_AND_MEAN
   #include <windows.h>
@@ -860,6 +930,83 @@ static int64_t list_get(List L, int64_t i) {
   return L.d[i];
 }
 static int64_t list_len(List L) { return L.n; }
+
+typedef struct {
+    int kind; /* 0 = integer, 1 = string */
+    int64_t integer;
+    const char* string;
+} DbValue;
+
+static sqlite3* terse_db = NULL;
+
+static void db_fail(const char* operation, int code) {
+    fprintf(stderr, "sqlite %s failed (%d)%s%s\n", operation, code,
+        terse_db ? ": " : "", terse_db ? sqlite3_errmsg(terse_db) : "");
+    exit(1);
+}
+
+static void db_bind(sqlite3_stmt* stmt, int index, DbValue value) {
+    int code = value.kind == 1
+        ? sqlite3_bind_text(stmt, index, value.string, -1, SQLITE_TRANSIENT)
+        : sqlite3_bind_int64(stmt, index, value.integer);
+    if (code != SQLITE_OK) db_fail("bind", code);
+}
+
+static sqlite3_stmt* db_prepare_query(const char* sql, int argc, DbValue* args) {
+    sqlite3_stmt* stmt = NULL;
+    int code = sqlite3_prepare_v2(terse_db, sql, -1, &stmt, NULL);
+    if (code != SQLITE_OK) db_fail("prepare", code);
+    for (int i = 0; i < argc; i++) db_bind(stmt, i + 1, args[i]);
+    return stmt;
+}
+
+static const char* db_copy_text(const unsigned char* value) {
+    if (!value) return "";
+    size_t n = strlen((const char*)value);
+    char* copy = (char*)malloc(n + 1);
+    memcpy(copy, value, n + 1);
+    return copy;
+}
+
+static int64_t db_connect(const char* url) {
+    db_load_sqlite();
+    int init_code = sqlite3_initialize();
+    if (init_code != SQLITE_OK) db_fail("initialize", init_code);
+    const char* path = url;
+    if (strncmp(url, "sqlite3://", 10) == 0) path = url + 10;
+    if (strncmp(path, "file/", 5) == 0) path += 5;
+    if (terse_db) sqlite3_close(terse_db);
+    int code = sqlite3_open(path, &terse_db);
+    if (code != SQLITE_OK) db_fail("open", code);
+    return 0;
+}
+
+static int64_t db_exec(const char* sql, int argc, DbValue* args) {
+    sqlite3_stmt* stmt = NULL;
+    int code = sqlite3_prepare_v2(terse_db, sql, -1, &stmt, NULL);
+    if (code != SQLITE_OK) db_fail("prepare", code);
+    for (int i = 0; i < argc; i++) db_bind(stmt, i + 1, args[i]);
+    code = sqlite3_step(stmt);
+    if (code != SQLITE_DONE) db_fail("execute", code);
+    sqlite3_finalize(stmt);
+    return sqlite3_changes(terse_db);
+}
+
+static List db_query(const char* sql, int argc, DbValue* args) {
+    sqlite3_stmt* stmt = NULL;
+    int code = sqlite3_prepare_v2(terse_db, sql, -1, &stmt, NULL);
+    if (code != SQLITE_OK) db_fail("prepare", code);
+    for (int i = 0; i < argc; i++) db_bind(stmt, i + 1, args[i]);
+    List rows = list_new(0);
+    while ((code = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (sqlite3_column_count(stmt) == 0) break;
+        rows.d = (int64_t*)realloc(rows.d, sizeof(int64_t) * (rows.n + 1));
+        rows.d[rows.n++] = sqlite3_column_int64(stmt, 0);
+    }
+    if (code != SQLITE_DONE) db_fail("query", code);
+    sqlite3_finalize(stmt);
+    return rows;
+}
 
 static char* str_from_i64(int64_t x) {
   char* b = (char*)malloc(32);
@@ -920,6 +1067,26 @@ static char* json_list(List L) {
   }
   b[o++] = ']'; b[o] = 0;
   return b;
+}
+static void json_field_prefix(char* b, size_t* o, size_t cap, int* first, const char* name) {
+    *o += (size_t)snprintf(b + *o, cap - *o, "%s\"%s\":", *first ? "" : ",", name);
+    *first = 0;
+}
+static void json_append_i64(char* b, size_t* o, size_t cap, int* first, const char* name, int64_t value) {
+    json_field_prefix(b, o, cap, first, name);
+    *o += (size_t)snprintf(b + *o, cap - *o, "%lld", (long long)value);
+}
+static void json_append_bool(char* b, size_t* o, size_t cap, int* first, const char* name, bool value) {
+    json_field_prefix(b, o, cap, first, name);
+    *o += (size_t)snprintf(b + *o, cap - *o, "%s", value ? "true" : "false");
+}
+static void json_append_f64(char* b, size_t* o, size_t cap, int* first, const char* name, double value) {
+    json_field_prefix(b, o, cap, first, name);
+    *o += (size_t)snprintf(b + *o, cap - *o, "%g", value);
+}
+static void json_append_str(char* b, size_t* o, size_t cap, int* first, const char* name, const char* value) {
+    json_field_prefix(b, o, cap, first, name);
+    *o += (size_t)snprintf(b + *o, cap - *o, "\"%s\"", value ? value : "");
 }
 
 static const char* env_get(const char* k) {
@@ -1007,10 +1174,108 @@ class CodeGen:
         self.tmp += 1
         return f"_t{self.tmp}"
 
+    def db_args(self, args):
+        if not args:
+            return "0, NULL"
+        values = []
+        for arg in args:
+            code, typ = self.gen_expr(arg)
+            if typ == 'str':
+                values.append(f"{{1, 0, {code}}}")
+            else:
+                values.append(f"{{0, {code}, NULL}}")
+        return f"{len(values)}, (DbValue[]){{{', '.join(values)}}}"
+
     def type_name(self, typ):
         return typ.name if typ else 'i64'
 
+    def typed_db_code(self, rec):
+        name = rec.name
+        fields = []
+        for index, (field_name, field_type) in enumerate(rec.fields):
+            typ = self.type_name(field_type)
+            if typ == 'str':
+                value = f"db_copy_text(sqlite3_column_text(stmt, {index}))"
+            elif typ == 'bool':
+                value = f"(sqlite3_column_int(stmt, {index}) != 0)"
+            elif typ == 'f64':
+                value = f"sqlite3_column_double(stmt, {index})"
+            else:
+                value = f"({self.c_type(typ)})sqlite3_column_int64(stmt, {index})"
+            fields.append(f"        row.{field_name} = {value};")
+        body = "\n".join(fields)
+        return f'''typedef struct {{ {name} *d; int64_t n; }} List_{name};
+static {name} list_get_{name}(List_{name} L, int64_t i) {{
+    if (i < 0 || i >= L.n) {{ fprintf(stderr, "index out of bounds\\n"); exit(1); }}
+    return L.d[i];
+}}
+static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
+    sqlite3_stmt* stmt = db_prepare_query(sql, argc, args);
+    List_{name} rows = {{NULL, 0}};
+    int code;
+    while ((code = sqlite3_step(stmt)) == SQLITE_ROW) {{
+        {name} row = {{0}};
+{body}
+        rows.d = ({name}*)realloc(rows.d, sizeof({name}) * (rows.n + 1));
+        rows.d[rows.n++] = row;
+    }}
+    if (code != SQLITE_DONE) db_fail("query", code);
+    sqlite3_finalize(stmt);
+    return rows;
+}}
+'''
+
+    def record_print_code(self, rec):
+        values = []
+        for field_name, field_type in rec.fields:
+            typ = self.type_name(field_type)
+            value = f"row.{field_name}"
+            if typ == 'str':
+                values.append(f'printf("%s", {value})')
+            elif typ == 'bool':
+                values.append(f'printf("%s", {value} ? "true" : "false")')
+            elif typ == 'f64':
+                values.append(f'printf("%g", {value})')
+            else:
+                values.append(f'printf("%lld", (long long){value})')
+        body = ', printf(", "), '.join(values)
+        return f'''static void print_{rec.name}({rec.name} row) {{
+    _terse_did_print = 1;
+    printf("{{"); {body}; printf("}}\\n");
+}}
+'''
+
+    def record_json_code(self, rec):
+        fields = []
+        for field_name, field_type in rec.fields:
+            typ = self.type_name(field_type)
+            value = f"L.d[i].{field_name}"
+            if typ == 'str':
+                fields.append(f'json_append_str(b, &o, cap, &first, "{field_name}", {value})')
+            elif typ == 'bool':
+                fields.append(f'json_append_bool(b, &o, cap, &first, "{field_name}", {value})')
+            elif typ == 'f64':
+                fields.append(f'json_append_f64(b, &o, cap, &first, "{field_name}", {value})')
+            else:
+                fields.append(f'json_append_i64(b, &o, cap, &first, "{field_name}", {value})')
+        body = "; ".join(fields)
+        return f'''static char* json_list_{rec.name}(List_{rec.name} L) {{
+    size_t cap = 256 + L.n * 256;
+    char* b = (char*)malloc(cap);
+    size_t o = 0;
+    b[o++] = '[';
+    for (int64_t i = 0; i < L.n; i++) {{
+        if (i) b[o++] = ',';
+        b[o++] = '{{'; int first = 1; {body}; b[o++] = '}}';
+    }}
+    b[o++] = ']'; b[o] = 0;
+    return b;
+}}
+'''
+
     def c_type(self, t):
+        if t.startswith('list_'):
+            return f"List_{t[5:]}"
         return {'fn':'void*','str':'const char*','list':'List','i64':'int64_t','i32':'int32_t','u64':'uint64_t','bool':'bool','f64':'double'}.get(t, t)
 
     def expr_type(self, e) -> str:
@@ -1086,6 +1351,9 @@ class CodeGen:
             i, _ = self.gen_expr(e.idx)
             if ct == 'str':
                 return f"((int64_t)((unsigned char){c}[{i}]))", "i64"
+            if ct.startswith('list_'):
+                record_name = ct[5:]
+                return f"list_get_{record_name}({c}, {i})", record_name
             return f"list_get({c}, {i})", "i64"
         if isinstance(e, Call):
             # builtins
@@ -1097,6 +1365,8 @@ class CodeGen:
                     return f"(print_list({a}), INT64_C(0))", "i64"
                 if at == 'bool':
                     return f"(print_bool({a}), INT64_C(0))", "i64"
+                if at in self.record_field_types:
+                    return f"(print_{at}({a}), INT64_C(0))", "i64"
                 return f"(print_i64({a}), INT64_C(0))", "i64"
             if isinstance(e.func, Var) and e.func.name == 'len':
                 a, at = self.gen_expr(e.args[0])
@@ -1105,17 +1375,38 @@ class CodeGen:
                 a, at = self.gen_expr(e.args[0])
                 if at == 'str': return f"json_str({a})", "str"
                 if at == 'list': return f"json_list({a})", "str"
+                if at.startswith('list_'): return f"json_list_{at[5:]}({a})", "str"
                 return f"json_int({a})", "str"
             if isinstance(e.func, Var) and e.func.name == 'env':
                 a, _ = self.gen_expr(e.args[0])
                 return f"env_get({a})", "str"
-            # db.connect / db.query stubs
+            # Database operations use the SQLite-backed runtime.
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name == 'db':
                 if e.func.field == 'connect':
-                    return "INT64_C(0)", "i64"  # no-op success
-                if e.func.field in ('query', 'query_one', 'exec'):
-                    # return empty list / empty
-                    return "list_new(0)", "list"
+                    url, _ = self.gen_expr(e.args[0])
+                    return f"db_connect({url})", "i64"
+                if e.func.field in ('query', 'query_one'):
+                    sql, _ = self.gen_expr(e.args[0])
+                    argc_args = self.db_args(e.args[1:])
+                    return f"db_query({sql}, {argc_args})", "list"
+                if e.func.field == 'exec':
+                    sql, _ = self.gen_expr(e.args[0])
+                    argc_args = self.db_args(e.args[1:])
+                    return f"db_exec({sql}, {argc_args})", "i64"
+            # db.query[User](...) / db.query_one[User](...) typed queries.
+            if isinstance(e.func, Index) and isinstance(e.func.coll, Member) \
+                    and isinstance(e.func.coll.obj, Var) and e.func.coll.obj.name == 'db':
+                if e.func.coll.field in ('query', 'query_one'):
+                    record_name = e.func.idx.name if isinstance(e.func.idx, Var) else None
+                    sql, _ = self.gen_expr(e.args[0])
+                    argc_args = self.db_args(e.args[1:])
+                    if record_name in self.record_field_types:
+                        return f"db_query_{record_name}({sql}, {argc_args})", f"list_{record_name}"
+                    return f"db_query({sql}, {argc_args})", "list"
+                if e.func.coll.field == 'exec':
+                    sql, _ = self.gen_expr(e.args[0])
+                    argc_args = self.db_args(e.args[1:])
+                    return f"db_exec({sql}, {argc_args})", "i64"
             if isinstance(e.func, Member):
                 base_type = self.expr_type(e.func.obj)
                 if base_type in self.interface_methods and e.func.field in self.interface_methods[base_type]:
@@ -1248,6 +1539,8 @@ class CodeGen:
                     body_c = f"json_int({body_c})"
                 elif bt == 'list':
                     body_c = f"json_list({body_c})"
+                elif bt.startswith('list_'):
+                    body_c = f"json_list_{bt[5:]}({body_c})"
                 elif bt != 'str':
                     body_c = f'"{bt}"'
                 # constant / expression handler - embed as function returning that
@@ -1375,6 +1668,10 @@ class CodeGen:
                 out.extend(fields)
                 out.append(f"}} {rec.name};")
                 out.append("")
+        for rec in prog.recs:
+            out.append(self.typed_db_code(rec))
+            out.append(self.record_print_code(rec))
+            out.append(self.record_json_code(rec))
         # emit generated fit methods after record declarations so their receiver type is known
         for f in funcs:
             cname = self.known[f.name]
@@ -1429,6 +1726,8 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False):
             gcc_out = out_bin + ".exe"
 
         cmd = ["gcc", "-O2", "-std=c11", c_file, "-o", gcc_out]
+        if sys.platform != "win32":
+            cmd.append("-lsqlite3")
         if sys.platform == "win32":
             cmd.append("-lws2_32")
         r = subprocess.run(cmd, capture_output=True, text=True)
@@ -1442,6 +1741,10 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False):
                 os.remove(gcc_out)
             except OSError:
                 pass
+        if sys.platform == "win32":
+            sqlite_dll = os.path.join(sys.base_prefix, "DLLs", "sqlite3.dll")
+            if os.path.exists(sqlite_dll):
+                shutil.copy2(sqlite_dll, os.path.join(os.path.dirname(os.path.abspath(out_bin)), "sqlite3.dll"))
         if not keep_c:
             try: os.remove(c_file)
             except: pass

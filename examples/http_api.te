@@ -1,14 +1,18 @@
 use std.http, std.db
 
-type User = {id: i64, name: str}
+rec User { id: i64, name: str, active: bool }
 
 go {
-  db.connect(env("DATABASE_URL"))
+  db.connect("sqlite3://file/terse.db")
+  db.exec("DROP TABLE users")
+  db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, active INTEGER)")
+  db.exec("INSERT INTO users (id, name, active) VALUES (?, ?, ?)", 42, "Alice", true)
+  db.exec("INSERT INTO users (id, name, active) VALUES (?, ?, ?)", 43, "Bob", true)
   http.serve(18081) {
     get "/hello" => "world"
     get "/n" => json(42)
     get "/xs" => json([1, 2, 3])
-    get "/users" => json(db.query("SELECT id, name FROM users LIMIT 100"))
+    get "/users" => json(db.query[User]("SELECT id, name FROM users LIMIT 100"))
     post "/echo" => |body| json(body)
   }
 }

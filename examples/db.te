@@ -1,20 +1,30 @@
 // Connection (usually once at startup)
-db.connect("postgres://user:pass@localhost/db")
+// db.connect("postgres://user:pass@localhost/db")
+rec User { id: i64, name: str, active: bool }
+
+db.connect("sqlite3://file/:memory:")
+
+db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, active INTEGER)")
+db.exec("INSERT INTO users (id, name, active) VALUES (?, ?, ?)", 42, "Alice", true)
 
 // Query returning typed rows
 let users = db.query[User]("SELECT * FROM users WHERE active = ?", true)
 
+pr("Users " + users[0].name)
+
 // Single row
 let user = db.query_one[User]("SELECT * FROM users WHERE id = ?", 42)
-
+pr("Alice id " + user[0].id)
 // Execute / insert / update
-let rows = db.exec("UPDATE users SET name = ? WHERE id = ?", "Alice", 42)
+let rows = db.exec("UPDATE users SET name = ? WHERE id = ?", "Bob", 42)
+pr("Rows " + rows)
 
-// Transactions
-db.tx {
-  db.exec("INSERT ...")
-  db.exec("UPDATE ...")
-}
+// // Transactions
+// db.tx {
+//   db.exec("INSERT ...")
+//   db.exec("UPDATE ...")
+// }
 
-// Migrations (optional built-in)
-db.migrate("./migrations")
+// // Migrations (optional built-in)
+// db.migrate("./migrations")
+

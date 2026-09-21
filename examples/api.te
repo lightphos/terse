@@ -3,6 +3,7 @@ use std.http, std.db
 type User = {id: i64, name: str}
 
 go {
+  db.connect("sqlite3://file/terse.db")
   // Start server
   http.serve(8080) {
     // Middleware

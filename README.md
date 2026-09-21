@@ -4,16 +4,41 @@ A succinct language that compiles to native binaries, with structures, interface
 
 ## Quick Start
 
+> Requires python3
+
+### CLI Run
 ```bash
-# Build a program to a binary
-python3 compiler/tersec.py build examples/hello.te -o hello
-./hello          # prints 42
+# Build program in example directory to a binary
+make terse.hello dir=examples
+./output/hello          # prints hello world
+```
+### VS Code Support
+```bash
+make vscode-terse
+make vconde-install
+```
+In vscode ide, reload window:
 
-# Or compile + run in one step
-python3 compiler/tersec.py run examples/fact.te
+```
+Ctrl+Shift+P
+Developer: Reload Window
+```
 
-# Type-check only
-python3 compiler/tersec.py check examples/hof.te
+Select a terse file, then
+
+Compile:
+
+```
+Ctrl+Shift+P
+
+Terse: Compile
+```
+
+Run:
+
+```
+Ctrl+Shift+P
+Terse: Run
 ```
 
 ## Language Spec
@@ -37,7 +62,7 @@ Not yet implemented (but specified):
 - Full closures with captures
 - Strings beyond basic support
 - Records / structs / pattern matching
-- Real `http.serve` and `db.query` (stubs planned)
+- SQLite database runtime: `db.connect`, `db.exec`, `db.query`, and `db.query_one`
 - Generics, modules, ownership system
 
 ## Examples
