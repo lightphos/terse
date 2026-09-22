@@ -8,7 +8,7 @@ import unittest
 import textwrap
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-TERSEC = os.path.join(ROOT, "compiler", "tersec.py")
+TERSEC = os.path.join(os.path.dirname(__file__), "tersec.py")
 EXAMPLES = os.path.join(ROOT, "examples")
 
 
@@ -395,6 +395,50 @@ class TestExamples(unittest.TestCase):
 
 
 class TestHttp(unittest.TestCase):
+    def test_serve_post_then_get_user(self):
+        """POST a user to serve.te, then fetch it through its dynamic route."""
+        import socket
+        import time
+        import urllib.request
+
+        bin_path = os.path.join(tempfile.mkdtemp(prefix="terse_serve_"), "serve")
+        r = subprocess.run(
+            [sys.executable, TERSEC, "build", os.path.join(EXAMPLES, "serve.te"), "-o", bin_path],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+
+        proc = subprocess.Popen(
+            [bin_path], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        try:
+            for _ in range(50):
+                try:
+                    with socket.create_connection(("127.0.0.1", 18081), timeout=0.1):
+                        break
+                except OSError:
+                    time.sleep(0.05)
+            else:
+                self.fail("serve.te server did not start")
+
+            request = urllib.request.Request(
+                "http://127.0.0.1:18081/user",
+                data=b"Charlie",
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=2) as resp:
+                self.assertEqual(resp.read().decode(), "created")
+
+            with urllib.request.urlopen("http://127.0.0.1:18081/user/44", timeout=2) as resp:
+                body = resp.read().decode()
+            self.assertIn('"name":"Charlie"', body)
+        finally:
+            proc.kill()
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                pass
+
     def test_compile_http_hello(self):
         src_path = os.path.join(EXAMPLES, "http_hello.terse")
         if not os.path.isfile(src_path):

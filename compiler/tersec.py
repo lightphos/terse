@@ -3,7 +3,7 @@
 Terse Compiler (tersec) 0.1beta
 Native binary via C. Strings, lists, pr, http.serve (minimal socket server).
 """
-import sys, os, shutil, subprocess, argparse
+import sys, os, re, shutil, subprocess, argparse
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Tuple
 from enum import Enum, auto
@@ -1136,8 +1136,18 @@ static void http_serve_run(int64_t port, route_fn handler) {
     buf[n] = 0;
     char method[16] = {0}, path[2048] = {0};
     sscanf(buf, "%15s %2047s", method, path);
-    const char* body = "";
     char* sep = strstr(buf, "\r\n\r\n");
+        int content_length = 0;
+        char* content_header = strstr(buf, "Content-Length:");
+        if (content_header) sscanf(content_header, "Content-Length: %d", &content_length);
+        int header_length = sep ? (int)(sep - buf) + 4 : n;
+        while (sep && n < header_length + content_length && n < (int)sizeof(buf) - 1) {
+            int received = (int)recv(cli, buf + n, sizeof(buf) - 1 - n, 0);
+            if (received <= 0) break;
+            n += received;
+            buf[n] = 0;
+        }
+        const char* body = "";
     if (sep) body = sep + 4;
     const char* resp = handler(method, path, body);
     if (resp)
@@ -1519,6 +1529,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         lines = [f"static const char* {dispatcher}(const char* method, const char* path, const char* body) {{"]
         for i, r in enumerate(e.routes):
             hname = f"__route_{self.lam_n}_{i}"
+            route_match = re.fullmatch(r"(.*)\{([A-Za-z_][A-Za-z0-9_]*)\}(.*)", r.path)
             # Generate handler wrapper
             # If handler is Lambda with 1 param, pass body
             if isinstance(r.handler, Lambda) and len(r.handler.params) >= 1:
@@ -1529,10 +1540,14 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 self.env = old
                 if bt != 'str':
                     body_c = f"json_int({body_c})"
-                self.extra.append(
-                    f"static const char* {hname}(const char* body) {{\n  return {body_c};\n}}\n"
+                param_decls = " ".join(
+                    f"const char* {p.name} = arg;" for p in r.handler.params
                 )
-                call = f"{hname}(body)"
+                self.extra.append(
+                    f"static const char* {hname}(const char* arg) {{\n  {param_decls}\n  return {body_c};\n}}\n"
+                )
+                call_arg = f"route_arg_{i}" if route_match else "body"
+                call = f"{hname}({call_arg})"
             else:
                 body_c, bt = self.gen_expr(r.handler)
                 if bt == 'i64':
@@ -1548,7 +1563,33 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     f"static const char* {hname}(const char* body) {{\n  (void)body;\n  return {body_c};\n}}\n"
                 )
                 call = f"{hname}(body)"
-            lines.append(f'  if (strcmp(method, "{r.method}") == 0 && strcmp(path, "{r.path}") == 0) return {call};')
+            if route_match:
+                prefix, _, suffix = route_match.groups()
+                prefix_c = prefix.replace('\\', '\\\\').replace('"', '\\"')
+                suffix_c = suffix.replace('\\', '\\\\').replace('"', '\\"')
+                prefix_len = len(prefix)
+                suffix_len = len(suffix)
+                lines.append(
+                    f'  if (strcmp(method, "{r.method}") == 0 && '
+                    f'strncmp(path, "{prefix_c}", {prefix_len}) == 0 && '
+                    f'path[{prefix_len}] != \'\\0\' && '
+                    f'({suffix_len} == 0 || (strlen(path) >= {prefix_len + suffix_len} && '
+                    f'strcmp(path + strlen(path) - {suffix_len}, "{suffix_c}") == 0))) {{'
+                )
+                lines.append(f"    char route_arg_{i}[2048];")
+                if suffix_len:
+                    lines.append(
+                        f"    snprintf(route_arg_{i}, sizeof(route_arg_{i}), \"%.*s\", "
+                        f"(int)(strlen(path) - {prefix_len + suffix_len}), path + {prefix_len});"
+                    )
+                else:
+                    lines.append(
+                        f"    snprintf(route_arg_{i}, sizeof(route_arg_{i}), \"%s\", path + {prefix_len});"
+                    )
+                lines.append(f"    return {call};")
+                lines.append("  }")
+            else:
+                lines.append(f'  if (strcmp(method, "{r.method}") == 0 && strcmp(path, "{r.path}") == 0) return {call};')
         lines.append("  return NULL;")
         lines.append("}\n")
         self.extra.append("\n".join(lines))

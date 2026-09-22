@@ -1,19 +1,24 @@
 use std.http, std.db
 
-rec User { id: i64, name: str, active: bool }
+rec User { id: i64, name: str, password: str, active: bool }
 
 go {
   db.connect("sqlite3://file/support/terse.db")
   db.exec("DROP TABLE IF EXISTS users")
-  db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, active INTEGER)")
-  db.exec("INSERT INTO users (id, name, active) VALUES (?, ?, ?)", 42, "Alice", true)
-  db.exec("INSERT INTO users (id, name, active) VALUES (?, ?, ?)", 43, "Bob", true)
+  db.exec("CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT, password TEXT, active INTEGER)")
+  db.exec("INSERT INTO users(id, name, active) VALUES (?, ?, ?)", 42, "Alice", true)
+  db.exec("INSERT INTO users(id, name, active) VALUES (?, ?, ?)", 43, "Bob", true)
   
   http.serve(18081) {
     get "/hello" => "world"
     get "/n" => json(42)
     get "/xs" => json([1, 2, 3])
     get "/users" => json(db.query[User]("SELECT id, name FROM users LIMIT 100"))
+    get "/user/{id}" => |id| json(db.query[User]("SELECT id, name FROM users WHERE id = ?", id))
+    post "/user" => |body| {
+      let id = db.exec("INSERT INTO users(name, password) VALUES (?, ?)", body, "")
+      "created"
+    }
     post "/echo" => |body| json(body)
   }
 }

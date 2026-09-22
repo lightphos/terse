@@ -1,0 +1,7 @@
+use std.tst
+
+fn add_is_42() {
+  let act = add()
+  let exp = 42
+  tst.check.equals(act, exp)
+}
