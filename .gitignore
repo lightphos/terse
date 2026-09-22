@@ -11,3 +11,4 @@ wheels/
 /output/
 /.claude/
 /vscode-terse/out/
+support/terse.db
