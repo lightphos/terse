@@ -1,7 +1,14 @@
 use std.tst
+use examples/add
+
+
+fn add() -> i64 = 40 + 2
 
 fn add_is_42() {
   let act = add()
   let exp = 42
   tst.check.equals(act, exp)
+  pr("ok: add_is_42")
 }
+
+go { add_is_42() }

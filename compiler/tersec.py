@@ -747,7 +747,7 @@ class TypeChecker:
         if isinstance(e, Var):
             if e.name in self.env: return self.env[e.name]
             if e.name in self.funcs or e.name in ('pr','len','json','env','str'): return 'fn'
-            if e.name in ('http','db'): return 'mod'
+            if e.name in ('http','db','tst'): return 'mod'
             return 'i64'
         if isinstance(e, Member):
             base = self.check(e.obj)
@@ -1043,6 +1043,33 @@ static void print_list(List L) {
 static void print_i64(int64_t x) { _terse_did_print = 1; printf("%lld\n", (long long)x); }
 static void print_bool(bool v) { _terse_did_print = 1; printf(v ? "true\n" : "false\n"); }
 static void print_str(const char* s) { _terse_did_print = 1; printf("%s\n", s); }
+
+/* -- std.tst assertion helpers (abort on first failure) -- */
+static int64_t tst_eq_i64(int64_t got, int64_t expected) {
+  if (got != expected) {
+    fprintf(stderr, "tst.check.equals failed: expected %lld, got %lld\n",
+            (long long)expected, (long long)got);
+    exit(1);
+  }
+  return 0;
+}
+static int64_t tst_eq_bool(bool got, bool expected) {
+  if (got != expected) {
+    fprintf(stderr, "tst.check.equals failed: expected %s, got %s\n",
+            expected ? "true" : "false", got ? "true" : "false");
+    exit(1);
+  }
+  return 0;
+}
+static int64_t tst_eq_str(const char* got, const char* expected) {
+  const char* g = got ? got : "";
+  const char* e = expected ? expected : "";
+  if (strcmp(g, e) != 0) {
+    fprintf(stderr, "tst.check.equals failed: expected \"%s\", got \"%s\"\n", e, g);
+    exit(1);
+  }
+  return 0;
+}
 
 static char* json_int(int64_t x) {
   char* b = (char*)malloc(32);
@@ -1417,6 +1444,14 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     sql, _ = self.gen_expr(e.args[0])
                     argc_args = self.db_args(e.args[1:])
                     return f"db_exec({sql}, {argc_args})", "i64"
+            # tst.check.equals(got, expected) — builtin test assertion.
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Member) \
+                    and isinstance(e.func.obj.obj, Var) and e.func.obj.obj.name == 'tst' \
+                    and e.func.obj.field == 'check' and e.func.field == 'equals':
+                got, got_t = self.gen_expr(e.args[0])
+                exp, _ = self.gen_expr(e.args[1])
+                helper = {'i64': 'tst_eq_i64', 'bool': 'tst_eq_bool', 'str': 'tst_eq_str'}.get(got_t, 'tst_eq_i64')
+                return f"({helper}({got}, {exp}), INT64_C(0))", "i64"
             if isinstance(e.func, Member):
                 base_type = self.expr_type(e.func.obj)
                 if base_type in self.interface_methods and e.func.field in self.interface_methods[base_type]:
