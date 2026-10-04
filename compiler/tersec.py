@@ -1350,6 +1350,11 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 ret_type = self.interface_method_returns.get((btype, e.field), 'i64')
                 return f"(({base}).{e.field})", btype
             field_type = self.record_field_types.get(btype, {}).get(e.field, 'i64')
+
+            # Special handling for List.len() - generate a call to list_len()
+            if btype == 'List' and e.field == 'len':
+                return f"list_len({base})", "i64"
+
             return f"(({base}).{e.field})", field_type
         if isinstance(e, Binary):
             l, lt = self.gen_expr(e.left)
@@ -1382,7 +1387,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 v, _ = self.gen_expr(it)
                 parts.append(f"{tmp}.d[{i}] = {v}")
             parts.append(tmp)
-            return "({ " + "; ".join(parts) + "; })", "list"
+            return "({ " + "; ".join(parts) + "; })", "List"
         if isinstance(e, Index):
             c, ct = self.gen_expr(e.coll)
             i, _ = self.gen_expr(e.idx)
@@ -1453,6 +1458,13 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 helper = {'i64': 'tst_eq_i64', 'bool': 'tst_eq_bool', 'str': 'tst_eq_str'}.get(got_t, 'tst_eq_i64')
                 return f"({helper}({got}, {exp}), INT64_C(0))", "i64"
             if isinstance(e.func, Member):
+                # Built-in: .len() method on str and List
+                if e.func.field == 'len':
+                    base, bt = self.gen_expr(e.func.obj)
+                    if bt == 'str':
+                        return f"str_len({base})", "i64"
+                    if bt == 'List':
+                        return f"list_len({base})", "i64"
                 base_type = self.expr_type(e.func.obj)
                 if base_type in self.interface_methods and e.func.field in self.interface_methods[base_type]:
                     base_code, _ = self.gen_expr(e.func.obj)

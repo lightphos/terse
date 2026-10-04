@@ -1,5 +1,6 @@
 {
   "files.associations": {
     "*.terse": "terse"
-  }
+  },
+  "makefile.configureOnOpen": false
 }
