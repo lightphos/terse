@@ -1,0 +1,128 @@
+// Terse-language regression suite corresponding to language-level cases in
+// test_compiler.py. Run with `make tc-test`.
+
+use std.fs
+use std.tst
+use usage.moduse
+use usage/moduse as module
+
+Pair { value: i64 }
+Node { kind: i64, text: str, left: i64, right: i64 }
+Point { x: i64, y: i64 }
+
+fn fact(n: i64) -> i64 = if n <= 1 { 1 } else { n * fact(n - 1) }
+fn abs(x: i64) -> i64 = if x < 0 { 0 - x } else { x }
+fn make_pair() -> Pair = Pair { value: 41 }
+fn apply(f: fn, x: i64) -> i64 = f(x)
+fn double(n: i64) -> i64 = n * 2
+fn Point.str() -> str = "ok"
+fn show(p: Printable) -> str = p.str()
+
+tr Printable {
+  fn str() -> str
+}
+
+fn test_arithmetic() -> i64 {
+  tst.check.equals(40 + 2, 42)
+  tst.check.equals((3 * 4) + (10 / 2), 17)
+  tst.check.equals(fact(6), 720)
+  0
+}
+
+fn test_control() -> i64 {
+  tst.check.equals(abs(0 - 7) + abs(3), 10)
+  tst.check.equals(ret_zero(), 0)
+  tst.check.equals(ret_value(), 12)
+  tst.check.equals(let_sum(), 42)
+  tst.check.equals(loop_while_sum(), 10)
+  tst.check.equals(loop_for_sum(), 45)
+  0
+}
+
+fn ret_zero() -> i64 {
+  ret
+}
+
+fn ret_value() -> i64 {
+  let x = 10
+  ret x + 2
+}
+
+fn let_sum() -> i64 {
+  let a = 10
+  let b = 32
+  a + b
+}
+
+fn loop_while_sum() -> i64 {
+  let i = 0
+  let sum = 0
+  lp i < 5 {
+    sum = sum + i
+    i = i + 1
+  }
+  sum
+}
+
+fn loop_for_sum() -> i64 {
+  let sum = 0
+  lp i = 0; i < 10; i = i + 1 {
+    sum = sum + i
+  }
+  sum
+}
+
+fn test_higher_order() -> i64 {
+  tst.check.equals(apply(double, 21), 42)
+  tst.check.equals(apply(|n| n + 100, 7), 107)
+  0
+}
+
+fn test_records_and_ast_lists() -> i64 {
+  let pair = make_pair()
+  tst.check.equals(pair.value + 1, 42)
+  let p = Point { x: 1, y: 2 }
+  tst.check.equals(p.x + p.y, 3)
+  tst.check.equals(show(p), "ok")
+  let nodes: [Node] = []
+  nodes = push(nodes, Node { kind: 1, text: "int", left: 0, right: 0 })
+  nodes = push(nodes, Node { kind: 2, text: "add", left: 0, right: 1 })
+  tst.check.equals(len(nodes), 2)
+  tst.check.equals(nodes[1].kind, 2)
+  0
+}
+
+fn test_strings_and_collections() -> i64 {
+  tst.check.equals(substr("terse", 1, 3), "ers")
+  tst.check.equals("hel" + "lo", "hello")
+  let values = [10, 20, 30]
+  tst.check.equals(len(values), 3)
+  tst.check.equals(values[1], 20)
+  tst.check.equals(json([1, 2, 3]), "[1,2,3]")
+  0
+}
+
+fn test_text_file_io() -> i64 {
+  let path = env("TERSE_TEST_FILE")
+  fs.write_text(path, "compiler source round trip")
+  tst.check.equals(fs.read_text(path), "compiler source round trip")
+  0
+}
+
+fn test_source_module_imports() -> i64 {
+  tst.check.equals(mod(), 0)
+  tst.check.equals(mod2(), 0)
+  tst.check.equals(module.mod(), 0)
+  0
+}
+
+go {
+  test_arithmetic()
+  test_control()
+  test_higher_order()
+  test_records_and_ast_lists()
+  test_strings_and_collections()
+  test_text_file_io()
+  test_source_module_imports()
+  0
+}

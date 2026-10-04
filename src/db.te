@@ -2,6 +2,7 @@
 // db.connect("postgres://user:pass@localhost/db")
 rec User { id: i64, name: str, active: bool }
 
+go {
 db.connect("sqlite3://file/:memory:")
 
 db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, active INTEGER)")
@@ -27,4 +28,5 @@ pr("Rows " + rows)
 
 // // Migrations (optional built-in)
 // db.migrate("./migrations")
+}
 

@@ -1,6 +1,6 @@
 // strings, lists, pr, len — terse I/O demo
 
-fn main() -> i64 {
+go {
   pr("hello terse")
   pr(40 + 2)
 

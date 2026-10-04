@@ -13,7 +13,7 @@ class TT(Enum):
     EOF=auto(); IDENT=auto(); INT=auto(); STRING=auto()
     FN=auto(); LET=auto(); IF=auto(); ELSE=auto(); LP=auto()
     TRUE=auto(); FALSE=auto(); RETURN=auto(); RET=auto(); TR=auto()
-    USE=auto(); TYPE=auto(); GO=auto()
+    USE=auto(); TYPE=auto(); GO=auto(); PUB=auto()
     ARROW=auto(); FATARROW=auto()
     LPAREN=auto(); RPAREN=auto(); LBRACE=auto(); RBRACE=auto()
     LBRACK=auto(); RBRACK=auto()
@@ -25,7 +25,7 @@ class TT(Enum):
 
 KW = {'fn':TT.FN,'let':TT.LET,'if':TT.IF,'else':TT.ELSE,'lp':TT.LP,
       'true':TT.TRUE,'false':TT.FALSE,'return':TT.RETURN,'ret':TT.RET,
-      'use':TT.USE,'type':TT.TYPE,'go':TT.GO,'tr':TT.TR}
+    'use':TT.USE,'type':TT.TYPE,'go':TT.GO,'tr':TT.TR,'pub':TT.PUB}
 
 @dataclass
 class Tok:
@@ -175,6 +175,7 @@ class HttpServe(Expr):
 @dataclass
 class FnDecl:
     name: str; params: List[Param]; ret: Optional[TypeNode]; body: Expr
+    public: bool = False
 @dataclass
 class RecDecl:
     name: str
@@ -190,6 +191,13 @@ class MethodDecl:
     params: List[Param]          # does NOT include self
     ret: Optional[TypeNode]
     body: Expr
+    public: bool = False
+@dataclass
+class UseDecl:
+    path: str
+    alias: str
+    symbol: Optional[str] = None
+    glob: bool = False
 @dataclass
 class RecordLit(Expr):
     ctor: Expr
@@ -201,6 +209,7 @@ class Program:
     sigs: List[TraitDecl] = field(default_factory=list)
     methods: List[MethodDecl] = field(default_factory=list)
     toplevel: Optional[Expr] = None  # top-level body or go body
+    uses: List[UseDecl] = field(default_factory=list)
 
 # --- Parser -----------------------------------------------
 class Parser:
@@ -509,16 +518,39 @@ class Parser:
         return self.parse_assign()
 
     def skip_use(self):
-        # use std.http, std.db
         self.expect(TT.USE)
+        uses = []
         while True:
-            self.expect(TT.IDENT)
-            while self.match(TT.DOT):
-                self.adv(); self.expect(TT.IDENT)
+            segments = [self.expect(TT.IDENT).v]
+            separators = []
+            while self.match(TT.DOT, TT.SLASH):
+                separators.append(self.adv().v)
+                segments.append(self.expect(TT.IDENT).v)
+            symbol = None
+            glob = False
+            if (segments[0] != 'std' and len(segments) >= 3
+                    and '/' not in separators):
+                symbol = segments.pop()
+                separators.pop()
+                path = '/'.join(segments)
+            else:
+                path = segments[0]
+                for separator, segment in zip(separators, segments[1:]):
+                    path += separator + segment
+            alias = symbol or path.replace('.', '/').split('/')[-1]
+            explicit_alias = False
+            if self.match(TT.IDENT) and self.cur().v == 'as':
+                self.adv()
+                alias = self.expect(TT.IDENT).v
+                explicit_alias = True
+            glob = (symbol is None and segments[0] != 'std' and len(segments) == 2
+                    and separators == ['.'] and not explicit_alias)
+            uses.append(UseDecl(path, alias, symbol, glob))
             if self.match(TT.COMMA):
                 self.adv(); continue
             break
         if self.match(TT.SEMI): self.adv()
+        return uses
 
     def skip_type(self):
         # type User = { ... }  or type User = i64
@@ -596,9 +628,12 @@ class Parser:
         return FnDecl(name, params, ret, body)
 
     def parse_go(self):
-        # caller already matched/consumed GO, or we consume it here
         if self.match(TT.GO):
             self.adv()
+        if self.match(TT.LPAREN) and self.toks[self.i + 1].t == TT.RPAREN:
+            self.adv()
+            self.adv()
+            return IntLit(0)
         return self.parse_expr()
 
     def parse_program(self):
@@ -606,11 +641,12 @@ class Parser:
         recs = []
         sigs = []
         methods = []
+        uses = []
         top_stmts = []
         go_body = None
         while not self.match(TT.EOF):
             if self.match(TT.USE):
-                self.skip_use()
+                uses.extend(self.skip_use())
             elif self.match(TT.IDENT):
                 next_tok = self.toks[self.i + 1] if self.i + 1 < len(self.toks) else None
                 if (self.cur().v in ('rec', 'struct') and next_tok is not None and next_tok.t == TT.IDENT and self.i + 2 < len(self.toks) and self.toks[self.i + 2].t == TT.LBRACE) or (next_tok is not None and next_tok.t == TT.LBRACE):
@@ -622,6 +658,16 @@ class Parser:
                 self.skip_type()
             elif self.match(TT.TR):
                 sigs.append(self.parse_trait())
+            elif self.match(TT.PUB):
+                self.adv()
+                if not self.match(TT.FN):
+                    raise SyntaxError("expected fn after pub")
+                decl = self.parse_fn()
+                decl.public = True
+                if isinstance(decl, MethodDecl):
+                    methods.append(decl)
+                else:
+                    fs.append(decl)
             elif self.match(TT.FN):
                 decl = self.parse_fn()
                 if isinstance(decl, MethodDecl):
@@ -647,30 +693,16 @@ class Parser:
                 # top-level expression (side effects + final value)
                 top_stmts.append(('expr', self.parse_expr()))
                 if self.match(TT.SEMI): self.adv()
-        # Prefer: fn main > go > toplevel stmts
-        has_main = any(f.name == 'main' for f in fs)
+        if any(function.name == 'main' for function in fs):
+            raise SyntaxError("fn main is no longer an entry point; use go { ... } or go()")
         toplevel = None
-        if not has_main:
-            if go_body is not None:
-                toplevel = go_body
-            elif top_stmts:
-                body = IntLit(0)
-                first = True
-                for kind, *rest in reversed(top_stmts):
-                    if kind == 'let':
-                        name, val, typ = rest
-                        body = LetExpr(name, val, body, typ=typ)
-                    else:
-                        e = rest[0]
-                        if first:
-                            body = e
-                            first = False
-                        else:
-                            body = LetExpr("_", e, body)
-                toplevel = body
-            elif not fs:
-                toplevel = IntLit(0)
-        return Program(fs, recs, sigs, methods, toplevel)
+        if go_body is not None:
+            if top_stmts:
+                raise SyntaxError("top-level statements cannot accompany a go entry point")
+            toplevel = go_body
+        elif top_stmts:
+            raise SyntaxError("program entry point required; use go { ... } or go()")
+        return Program(fs, recs, sigs, methods, toplevel, uses)
 
 # --- Type check (light) -----------------------------------
 class TypeChecker:
@@ -684,7 +716,11 @@ class TypeChecker:
         self.satisfied = set()  # set of (sig_name, struct_name) pairs
 
     def _type_name(self, t):
-        return t.name if t else 'i64'
+        if t is None:
+            return 'i64'
+        if t.name == 'list' and t.args:
+            return f"list_{self._type_name(t.args[0])}"
+        return t.name
 
     def compute_satisfaction(self, prog):
         """Determine which (trait, struct) pairs are satisfied by structural matching."""
@@ -737,7 +773,9 @@ class TypeChecker:
         if isinstance(e, BoolLit): return 'bool'
         if isinstance(e, StrLit): return 'str'
         if isinstance(e, ListLit):
-            for it in e.items: self.check(it)
+            item_types = [self.check(it) for it in e.items]
+            if item_types and item_types[0] in self.recs:
+                return f'list_{item_types[0]}'
             return 'list'
         if isinstance(e, RecordLit):
             for _, v in e.fields: self.check(v)
@@ -746,8 +784,8 @@ class TypeChecker:
             return 'i64'
         if isinstance(e, Var):
             if e.name in self.env: return self.env[e.name]
-            if e.name in self.funcs or e.name in ('pr','len','json','env','str'): return 'fn'
-            if e.name in ('http','db','tst'): return 'mod'
+            if e.name in self.funcs or e.name in ('pr','len','json','env','str','push','substr','arg'): return 'fn'
+            if e.name in ('http','db','tst','fs','gcc'): return 'mod'
             return 'i64'
         if isinstance(e, Member):
             base = self.check(e.obj)
@@ -765,12 +803,22 @@ class TypeChecker:
         if isinstance(e, Call):
             self.check(e.func)
             for a in e.args: self.check(a)
+            if isinstance(e.func, Var) and e.func.name == 'push' and e.args:
+                return self.check(e.args[0])
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'fs':
+                if e.func.field == 'read_text': return 'str'
+                if e.func.field == 'write_text': return 'i64'
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'gcc' and e.func.field == 'compile':
+                return 'i64'
             if isinstance(e.func, Index) and isinstance(e.func.coll, Member) \
                     and isinstance(e.func.coll.obj, Var) and e.func.coll.obj.name == 'db' \
                     and e.func.coll.field in ('query', 'query_one') \
                     and isinstance(e.func.idx, Var):
                 return f'list_{e.func.idx.name}'
-            if isinstance(e.func, Var) and e.func.name in ('pr','json','env'): return 'str' if e.func.name in ('json','env') else 'i64'
+            if isinstance(e.func, Var) and e.func.name in ('pr','json','env','substr'):
+                return 'str' if e.func.name in ('json','env','substr') else 'i64'
             if isinstance(e.func, Var) and e.func.name == 'len': return 'i64'
             return 'i64'
         if isinstance(e, Index):
@@ -828,9 +876,17 @@ class TypeChecker:
 RUNTIME = r'''
 #include <stdint.h>
 #include <stdbool.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #define SQLITE_OK 0
 #define SQLITE_ROW 100
@@ -930,6 +986,11 @@ static int64_t list_get(List L, int64_t i) {
   return L.d[i];
 }
 static int64_t list_len(List L) { return L.n; }
+static List list_push(List L, int64_t value) {
+    L.d = (int64_t*)realloc(L.d, sizeof(int64_t) * (size_t)(L.n + 1));
+    L.d[L.n++] = value;
+    return L;
+}
 
 typedef struct {
     int kind; /* 0 = integer, 1 = string */
@@ -1027,6 +1088,18 @@ static char* str_concat(const char* a, const char* b) {
   return r;
 }
 static int64_t str_len(const char* s) { return (int64_t)strlen(s); }
+static char* str_slice(const char* s, int64_t start, int64_t length) {
+    int64_t size = str_len(s);
+    if (start < 0) start = 0;
+    if (start > size) start = size;
+    if (length < 0) length = 0;
+    if (length > size - start) length = size - start;
+    char* result = (char*)malloc((size_t)length + 1);
+    if (!result) { fprintf(stderr, "out of memory slicing string\n"); exit(1); }
+    memcpy(result, s + start, (size_t)length);
+    result[length] = 0;
+    return result;
+}
 
 static int _terse_did_print = 0;
 static void print_int(int64_t x) { _terse_did_print = 1; printf("%lld\n", (long long)x); }
@@ -1121,6 +1194,83 @@ static const char* env_get(const char* k) {
   return v ? v : "";
 }
 
+static int terse_argc = 0;
+static char** terse_argv = NULL;
+
+static const char* terse_arg(int64_t index) {
+    if (index < 0 || index >= terse_argc) return "";
+    return terse_argv[index];
+}
+
+static int64_t terse_gcc_compile(const char* source, const char* output) {
+    char* args[12];
+    int count = 0;
+    args[count++] = "gcc";
+    args[count++] = "-std=c11";
+    args[count++] = "-Wall";
+    args[count++] = "-Wextra";
+    args[count++] = (char*)source;
+#ifdef _WIN32
+    args[count++] = "-lws2_32";
+#else
+    args[count++] = "-lsqlite3";
+#endif
+    args[count++] = "-o";
+    args[count++] = (char*)output;
+    args[count] = NULL;
+#ifdef _WIN32
+    return (int64_t)_spawnvp(_P_WAIT, "gcc", (const char* const*)args);
+#else
+    pid_t child = fork();
+    if (child < 0) {
+        perror("tc: fork");
+        return 1;
+    }
+    if (child == 0) {
+        execvp("gcc", args);
+        perror("tc: exec gcc");
+        _exit(127);
+    }
+    int status = 0;
+    if (waitpid(child, &status, 0) < 0) {
+        perror("tc: wait for gcc");
+        return 1;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return 1;
+#endif
+}
+
+static void fs_io_fail(const char* operation, const char* path) {
+    fprintf(stderr, "file %s failed for '%s': %s\n", operation, path, strerror(errno));
+    exit(1);
+}
+
+static char* fs_read_text(const char* path) {
+    FILE* file = fopen(path, "rb");
+    if (!file) fs_io_fail("read", path);
+    if (fseek(file, 0, SEEK_END) != 0) fs_io_fail("read", path);
+    long size = ftell(file);
+    if (size < 0 || fseek(file, 0, SEEK_SET) != 0) fs_io_fail("read", path);
+    char* text = (char*)malloc((size_t)size + 1);
+    if (!text) { fclose(file); fprintf(stderr, "out of memory reading '%s'\n", path); exit(1); }
+    size_t read_size = fread(text, 1, (size_t)size, file);
+    if (ferror(file)) fs_io_fail("read", path);
+    if (fclose(file) != 0) fs_io_fail("read", path);
+    text[read_size] = 0;
+    return text;
+}
+
+static int64_t fs_write_text(const char* path, const char* text) {
+    FILE* file = fopen(path, "wb");
+    if (!file) fs_io_fail("write", path);
+    size_t size = strlen(text);
+    size_t written = fwrite(text, 1, size, file);
+    if (written != size || fclose(file) != 0) fs_io_fail("write", path);
+    return (int64_t)written;
+}
+
 /* -- minimal HTTP/1.1 server -- */
 typedef const char* (*route_fn)(const char* method, const char* path, const char* body);
 
@@ -1203,6 +1353,7 @@ class CodeGen:
         self.interface_method_returns = {}
         self.interface_helpers = {}
         self.func_param_types = {}
+        self.func_return_types = {}
 
     def emit(self, s=""):
         self.lines.append("  " * self.indent + s)
@@ -1224,7 +1375,11 @@ class CodeGen:
         return f"{len(values)}, (DbValue[]){{{', '.join(values)}}}"
 
     def type_name(self, typ):
-        return typ.name if typ else 'i64'
+        if typ is None:
+            return 'i64'
+        if typ.name == 'list' and typ.args:
+            return f"list_{self.type_name(typ.args[0])}"
+        return typ.name
 
     def typed_db_code(self, rec):
         name = rec.name
@@ -1237,24 +1392,38 @@ class CodeGen:
                 value = f"(sqlite3_column_int(stmt, {index}) != 0)"
             elif typ == 'f64':
                 value = f"sqlite3_column_double(stmt, {index})"
+            elif typ.startswith('list_'):
+                value = f"({self.c_type(typ)}){{NULL, 0, 0}}"
             else:
                 value = f"({self.c_type(typ)})sqlite3_column_int64(stmt, {index})"
             fields.append(f"        row.{field_name} = {value};")
         body = "\n".join(fields)
-        return f'''typedef struct {{ {name} *d; int64_t n; }} List_{name};
+        return f'''static List_{name} list_new_{name}(int64_t n) {{
+    List_{name} L = {{NULL, 0, n}};
+    if (n > 0) {{ L.d = ({name}*)calloc((size_t)n, sizeof({name})); L.n = n; }}
+    return L;
+}}
+static List_{name} list_push_{name}(List_{name} L, {name} value) {{
+    if (L.n == L.cap) {{
+        L.cap = L.cap ? L.cap * 2 : 4;
+        L.d = ({name}*)realloc(L.d, sizeof({name}) * (size_t)L.cap);
+    }}
+    L.d[L.n++] = value;
+    return L;
+}}
+static int64_t list_len_{name}(List_{name} L) {{ return L.n; }}
 static {name} list_get_{name}(List_{name} L, int64_t i) {{
     if (i < 0 || i >= L.n) {{ fprintf(stderr, "index out of bounds\\n"); exit(1); }}
     return L.d[i];
 }}
 static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
     sqlite3_stmt* stmt = db_prepare_query(sql, argc, args);
-    List_{name} rows = {{NULL, 0}};
+    List_{name} rows = {{NULL, 0, 0}};
     int code;
     while ((code = sqlite3_step(stmt)) == SQLITE_ROW) {{
         {name} row = {{0}};
 {body}
-        rows.d = ({name}*)realloc(rows.d, sizeof({name}) * (rows.n + 1));
-        rows.d[rows.n++] = row;
+        rows = list_push_{name}(rows, row);
     }}
     if (code != SQLITE_DONE) db_fail("query", code);
     sqlite3_finalize(stmt);
@@ -1273,6 +1442,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 values.append(f'printf("%s", {value} ? "true" : "false")')
             elif typ == 'f64':
                 values.append(f'printf("%g", {value})')
+            elif typ.startswith('list_'):
+                values.append('printf("<list>")')
             else:
                 values.append(f'printf("%lld", (long long){value})')
         body = ', printf(", "), '.join(values)
@@ -1293,6 +1464,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 fields.append(f'json_append_bool(b, &o, cap, &first, "{field_name}", {value})')
             elif typ == 'f64':
                 fields.append(f'json_append_f64(b, &o, cap, &first, "{field_name}", {value})')
+            elif typ.startswith('list_'):
+                fields.append(f'json_append_str(b, &o, cap, &first, "{field_name}", "<list>")')
             else:
                 fields.append(f'json_append_i64(b, &o, cap, &first, "{field_name}", {value})')
         body = "; ".join(fields)
@@ -1318,6 +1491,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
     def expr_type(self, e) -> str:
         if isinstance(e, Var):
             return self.env.get(e.name, 'i64')
+        if isinstance(e, Call) and isinstance(e.func, Var):
+            return self.func_return_types.get(e.func.name, 'i64')
         if isinstance(e, RecordLit):
             return e.ctor.name if isinstance(e.ctor, Var) else 'record'
         if isinstance(e, Member):
@@ -1325,7 +1500,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             return self.record_field_types.get(base_type, {}).get(e.field, 'i64')
         return 'i64'
 
-    def gen_expr(self, e) -> Tuple[str, str]:
+    def gen_expr(self, e, expected_type=None) -> Tuple[str, str]:
         if isinstance(e, IntLit):
             return f"INT64_C({e.value})", "i64"
         if isinstance(e, BoolLit):
@@ -1337,7 +1512,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             rec_name = e.ctor.name if isinstance(e.ctor, Var) else 'record'
             parts = []
             for name, val in e.fields:
-                v, _ = self.gen_expr(val)
+                expected_type = self.record_field_types.get(rec_name, {}).get(name)
+                v, _ = self.gen_expr(val, expected_type)
                 parts.append(f".{name} = {v}")
             return f"(({rec_name}){{ {', '.join(parts)} }})", rec_name
         if isinstance(e, Var):
@@ -1382,6 +1558,20 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         if isinstance(e, ListLit):
             n = len(e.items)
             tmp = self.fresh()
+            element_type = None
+            if expected_type and expected_type.startswith('list_'):
+                element_type = expected_type[5:]
+            elif e.items:
+                element_type = self.expr_type(e.items[0])
+            if element_type in self.record_field_types:
+                parts = [f"List_{element_type} {tmp} = list_new_{element_type}({n})"]
+                for i, item in enumerate(e.items):
+                    value, value_type = self.gen_expr(item)
+                    if value_type != element_type:
+                        raise TypeError(f"list elements must all have type {element_type}")
+                    parts.append(f"{tmp}.d[{i}] = {value}")
+                parts.append(tmp)
+                return "({ " + "; ".join(parts) + "; })", f"list_{element_type}"
             parts = [f"List {tmp} = list_new({n})"]
             for i, it in enumerate(e.items):
                 v, _ = self.gen_expr(it)
@@ -1399,11 +1589,18 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             return f"list_get({c}, {i})", "i64"
         if isinstance(e, Call):
             # builtins
+            if isinstance(e.func, Var) and e.func.name == 'push':
+                collection, collection_type = self.gen_expr(e.args[0])
+                value, _ = self.gen_expr(e.args[1])
+                if collection_type.startswith('list_'):
+                    item_type = collection_type[5:]
+                    return f"list_push_{item_type}({collection}, {value})", collection_type
+                return f"list_push({collection}, {value})", 'list'
             if isinstance(e.func, Var) and e.func.name == 'pr':
                 a, at = self.gen_expr(e.args[0])
                 if at == 'str':
                     return f"(print_str({a}), INT64_C(0))", "i64"
-                if at == 'list':
+                if at in ('list', 'List'):
                     return f"(print_list({a}), INT64_C(0))", "i64"
                 if at == 'bool':
                     return f"(print_bool({a}), INT64_C(0))", "i64"
@@ -1412,16 +1609,40 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 return f"(print_i64({a}), INT64_C(0))", "i64"
             if isinstance(e.func, Var) and e.func.name == 'len':
                 a, at = self.gen_expr(e.args[0])
+                if at.startswith('list_'):
+                    return f"list_len_{at[5:]}({a})", "i64"
                 return (f"str_len({a})", "i64") if at == 'str' else (f"list_len({a})", "i64")
             if isinstance(e.func, Var) and e.func.name == 'json':
                 a, at = self.gen_expr(e.args[0])
                 if at == 'str': return f"json_str({a})", "str"
-                if at == 'list': return f"json_list({a})", "str"
+                if at in ('list', 'List'): return f"json_list({a})", "str"
                 if at.startswith('list_'): return f"json_list_{at[5:]}({a})", "str"
                 return f"json_int({a})", "str"
             if isinstance(e.func, Var) and e.func.name == 'env':
                 a, _ = self.gen_expr(e.args[0])
                 return f"env_get({a})", "str"
+            if isinstance(e.func, Var) and e.func.name == 'arg':
+                index, _ = self.gen_expr(e.args[0])
+                return f"terse_arg({index})", "str"
+            if isinstance(e.func, Var) and e.func.name == 'substr':
+                text, _ = self.gen_expr(e.args[0])
+                start, _ = self.gen_expr(e.args[1])
+                length, _ = self.gen_expr(e.args[2])
+                return f"str_slice({text}, {start}, {length})", "str"
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'fs':
+                if e.func.field == 'read_text':
+                    path, _ = self.gen_expr(e.args[0])
+                    return f"fs_read_text({path})", "str"
+                if e.func.field == 'write_text':
+                    path, _ = self.gen_expr(e.args[0])
+                    text, _ = self.gen_expr(e.args[1])
+                    return f"fs_write_text({path}, {text})", "i64"
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'gcc' and e.func.field == 'compile':
+                source, _ = self.gen_expr(e.args[0])
+                output, _ = self.gen_expr(e.args[1])
+                return f"terse_gcc_compile({source}, {output})", "i64"
             # Database operations use the SQLite-backed runtime.
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name == 'db':
                 if e.func.field == 'connect':
@@ -1463,6 +1684,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     base, bt = self.gen_expr(e.func.obj)
                     if bt == 'str':
                         return f"str_len({base})", "i64"
+                    if bt.startswith('list_'):
+                        return f"list_len_{bt[5:]}({base})", "i64"
                     if bt == 'List':
                         return f"list_len({base})", "i64"
                 base_type = self.expr_type(e.func.obj)
@@ -1489,7 +1712,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 else:
                     args = [self.gen_expr(a)[0] for a in e.args]
                 args_str = ", ".join(args)
-                return f"{cname}({args_str})", "i64"
+                return f"{cname}({args_str})", self.func_return_types.get(e.func.name, "i64")
             fptr, _ = self.gen_expr(e.func)
             args = ", ".join(self.gen_expr(a)[0] for a in e.args)
             n = len(e.args)
@@ -1531,7 +1754,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 return (f"({{ {init_stmt} while({cond_c}) {{ (void)({body_c}); {post_c} }} INT64_C(0); }})", "i64")
             return (f"({{ while({cond_c}) {{ (void)({body_c}); {post_c} }} INT64_C(0); }})", "i64")
         if isinstance(e, LetExpr):
-            v, vt = self.gen_expr(e.value)
+            v, vt = self.gen_expr(e.value, self.type_name(e.typ) if e.typ else None)
             if e.typ is not None:
                 vt = self.type_name(e.typ)
             old = self.env.get(e.name)
@@ -1673,15 +1896,20 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         self.interface_methods = {sig.name: [m[0] for m in sig.methods] for sig in prog.sigs}
         self.interface_method_returns = {(sig.name, m[0]): self.type_name(m[2]) if m[2] else 'i64' for sig in prog.sigs for m in sig.methods}
         funcs = list(prog.funcs)
+        entry_name = None
         for m in prog.methods:
             method_name = f"{m.receiver}_{m.name}"
             self.method_names[(m.receiver, m.name)] = "terse_" + method_name
             self.method_returns[(m.receiver, m.name)] = self.type_name(m.ret) if m.ret else 'i64'
             receiver = Param('self', TypeNode(m.receiver))
             funcs.append(FnDecl(method_name, [receiver] + list(m.params), m.ret, m.body))
-        if prog.toplevel is not None and not any(f.name == 'main' for f in funcs):
-            funcs = funcs + [FnDecl('main', [], TypeNode('i64'), prog.toplevel)]
+        if prog.toplevel is not None:
+            entry_name = '__terse_program_entry'
+            while any(f.name == entry_name for f in funcs):
+                entry_name += '_'
+            funcs.append(FnDecl(entry_name, [], TypeNode('i64'), prog.toplevel))
         self.func_param_types = {f.name: [self.type_name(p.typ) if p.typ else 'i64' for p in f.params] for f in funcs}
+        self.func_return_types = {f.name: self.type_name(f.ret) if f.ret else 'i64' for f in funcs}
         for f in funcs:
             self.known[f.name] = "terse_" + f.name
         out = [RUNTIME, ""]
@@ -1748,13 +1976,19 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                         f"}}\n"
                     )
         for rec in prog.recs:
+            out.append(f"typedef struct {rec.name} {rec.name};")
+        for rec in prog.recs:
+            out.append(f"typedef struct {{ {rec.name} *d; int64_t n; int64_t cap; }} List_{rec.name};")
+        if prog.recs:
+            out.append("")
+        for rec in prog.recs:
             fields = []
             for name, typ in rec.fields:
                 fields.append(f"  {self.c_type(self.type_name(typ))} {name};")
             if fields:
-                out.append("typedef struct {")
+                out.append(f"struct {rec.name} {{")
                 out.extend(fields)
-                out.append(f"}} {rec.name};")
+                out.append("};")
                 out.append("")
         for rec in prog.recs:
             out.append(self.typed_db_code(rec))
@@ -1777,11 +2011,13 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             self.gen_fn(f)
         out.extend(self.extra)
         out.extend(self.lines)
-        if any(f.name == 'main' for f in funcs):
+        if entry_name is not None:
             out += [
                 "",
                 "int main(int argc, char** argv) {",
-                "  int64_t result = terse_main();",
+                "  terse_argc = argc;",
+                "  terse_argv = argv;",
+                f"  int64_t result = {self.known[entry_name]}();",
                 "  /* skip trailing 0 when pr already produced output */",
                 "  if (!(_terse_did_print && result == 0))",
                 "    printf(\"%lld\\n\", (long long)result);",
@@ -1791,12 +2027,209 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         return "\n".join(out)
 
 # --- Driver -----------------------------------------------
-def compile_terse(src, out_bin, keep_c=False, verbose=False):
+def _rewrite_module_expr(e, local_functions, imported_modules):
+    if isinstance(e, Var):
+        return e
+    if isinstance(e, Member):
+        if isinstance(e.obj, Var) and e.obj.name in imported_modules:
+            exports = imported_modules[e.obj.name]
+            if '__builtin_module__' in exports:
+                return Member(Var(exports['__builtin_module__']), e.field)
+            if e.field not in exports:
+                raise SyntaxError(f"module '{e.obj.name}' has no function '{e.field}'")
+            return Var(exports[e.field])
+        e.obj = _rewrite_module_expr(e.obj, local_functions, imported_modules)
+    elif isinstance(e, Call):
+        if isinstance(e.func, Var) and e.func.name in local_functions:
+            e.func = Var(local_functions[e.func.name])
+        else:
+            e.func = _rewrite_module_expr(e.func, local_functions, imported_modules)
+        e.args = [_rewrite_module_expr(arg, local_functions, imported_modules) for arg in e.args]
+    elif isinstance(e, Binary):
+        e.left = _rewrite_module_expr(e.left, local_functions, imported_modules)
+        e.right = _rewrite_module_expr(e.right, local_functions, imported_modules)
+    elif isinstance(e, Unary):
+        e.expr = _rewrite_module_expr(e.expr, local_functions, imported_modules)
+    elif isinstance(e, RetExpr) and e.value is not None:
+        e.value = _rewrite_module_expr(e.value, local_functions, imported_modules)
+    elif isinstance(e, IfExpr):
+        e.cond = _rewrite_module_expr(e.cond, local_functions, imported_modules)
+        e.then = _rewrite_module_expr(e.then, local_functions, imported_modules)
+        if e.els is not None:
+            e.els = _rewrite_module_expr(e.els, local_functions, imported_modules)
+    elif isinstance(e, LetExpr):
+        e.value = _rewrite_module_expr(e.value, local_functions, imported_modules)
+        e.body = _rewrite_module_expr(e.body, local_functions, imported_modules)
+    elif isinstance(e, Lambda):
+        e.body = _rewrite_module_expr(e.body, local_functions, imported_modules)
+    elif isinstance(e, LoopExpr):
+        if e.init is not None:
+            e.init = _rewrite_module_expr(e.init, local_functions, imported_modules)
+        e.cond = _rewrite_module_expr(e.cond, local_functions, imported_modules)
+        if e.post is not None:
+            e.post = _rewrite_module_expr(e.post, local_functions, imported_modules)
+        e.body = _rewrite_module_expr(e.body, local_functions, imported_modules)
+    elif isinstance(e, Block):
+        e.stmts = [_rewrite_module_expr(stmt, local_functions, imported_modules) for stmt in e.stmts]
+    elif isinstance(e, ListLit):
+        e.items = [_rewrite_module_expr(item, local_functions, imported_modules) for item in e.items]
+    elif isinstance(e, Index):
+        e.coll = _rewrite_module_expr(e.coll, local_functions, imported_modules)
+        e.idx = _rewrite_module_expr(e.idx, local_functions, imported_modules)
+    elif isinstance(e, RecordLit):
+        e.ctor = _rewrite_module_expr(e.ctor, local_functions, imported_modules)
+        e.fields = [(name, _rewrite_module_expr(value, local_functions, imported_modules))
+                    for name, value in e.fields]
+    elif isinstance(e, HttpServe):
+        e.port = _rewrite_module_expr(e.port, local_functions, imported_modules)
+        for route in e.routes:
+            route.handler = _rewrite_module_expr(route.handler, local_functions, imported_modules)
+    return e
+
+
+def _source_module_root(source_path):
+    if source_path:
+        source_dir = os.path.dirname(os.path.abspath(source_path))
+        current = source_dir
+        while True:
+            if os.path.basename(current) == 'src':
+                return current
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    workspace_src = os.path.abspath(os.path.join(os.getcwd(), 'src'))
+    if os.path.isdir(workspace_src):
+        return workspace_src
+    return os.path.dirname(os.path.abspath(source_path)) if source_path else os.getcwd()
+
+
+def _load_source_modules(program, source_path):
+    module_root = os.path.realpath(_source_module_root(source_path))
+    cache = {}
+    loading = set()
+
+    def load_module(use):
+        if use.path.startswith('std.'):
+            return {'functions': [], 'exports': {}}
+        relative = use.path.replace('.', os.sep).replace('/', os.sep)
+        if relative.endswith('.te'):
+            relative = relative[:-3]
+        module_file = os.path.realpath(os.path.join(module_root, relative + '.te'))
+        try:
+            if os.path.commonpath((module_root, module_file)) != module_root:
+                raise SyntaxError(f"module path escapes source root: '{use.path}'")
+        except ValueError:
+            raise SyntaxError(f"invalid module path: '{use.path}'")
+        if module_file in loading:
+            raise SyntaxError(f"cyclic module import involving '{use.path}'")
+        if module_file in cache:
+            return cache[module_file]
+        if not os.path.isfile(module_file):
+            raise SyntaxError(f"module '{use.path}' not found at {module_file}")
+
+        loading.add(module_file)
+        with open(module_file, encoding='utf-8') as module_source:
+            child = Parser(Lexer(module_source.read()).tokenize()).parse_program()
+        if child.recs or child.sigs or child.methods or child.toplevel is not None:
+            raise SyntaxError(f"module '{use.path}' may contain function declarations only")
+
+        functions_by_name = {}
+        child_namespaces = {}
+        child_symbols = {}
+        for child_use in child.uses:
+            if child_use.path.startswith('std.'):
+                builtin = child_use.path.split('.')[-1]
+                if child_use.alias != builtin:
+                    child_namespaces[child_use.alias] = {'__builtin_module__': builtin}
+                continue
+            child_module = load_module(child_use)
+            if child_use.glob:
+                for name, qualified in child_module['exports'].items():
+                    if name in child_symbols or name in child_namespaces:
+                        raise SyntaxError(f"duplicate imported name '{name}' in '{use.path}'")
+                    child_symbols[name] = qualified
+            elif child_use.symbol:
+                if child_use.alias in child_namespaces or child_use.alias in child_symbols:
+                    raise SyntaxError(f"duplicate import name '{child_use.alias}' in '{use.path}'")
+                if child_use.symbol not in child_module['exports']:
+                    raise SyntaxError(f"module '{child_use.path}' has no function '{child_use.symbol}'")
+                child_symbols[child_use.alias] = child_module['exports'][child_use.symbol]
+            else:
+                if child_use.alias in child_namespaces or child_use.alias in child_symbols:
+                    raise SyntaxError(f"duplicate import name '{child_use.alias}' in '{use.path}'")
+                child_namespaces[child_use.alias] = child_module['exports']
+            for function in child_module['functions']:
+                functions_by_name[function.name] = function
+
+        prefix = re.sub(r'\W', '_', os.path.relpath(module_file, module_root)[:-3])
+        public_functions = {function.name for function in child.funcs if function.public}
+        own_functions = {function.name: f"__module_{prefix}_{function.name}"
+                         for function in child.funcs}
+        local_functions = dict(child_symbols)
+        if set(local_functions).intersection(own_functions):
+            duplicate = sorted(set(local_functions).intersection(own_functions))[0]
+            raise SyntaxError(f"module '{use.path}' redeclares imported name '{duplicate}'")
+        local_functions.update(own_functions)
+        for function in child.funcs:
+            function.body = _rewrite_module_expr(function.body, local_functions, child_namespaces)
+            function.name = own_functions[function.name]
+            functions_by_name[function.name] = function
+
+        bundle = {
+            'functions': list(functions_by_name.values()),
+            'exports': {name: own_functions[name] for name in public_functions},
+        }
+        cache[module_file] = bundle
+        loading.remove(module_file)
+        return bundle
+
+    namespaces = {}
+    imported_symbols = {}
+    imported_functions = {}
+    for use in program.uses:
+        if use.path.startswith('std.'):
+            builtin = use.path.split('.')[-1]
+            if use.alias != builtin:
+                if use.alias in namespaces or use.alias in imported_symbols:
+                    raise SyntaxError(f"duplicate import name '{use.alias}'")
+                namespaces[use.alias] = {'__builtin_module__': builtin}
+            continue
+        module = load_module(use)
+        if use.glob:
+            for name, qualified in module['exports'].items():
+                if name in imported_symbols or name in namespaces:
+                    raise SyntaxError(f"duplicate imported name '{name}'")
+                imported_symbols[name] = qualified
+        elif use.symbol:
+            if use.alias in namespaces or use.alias in imported_symbols:
+                raise SyntaxError(f"duplicate import name '{use.alias}'")
+            if use.symbol not in module['exports']:
+                raise SyntaxError(f"module '{use.path}' has no function '{use.symbol}'")
+            imported_symbols[use.alias] = module['exports'][use.symbol]
+        else:
+            if use.alias in namespaces or use.alias in imported_symbols:
+                raise SyntaxError(f"duplicate import name '{use.alias}'")
+            namespaces[use.alias] = module['exports']
+        for function in module['functions']:
+            imported_functions[function.name] = function
+
+    for function in program.funcs:
+        function.body = _rewrite_module_expr(function.body, imported_symbols, namespaces)
+    if set(imported_symbols).intersection(function.name for function in program.funcs):
+        raise SyntaxError("glob or selective import conflicts with a local function")
+    if program.toplevel is not None:
+        program.toplevel = _rewrite_module_expr(program.toplevel, imported_symbols, namespaces)
+    program.funcs.extend(imported_functions.values())
+    return program
+
+
+def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None):
     try:
         toks = Lexer(src).tokenize()
         if verbose:
             print("tokens:", [(t.t.name, t.v) for t in toks[:50]])
-        prog = Parser(toks).parse_program()
+        prog = _load_source_modules(Parser(toks).parse_program(), source_path)
         if verbose:
             print("funcs:", [f.name for f in prog.funcs])
         errs = TypeChecker().check_program(prog)
@@ -1858,7 +2291,7 @@ def main():
         src = f.read()
     if args.command == "check":
         try:
-            prog = Parser(Lexer(src).tokenize()).parse_program()
+            prog = _load_source_modules(Parser(Lexer(src).tokenize()).parse_program(), args.source)
             errs = TypeChecker().check_program(prog)
             if errs:
                 for e in errs: print(e)
@@ -1868,9 +2301,9 @@ def main():
             print(e); sys.exit(1)
     out = args.output or os.path.splitext(os.path.basename(args.source))[0]
     if args.command == "build":
-        sys.exit(compile_terse(src, out, args.keep_c, args.verbose))
+        sys.exit(compile_terse(src, out, args.keep_c, args.verbose, args.source))
     if args.command == "run":
-        if compile_terse(src, out, args.keep_c, args.verbose) != 0:
+        if compile_terse(src, out, args.keep_c, args.verbose, args.source) != 0:
             sys.exit(1)
         sys.exit(subprocess.run([os.path.abspath(out)]).returncode)
 

@@ -1,0 +1,7 @@
+use usage.moduse
+
+
+go {
+    mod()
+    mod2()
+}

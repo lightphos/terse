@@ -9,7 +9,7 @@ import textwrap
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TERSEC = os.path.join(os.path.dirname(__file__), "tersec.py")
-EXAMPLES = os.path.join(ROOT, "examples")
+EXAMPLES = os.path.join(ROOT, "src")
 
 
 def compile_src(src: str, name: str = "t"):
@@ -42,12 +42,12 @@ def compile_and_run(src: str):
 
 class TestArithmetic(unittest.TestCase):
     def test_add(self):
-        rc, out, _ = compile_and_run("fn main() -> i64 = 40 + 2")
+        rc, out, _ = compile_and_run("go 40 + 2")
         self.assertEqual(rc, 0)
         self.assertEqual(out.strip(), "42")
 
     def test_mul_div(self):
-        rc, out, _ = compile_and_run("fn main() -> i64 = (3 * 4) + (10 / 2)")
+        rc, out, _ = compile_and_run("go (3 * 4) + (10 / 2)")
         self.assertEqual(rc, 0)
         self.assertEqual(out.strip(), "17")
 
@@ -55,7 +55,7 @@ class TestArithmetic(unittest.TestCase):
         src = textwrap.dedent("""\
             fn fact(n: i64) -> i64 =
               if n <= 1 { 1 } else { n * fact(n - 1) }
-            fn main() -> i64 = fact(6)
+            go fact(6)
         """)
         rc, out, _ = compile_and_run(src)
         self.assertEqual(rc, 0)
@@ -66,7 +66,7 @@ class TestControl(unittest.TestCase):
     def test_if(self):
         src = textwrap.dedent("""\
             fn abs(x: i64) -> i64 = if x < 0 { 0 - x } else { x }
-            fn main() -> i64 = abs(0 - 7) + abs(3)
+            go abs(0 - 7) + abs(3)
         """)
         rc, out, _ = compile_and_run(src)
         self.assertEqual(rc, 0)
@@ -74,7 +74,7 @@ class TestControl(unittest.TestCase):
 
     def test_ret_without_value(self):
         src = textwrap.dedent("""\
-            fn main() -> i64 {
+            go {
               ret
             }
         """)
@@ -84,7 +84,7 @@ class TestControl(unittest.TestCase):
 
     def test_ret_with_value(self):
         src = textwrap.dedent("""\
-            fn main() -> i64 {
+            go {
               let x = 10
               ret x + 2
             }
@@ -95,7 +95,7 @@ class TestControl(unittest.TestCase):
 
     def test_let(self):
         src = textwrap.dedent("""\
-            fn main() -> i64 {
+            go {
               let a = 10
               let b = 32
               a + b
@@ -107,7 +107,7 @@ class TestControl(unittest.TestCase):
 
     def test_typed_let(self):
         src = textwrap.dedent("""\
-            fn main() -> i64 {
+            go {
               let s: str = "s"
               let i = 1
               pr(s)
@@ -121,7 +121,7 @@ class TestControl(unittest.TestCase):
 
     def test_loop_while(self):
         src = textwrap.dedent("""\
-            fn main() -> i64 {
+            go {
               let i = 0
               let sum = 0
               lp i < 5 {
@@ -137,7 +137,7 @@ class TestControl(unittest.TestCase):
 
     def test_loop_for(self):
         src = textwrap.dedent("""\
-            fn main() -> i64 {
+            go {
               let sum = 0
               lp i = 0; i < 10; i = i + 1 {
                 sum = sum + i
@@ -155,7 +155,7 @@ class TestHigherOrder(unittest.TestCase):
         src = textwrap.dedent("""\
             fn apply(f: fn, x: i64) -> i64 = f(x)
             fn double(n: i64) -> i64 = n * 2
-            fn main() -> i64 = apply(double, 21)
+            go apply(double, 21)
         """)
         rc, out, _ = compile_and_run(src)
         self.assertEqual(rc, 0)
@@ -164,7 +164,7 @@ class TestHigherOrder(unittest.TestCase):
     def test_lambda(self):
         src = textwrap.dedent("""\
             fn apply(f: fn, x: i64) -> i64 = f(x)
-            fn main() -> i64 = apply(|n| n + 100, 7)
+            go apply(|n| n + 100, 7)
         """)
         rc, out, _ = compile_and_run(src)
         self.assertEqual(rc, 0)
@@ -172,10 +172,39 @@ class TestHigherOrder(unittest.TestCase):
 
 
 class TestRecords(unittest.TestCase):
+    def test_record_returning_function(self):
+        src = textwrap.dedent("""\
+            Pair { value: i64 }
+            fn make_pair() -> Pair = Pair { value: 41 }
+            go {
+              let pair = make_pair()
+              pair.value + 1
+            }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "42")
+
+    def test_growable_record_list_for_ast_nodes(self):
+        src = textwrap.dedent("""\
+            Node { kind: i64, text: str, left: i64, right: i64 }
+            go {
+              let nodes: [Node] = []
+                            nodes = push(nodes, Node { kind: 1, text: "int", left: 0, right: 0 })
+                            nodes = push(nodes, Node { kind: 2, text: "add", left: 0, right: 1 })
+              pr(len(nodes))
+              pr(nodes[1].kind)
+              0
+            }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertIn("2", out)
+
     def test_rec(self):
         src = textwrap.dedent("""\
             rec Point { x: i64, y: i64 }
-            fn main() -> i64 {
+            go {
               let p = Point { x: 1, y: 2 }
               p.x + p.y
             }
@@ -187,7 +216,7 @@ class TestRecords(unittest.TestCase):
     def test_bare_structure(self):
         src = textwrap.dedent("""\
             Point { x: i64, y: i64 }
-            fn main() -> i64 {
+            go {
               let p = Point { x: 1, y: 2 }
               p.x + p.y
             }
@@ -206,7 +235,7 @@ class TestRecords(unittest.TestCase):
             fn Point.str() -> str {
               "ok"
             }
-            fn main() -> i64 { 0 }
+            go { 0 }
         """)
         rc, out, _ = compile_and_run(src)
         self.assertEqual(rc, 0)
@@ -228,7 +257,7 @@ class TestRecords(unittest.TestCase):
             fn Point.cord() -> i64 {
               self.x + self.y
             }
-            fn main() -> i64 { 0 }
+            go { 0 }
         """)
         rc, out, _ = compile_and_run(src)
         self.assertEqual(rc, 0)
@@ -246,7 +275,7 @@ class TestRecords(unittest.TestCase):
             fn print(p: Printable) {
               pr(p.str())
             }
-            fn main() -> i64 {
+            go {
               let p = Point { x: 1, y: 2 }
               print(p)
               0
@@ -258,14 +287,19 @@ class TestRecords(unittest.TestCase):
 
 
 class TestStringsLists(unittest.TestCase):
+    def test_substr(self):
+        rc, out, _ = compile_and_run('go { pr(substr("terse", 1, 3)) }')
+        self.assertEqual(rc, 0)
+        self.assertIn("ers", out)
+
     def test_print_int(self):
-        rc, out, _ = compile_and_run('fn main() -> i64 { pr(42) }')
+        rc, out, _ = compile_and_run('go { pr(42) }')
         self.assertEqual(rc, 0)
         self.assertIn("42", out)
 
     def test_string_concat(self):
         src = textwrap.dedent("""\
-            fn main() -> i64 {
+            go {
               let s = "hel" + "lo"
               pr(s)
               pr(len(s))
@@ -279,7 +313,7 @@ class TestStringsLists(unittest.TestCase):
 
     def test_pr_mixed_string_concat(self):
         src = textwrap.dedent("""\
-            fn main() -> i64 {
+            go {
               let a = 7
               pr("> " + a)
             }
@@ -290,7 +324,7 @@ class TestStringsLists(unittest.TestCase):
 
     def test_list(self):
         src = textwrap.dedent("""\
-            fn main() -> i64 {
+            go {
               let xs = [10, 20, 30]
               pr(xs)
               pr(len(xs))
@@ -304,19 +338,24 @@ class TestStringsLists(unittest.TestCase):
         self.assertIn("20", out)
 
     def test_print_alias(self):
-        rc, out, _ = compile_and_run('fn main() -> i64 { pr("ok"); 0 }')
+        rc, out, _ = compile_and_run('go { pr("ok"); 0 }')
         self.assertEqual(rc, 0)
         self.assertIn("ok", out)
 
 
 class TestEntryPoints(unittest.TestCase):
-    def test_fn_main(self):
-        rc, out, _ = compile_and_run("fn main() -> i64 = 1")
+    def test_go_empty(self):
+        rc, out, _ = compile_and_run("go()")
         self.assertEqual(rc, 0)
-        self.assertEqual(out.strip(), "1")
+        self.assertEqual(out.strip(), "0")
+
+    def test_fn_main_is_not_an_entrypoint(self):
+        _, code, log = compile_src("fn main() -> i64 = 1")
+        self.assertNotEqual(code, 0)
+        self.assertIn("use go", log)
 
     def test_toplevel(self):
-        rc, out, _ = compile_and_run("pr(7)\n42")
+        rc, out, _ = compile_and_run("go { pr(7); 42 }")
         self.assertEqual(rc, 0)
         self.assertIn("7", out)
         self.assertTrue(out.strip().endswith("42"))
@@ -333,10 +372,93 @@ class TestEntryPoints(unittest.TestCase):
         self.assertEqual(out.strip(), "55")
 
 
+class TestModules(unittest.TestCase):
+    def test_glob_source_import(self):
+        source_path = os.path.join(EXAMPLES, "usemod.te")
+        output_dir = tempfile.mkdtemp(prefix="terse_module_")
+        binary_path = os.path.join(output_dir, "usemod")
+        result = subprocess.run(
+            [sys.executable, TERSEC, "run", source_path, "-o", binary_path],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("from moduse", result.stdout)
+        self.assertIn("from moduse2", result.stdout)
+
+    def test_private_module_function_is_not_importable(self):
+        src = "use usage.moduse._say\ngo 0"
+        _, return_code, log = compile_src(src)
+        self.assertNotEqual(return_code, 0)
+        self.assertIn("has no function '_say'", log)
+
+    def test_source_module_namespace_call(self):
+        src = textwrap.dedent("""\
+            use usage/moduse
+            go { moduse.mod() }
+        """)
+        rc, out, _ = compile_and_run(src)
+        self.assertEqual(rc, 0)
+        self.assertIn("from moduse", out)
+
+
+class TestTerseCompiler(unittest.TestCase):
+    def test_tc_cli_compiles_arithmetic_with_gcc(self):
+        with tempfile.TemporaryDirectory(prefix="terse_tc_") as directory:
+            source_path = os.path.join(directory, "program.te")
+            binary_path = os.path.join(directory, "program")
+            with open(source_path, "w", encoding="utf-8") as source_file:
+                source_file.write("go { (3 * 4) + (10 / 2) }\n")
+
+            compiled = subprocess.run(
+                [os.path.join(ROOT, "tc"), source_path, "-o", binary_path],
+                capture_output=True, text=True, cwd=ROOT,
+            )
+            self.assertEqual(compiled.returncode, 0, compiled.stderr + compiled.stdout)
+            self.assertTrue(os.path.isfile(binary_path))
+            self.assertTrue(os.path.isfile(binary_path + ".c"))
+
+            result = subprocess.run([binary_path], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "17")
+
+    def test_tc_falls_back_for_recursive_functions(self):
+        with tempfile.TemporaryDirectory(prefix="terse_tc_fallback_") as directory:
+            binary_path = os.path.join(directory, "fact")
+            compiled = subprocess.run(
+                [os.path.join(ROOT, "tc"), os.path.join(EXAMPLES, "fact.te"), "-o", binary_path],
+                capture_output=True, text=True, cwd=ROOT,
+            )
+            self.assertEqual(compiled.returncode, 0, compiled.stderr + compiled.stdout)
+            self.assertIn("reference compiler", compiled.stderr)
+            result = subprocess.run([binary_path], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "3628800")
+
+
+class TestFileIO(unittest.TestCase):
+    def test_text_file_round_trip(self):
+        with tempfile.TemporaryDirectory(prefix="terse_file_io_") as directory:
+            path = os.path.join(directory, "source.te")
+            src = textwrap.dedent(f'''\
+                                use std.fs as files
+                go {{
+                                    pr(files.write_text("{path}", "go 42"))
+                                    pr(files.read_text("{path}"))
+                  0
+                }}
+            ''')
+            rc, out, _ = compile_and_run(src)
+            self.assertEqual(rc, 0)
+            self.assertIn("go 42", out)
+            with open(path, encoding="utf-8") as source_file:
+                self.assertEqual(source_file.read(), "go 42")
+
+
 class TestJsonEnv(unittest.TestCase):
     def test_json_int(self):
         src = textwrap.dedent("""\
-            fn main() -> i64 {
+            go {
               pr(json(42))
             }
         """)
@@ -346,7 +468,7 @@ class TestJsonEnv(unittest.TestCase):
 
     def test_json_list(self):
         src = textwrap.dedent("""\
-            fn main() -> i64 {
+            go {
               pr(json([1, 2, 3]))
             }
         """)
@@ -376,22 +498,22 @@ class TestExamples(unittest.TestCase):
                 self.assertIn(s, out)
 
     def test_hello(self):
-        self._run_example("hello.terse", expect_exact="hello")
+        self._run_example("hello.te", expect_exact="hello world")
 
     def test_add_fn(self):
-        self._run_example("add.terse", expect_exact="42")
+        self._run_example("add.te", expect_exact="42")
 
     def test_fact(self):
-        self._run_example("fact.terse", expect_exact="3628800")
+        self._run_example("fact.te", expect_exact="3628800")
 
     def test_hof(self):
-        self._run_example("hof.terse", expect_exact="149")
+        self._run_example("hof.te", expect_exact="149")
 
     def test_io(self):
-        self._run_example("io.terse", expect_in_stdout=["hello terse", "[10, 20, 30, 40]"])
+        self._run_example("io.te", expect_in_stdout=["hello terse", "[10, 20, 30, 40]"])
 
     def test_minicompiler(self):
-        self._run_example("minicompiler.terse", expect_exact="77")
+        self._run_example("minicompiler.te", expect_exact="77")
 
 
 class TestHttp(unittest.TestCase):
@@ -439,18 +561,6 @@ class TestHttp(unittest.TestCase):
             except Exception:
                 pass
 
-    def test_compile_http_hello(self):
-        src_path = os.path.join(EXAMPLES, "http_hello.terse")
-        if not os.path.isfile(src_path):
-            self.skipTest("http_hello.terse missing")
-        bin_path = os.path.join(tempfile.mkdtemp(prefix="terse_http_"), "http_hello")
-        r = subprocess.run(
-            [sys.executable, TERSEC, "build", src_path, "-o", bin_path],
-            capture_output=True, text=True,
-        )
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        self.assertTrue(os.path.isfile(bin_path))
-
     def test_http_live(self):
         """Start server briefly and hit /hello."""
         import socket
@@ -458,10 +568,12 @@ class TestHttp(unittest.TestCase):
         import urllib.request
 
         src = textwrap.dedent("""\
+                        go {
             http.serve(18099) {
               get "/hello" => "world"
               get "/n" => json(7)
             }
+                        }
         """)
         bin_path, code, log = compile_src(src, "http_live")
         self.assertEqual(code, 0, log)
@@ -496,13 +608,13 @@ class TestHttp(unittest.TestCase):
 
 class TestErrors(unittest.TestCase):
     def test_syntax_error(self):
-        bin_path, code, log = compile_src("fn main( {")
+        bin_path, code, log = compile_src("go {")
         self.assertNotEqual(code, 0)
         self.assertTrue("Syntax" in log or "Error" in log or "error" in log.lower())
 
     def test_check_ok(self):
         r = subprocess.run(
-            [sys.executable, TERSEC, "check", os.path.join(EXAMPLES, "hello.terse")],
+            [sys.executable, TERSEC, "check", os.path.join(EXAMPLES, "hello.te")],
             capture_output=True, text=True,
         )
         self.assertEqual(r.returncode, 0)

@@ -30,7 +30,7 @@ fn sum_list() -> i64 {
   sum
 }
 
-fn main() -> i64 {
+go {
   pr("sum_while = " + sum_while())
   pr("sum_for = " + sum_for())
   pr("sum_list = " + sum_list())

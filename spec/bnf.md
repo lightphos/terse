@@ -72,4 +72,4 @@ Derived directly from the lexer and recursive-descent parser in `tersec.py`.
 - **Sequencing**: consecutive expression statements in a block (not the last one) are desugared as `let _ = expr in rest`.
 - **Records** (`type`) are parsed but their shape is discarded — `type Foo = {...}` only checks syntax.
 - **Comments**: `// line` and `/* block */`, stripped by the lexer, not part of the grammar above.
-- **`main`/`go` synthesis**: if no `fn main` exists, a trailing top-level `go <expr>` or top-level statements become the body of a synthesized `main`.
+- **`go` entrypoint**: a program uses `go()` for an empty body or `go { ... }` for its body. The backend synthesizes native `main`; `fn main` and implicit top-level statements are not entrypoints.

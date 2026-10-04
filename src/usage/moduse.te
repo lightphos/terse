@@ -1,0 +1,14 @@
+
+
+fn _say(message: str) -> i64 {
+    pr(message)
+    0
+}
+
+pub fn mod() -> i64 {
+    _say("from moduse")
+}
+
+pub fn mod2() -> i64 {
+    _say("from moduse2")
+}

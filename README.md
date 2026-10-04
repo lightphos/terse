@@ -9,7 +9,7 @@ A succinct language that compiles to native binaries, with structures, interface
 ### CLI Run
 ```bash
 # Build program in example directory to a binary
-make terse.hello dir=examples
+make terse.hello dir=src
 ./output/hello          # prints hello world
 ```
 ### VS Code Support
@@ -56,6 +56,8 @@ The reference compiler (`compiler/tersec.py`) implements:
 - Named functions + recursion
 - **Higher-order functions**: pass functions as values, simple lambdas (`|x| x*2`)
 - Function pointers under the hood (no environment capture yet)
+- Text file reads and writes through `std.fs`
+- Growable lists of records for AST-style node storage
 
 Not yet implemented (but specified):
 
@@ -63,16 +65,16 @@ Not yet implemented (but specified):
 - Strings beyond basic support
 - Records / structs / pattern matching
 - SQLite database runtime: `db.connect`, `db.exec`, `db.query`, and `db.query_one`
-- Generics, modules, ownership system
+- Generics, ownership system, selective imports, and visibility modifiers
 
 ## Examples
 
 | File | Description | Output |
 |------|-------------|--------|
-| `examples/hello.te` | Basic arithmetic | 42 |
-| `examples/fact.te` | Recursion | 3628800 |
-| `examples/hof.te` | Higher-order + lambda | 149 |
-| `examples/iflet.te` | if + let | 59 |
+| `src/hello.te` | Basic arithmetic | 42 |
+| `src/fact.te` | Recursion | 3628800 |
+| `src/hof.te` | Higher-order + lambda | 149 |
+| `src/iflet.te` | if + let | 59 |
 
 ## Architecture
 
@@ -89,7 +91,37 @@ Not yet implemented (but specified):
   native binary
 ```
 
-Future backends: direct LLVM IR.
+## Terse Compiler Bootstrap
+
+`compiler/tc.te` is the first compiler frontend written in Terse. It reads a
+source file, builds a typed token/node arena, parses integer arithmetic,
+emits C, and invokes GCC. The root `tc` launcher quietly bootstraps
+the Terse compiler with the reference compiler when needed:
+
+```sh
+# Build the stage-one tc executable explicitly (optional; ./tc does this as needed).
+make tcc
+
+# Compile and run a source file through tc.
+./tc compiler/tc_smoke.te
+output/tc_smoke
+./tc compiler/tc_smoke.te -o output/tc-smoke
+
+# Run the Terse-language regression suite.
+make tc-test
+```
+
+`compiler/t_tc.te` ports the language-level regression cases from
+`compiler/test_compiler.py`. Python-only checks for subprocess compilation,
+negative compiler diagnostics, and live HTTP orchestration remain in the
+Python test suite.
+
+The Terse frontend is an early slice, not yet a replacement for the Python
+compiler. It scans to the first `=` or `{` and parses one expression containing
+decimal integer literals, parentheses, and `+`, `-`, `*`, `/`, and `%`. It does
+not yet parse declarations or verify that the expression belongs to a go entrypoint.
+For other syntax, `tc` reports that it is using the reference compiler, which
+keeps the command usable while the self-hosted frontend gains coverage.
 
 ## License
 
@@ -101,4 +133,4 @@ MIT (for this reference implementation)
 - Strings: `"hi"`, `"a" + "b"`, `len(s)`, `s[i]`
 - Lists: `[1, 2, 3]`, `len(xs)`, `xs[i]`, `pr(xs)`
 - `pr(x)` for ints, strings, lists
-- See `examples/io.te`
+- See `src/io.te`

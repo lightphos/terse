@@ -62,7 +62,7 @@ fn program3() -> i64 =
 
 // ----- Driver: compile + run program1 -----
 
-fn main() -> i64 {
+go {
   let ast    = program1()
   let object = compile(ast)   // future: emit C source here
   object                      // run the result

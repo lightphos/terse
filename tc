@@ -1,0 +1,82 @@
+#!/bin/sh
+set -eu
+
+root_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+caller_dir=$PWD
+
+if [ "$#" -eq 0 ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+  cat <<'USAGE'
+Usage:
+  tc SOURCE.te [-o OUTPUT]
+  tc --help
+
+Compile a Terse source file to a native executable with GCC.
+By default, writes output/<source-basename> and its C source beside it.
+Use -o to choose a different executable path.
+
+The Terse frontend currently parses one decimal-integer arithmetic expression
+after the first '=' or '{' in the source. It does not yet parse declarations
+or verify that the expression belongs to a go entrypoint. Other syntax is sent
+to the reference compiler during migration.
+GCC must be installed and available on PATH.
+USAGE
+  exit 0
+fi
+
+source_path=$1
+shift
+case "$source_path" in
+  /*) ;;
+  *) source_path="$caller_dir/$source_path" ;;
+esac
+output_path=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o|--output)
+      if [ "$#" -lt 2 ]; then
+        printf 'tc: missing output path after %s\n' "$1" >&2
+        exit 2
+      fi
+      output_path=$2
+      shift 2
+      ;;
+    *)
+      printf 'tc: unknown argument: %s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ -z "$output_path" ]; then
+  file_name=${source_path##*/}
+  case "$file_name" in
+    *.*) file_name=${file_name%.*} ;;
+  esac
+  output_path="$root_dir/output/$file_name"
+else
+  case "$output_path" in
+    /*) ;;
+    *) output_path="$caller_dir/$output_path" ;;
+  esac
+fi
+
+cd "$root_dir"
+mkdir -p output
+if [ ! -x output/tc-stage0 ] ||
+   [ compiler/tc.te -nt output/tc-stage0 ] ||
+   [ compiler/tersec.py -nt output/tc-stage0 ]; then
+  python3 compiler/tersec.py build compiler/tc.te -o output/tc-stage0 >/dev/null
+fi
+
+stage1_log=output/.tc-stage1.log
+if TERSE_SOURCE=$source_path TERSE_OUTPUT=$output_path output/tc-stage0 >"$stage1_log" 2>&1; then
+  if grep -q '^TC_OK$' "$stage1_log"; then
+    rm -f "$stage1_log"
+    printf 'tc: compiled with the Terse frontend: %s\n' "$output_path"
+    exit 0
+  fi
+fi
+rm -f "$stage1_log"
+
+printf 'tc: using the reference compiler for syntax outside the Terse frontend subset\n' >&2
+exec python3 compiler/tersec.py build "$source_path" -o "$output_path"
