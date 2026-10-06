@@ -1,1 +1,11 @@
-go { (3 * 4) + (10 / 2) }
+use std.fs
+
+type Count = i64
+rec Pair { value: i64 }
+tr HasValue { fn value() -> i64 }
+fn Pair.value() -> i64 = 1
+
+pub fn add(left: i64, right: i64) -> i64 = left + right
+fn add_twice(first, second) = add(first, second)
+
+go { pr("hello world") + 0 * (((-3 < 0) && (2 + 3 * 4 == 14)) || (5 != 5)) + add_twice(20, 22) - 42 }

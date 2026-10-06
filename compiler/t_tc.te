@@ -25,6 +25,11 @@ tr Printable {
 fn test_arithmetic() -> i64 {
   tst.check.equals(40 + 2, 42)
   tst.check.equals((3 * 4) + (10 / 2), 17)
+  tst.check.equals(1 + 2 * 3 == 7, true)
+  tst.check.equals(3 < 4 && 4 <= 4, true)
+  tst.check.equals(5 > 6 || 6 >= 6, true)
+  tst.check.equals(3 != 4, true)
+  tst.check.equals(-3 < 0 && !false, true)
   tst.check.equals(fact(6), 720)
   0
 }
@@ -102,6 +107,11 @@ fn test_strings_and_collections() -> i64 {
   0
 }
 
+fn test_print() -> i64 {
+  tst.check.equals(pr("hello world"), 0)
+  0
+}
+
 fn test_text_file_io() -> i64 {
   let path = env("TERSE_TEST_FILE")
   fs.write_text(path, "compiler source round trip")
@@ -122,6 +132,7 @@ go {
   test_higher_order()
   test_records_and_ast_lists()
   test_strings_and_collections()
+  test_print()
   test_text_file_io()
   test_source_module_imports()
   0

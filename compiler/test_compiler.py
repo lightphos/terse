@@ -40,6 +40,20 @@ def compile_and_run(src: str):
     return rc, out, err
 
 
+def tc_command(*args):
+    command = [os.path.join(ROOT, "tc")]
+    if os.name == "nt":
+        command.insert(0, "bash")
+        converted_args = []
+        for argument in args:
+            drive, path = os.path.splitdrive(argument)
+            if drive and path.startswith(os.sep):
+                argument = "/" + drive[0].lower() + path.replace("\\", "/")
+            converted_args.append(argument)
+        args = converted_args
+    return command + list(args)
+
+
 class TestArithmetic(unittest.TestCase):
     def test_add(self):
         rc, out, _ = compile_and_run("go 40 + 2")
@@ -411,29 +425,53 @@ class TestTerseCompiler(unittest.TestCase):
                 source_file.write("go { (3 * 4) + (10 / 2) }\n")
 
             compiled = subprocess.run(
-                [os.path.join(ROOT, "tc"), source_path, "-o", binary_path],
+                tc_command(source_path, "-o", binary_path),
                 capture_output=True, text=True, cwd=ROOT,
             )
             self.assertEqual(compiled.returncode, 0, compiled.stderr + compiled.stdout)
-            self.assertTrue(os.path.isfile(binary_path))
+            executable_path = binary_path
+            if not os.path.isfile(executable_path) and os.path.isfile(binary_path + ".exe"):
+                executable_path = binary_path + ".exe"
+            self.assertTrue(os.path.isfile(executable_path))
             self.assertTrue(os.path.isfile(binary_path + ".c"))
 
-            result = subprocess.run([binary_path], capture_output=True, text=True)
+            result = subprocess.run([executable_path], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "17")
 
-    def test_tc_falls_back_for_recursive_functions(self):
+    def test_tc_compiles_recursive_functions_natively(self):
         with tempfile.TemporaryDirectory(prefix="terse_tc_fallback_") as directory:
             binary_path = os.path.join(directory, "fact")
             compiled = subprocess.run(
-                [os.path.join(ROOT, "tc"), os.path.join(EXAMPLES, "fact.te"), "-o", binary_path],
+                tc_command(os.path.join(EXAMPLES, "fact.te"), "-o", binary_path),
                 capture_output=True, text=True, cwd=ROOT,
             )
             self.assertEqual(compiled.returncode, 0, compiled.stderr + compiled.stdout)
-            self.assertIn("reference compiler", compiled.stderr)
-            result = subprocess.run([binary_path], capture_output=True, text=True)
+            self.assertIn("compiled with the Terse frontend", compiled.stdout)
+            self.assertNotIn("falling back to tersec.py", compiled.stderr)
+            executable_path = binary_path
+            if not os.path.isfile(executable_path) and os.path.isfile(binary_path + ".exe"):
+                executable_path = binary_path + ".exe"
+            result = subprocess.run([executable_path], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "3628800")
+
+    def test_tc_falls_back_for_source_module_imports(self):
+        with tempfile.TemporaryDirectory(prefix="terse_tc_import_") as directory:
+            binary_path = os.path.join(directory, "usemod")
+            compiled = subprocess.run(
+                tc_command(os.path.join(EXAMPLES, "usemod.te"), "-o", binary_path),
+                capture_output=True, text=True, cwd=ROOT,
+            )
+            self.assertEqual(compiled.returncode, 0, compiled.stderr + compiled.stdout)
+            self.assertIn("falling back to tersec.py", compiled.stderr)
+            executable_path = binary_path
+            if not os.path.isfile(executable_path) and os.path.isfile(binary_path + ".exe"):
+                executable_path = binary_path + ".exe"
+            result = subprocess.run([executable_path], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("from moduse", result.stdout)
+            self.assertIn("from moduse2", result.stdout)
 
 
 class TestFileIO(unittest.TestCase):
@@ -516,6 +554,7 @@ class TestExamples(unittest.TestCase):
         self._run_example("minicompiler.te", expect_exact="77")
 
 
+# TODO(stdlib extraction): cover HTTP behavior through the standard library API.
 class TestHttp(unittest.TestCase):
     def test_serve_post_then_get_user(self):
         """POST a user to serve.te, then fetch it through its dynamic route."""

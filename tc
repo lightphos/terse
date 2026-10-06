@@ -14,10 +14,10 @@ Compile a Terse source file to a native executable with GCC.
 By default, writes output/<source-basename> and its C source beside it.
 Use -o to choose a different executable path.
 
-The Terse frontend currently parses one decimal-integer arithmetic expression
-after the first '=' or '{' in the source. It does not yet parse declarations
-or verify that the expression belongs to a go entrypoint. Other syntax is sent
-to the reference compiler during migration.
+The Terse frontend currently supports arithmetic and logical expressions,
+pr(string), and multiple named i64 functions with arbitrary parameters,
+if/else, and recursion. Other source forms are sent to the reference compiler
+during migration.
 GCC must be installed and available on PATH.
 USAGE
   exit 0
@@ -78,5 +78,5 @@ if TERSE_SOURCE=$source_path TERSE_OUTPUT=$output_path output/tc-stage0 >"$stage
 fi
 rm -f "$stage1_log"
 
-printf 'tc: using the reference compiler for syntax outside the Terse frontend subset\n' >&2
+printf 'tc: falling back to tersec.py for syntax outside the Terse frontend subset\n' >&2
 exec python3 compiler/tersec.py build "$source_path" -o "$output_path"

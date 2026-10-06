@@ -1,75 +1,83 @@
-# Terse language grammar (BNF)
+# Terse parser grammar (BNF)
 
-Derived directly from the lexer and recursive-descent parser in `tersec.py`.
+This grammar describes syntax accepted by the Python reference parser in
+`compiler/tersec.py`. It does not imply that every accepted construct has full
+type-checker or runtime support; see `SPEC.md` for status.
 
 ```bnf
-<program>       ::= { <use-decl> | <rec-decl> | <type-decl>
-                     | <fn-decl>  | <go-decl>  | <let-stmt> | <expr-stmt> }
+<program>          ::= { <item> } <go-decl> { <item> }
+<item>             ::= <use-decl> | <type-decl> | <record-decl>
+                                         | <trait-decl> | <fn-decl> | <pub-fn-decl>
 
-<use-decl>      ::= "use" <path> { "," <path> } [ ";" ]
-<path>          ::= IDENT { "." IDENT }
+<go-decl>          ::= "go" ( "(" ")" | <expr> )
+<pub-fn-decl>      ::= "pub" <fn-decl>
+<fn-decl>          ::= "fn" <fn-name> <params> [ "->" <type> ] [ "=" ] <expr>
+<fn-name>          ::= IDENT [ "." IDENT ]
+<params>           ::= "(" [ <param> { "," <param> } ] ")"
+<param>            ::= IDENT [ ":" <type> ]
 
-<type-decl>     ::= "type" IDENT "=" <type> [ ";" ]
+<use-decl>         ::= "use" <use-spec> { "," <use-spec> } [ ";" ]
+<use-spec>         ::= <path> [ "as" IDENT ]
+                                         | <module-path> "." IDENT [ "as" IDENT ]
+<path>             ::= IDENT { ( "." | "/" ) IDENT }
+<module-path>      ::= IDENT { ( "." | "/" ) IDENT }
 
-<rec-decl>      ::= "rec" IDENT "{" [ <field> { "," <field> } [ "," ] ] "}"
-<field>         ::= IDENT ":" <type>
+<type-decl>        ::= "type" IDENT "=" <type> [ ";" ]
+<record-decl>      ::= [ "rec" | "struct" ] IDENT
+                       "{" [ <field> { "," <field> } ] "}"
+<field>            ::= IDENT ":" <type>
+<trait-decl>       ::= "tr" IDENT "{" { <trait-method> [ ";" ] } "}"
+<trait-method>     ::= "fn" IDENT <params> [ "->" <type> ]
 
-<fn-decl>       ::= "fn" IDENT <params> [ "->" <type> ] [ "=" ] <expr>
+<type>             ::= IDENT
+                                         | "fn" "(" [ <type> { "," <type> } ] ")"
+                                             [ "->" <type> ]
+                                         | "[" <type> "]"
+                                         | "{" [ <field> { "," <field> } [ "," ] ] "}"
 
-<go-decl>       ::= "go" <expr>
+<expr>             ::= <assign-expr>
+<assign-expr>      ::= <or-expr> [ "=" <assign-expr> ]
+<or-expr>          ::= <and-expr> { "||" <and-expr> }
+<and-expr>         ::= <cmp-expr> { "&&" <cmp-expr> }
+<cmp-expr>         ::= <add-expr>
+                                             { ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) <add-expr> }
+<add-expr>         ::= <mul-expr> { ( "+" | "-" ) <mul-expr> }
+<mul-expr>         ::= <unary-expr> { ( "*" | "/" | "%" ) <unary-expr> }
+<unary-expr>       ::= ( "!" | "-" ) <unary-expr> | <postfix-expr>
 
-<let-stmt>      ::= "let" IDENT [ ":" <type> ] "=" <expr> [ ";" ]
-<expr-stmt>     ::= <expr> [ ";" ]
+<postfix-expr>     ::= <primary-expr> { <postfix-op> }
+<postfix-op>       ::= "." IDENT
+                                         | "{" <record-fields> "}"
+                                         | "(" [ <expr> { "," <expr> } ] ")" [ <http-routes> ]
+                                         | "[" <expr> "]"
+<record-fields>    ::= [ IDENT ":" <expr> { "," IDENT ":" <expr> } ]
 
-<params>        ::= "(" [ <param> { "," <param> } ] ")"
-<param>         ::= IDENT [ ":" <type> ]
+<primary-expr>     ::= INT | "true" | "false" | STRING | IDENT
+                                         | <ret-expr> | "(" <expr> ")" | <list-lit>
+                                         | <lambda-expr> | <block-expr> | <if-expr> | <loop-expr>
+<ret-expr>         ::= "ret" [ <expr> ]
+<list-lit>         ::= "[" [ <expr> { "," <expr> } [ "," ] ] "]"
+<lambda-expr>      ::= "|" [ <param> { "," <param> } ] "|" <expr>
+<if-expr>          ::= "if" <expr> <expr> [ "else" <expr> ]
+<loop-expr>        ::= "lp" <expr> <expr>
+                                         | "lp" <loop-init> ";" [ <expr> ] ";" [ <expr> ] <expr>
+<loop-init>        ::= <let-binding> | <expr>
+<let-binding>     ::= "let" IDENT [ ":" <type> ] "=" <expr>
 
-<type>          ::= IDENT
-                   | "fn" "(" [ <type> { "," <type> } ] ")" [ "->" <type> ]
-                   | "[" <type> "]"
-                   | "{" [ IDENT ":" <type> { "," IDENT ":" <type> } ] "}"
+<block-expr>       ::= "{" { <block-stmt> [ ";" ] } "}"
+<block-stmt>       ::= <let-binding> | <ret-expr> | <expr>
 
-<expr>          ::= <or-expr>
-<or-expr>       ::= <and-expr>  { "||" <and-expr> }
-<and-expr>      ::= <cmp-expr>  { "&&" <cmp-expr> }
-<cmp-expr>      ::= <add-expr>  { ("==" | "!=" | "<" | ">" | "<=" | ">=") <add-expr> }
-<add-expr>      ::= <mul-expr>  { ("+" | "-") <mul-expr> }
-<mul-expr>      ::= <unary-expr>{ ("*" | "/" | "%") <unary-expr> }
-<unary-expr>    ::= ("!" | "-") <unary-expr> | <postfix-expr>
-
-<postfix-expr>  ::= <primary-expr> { <postfix-op> }
-<postfix-op>    ::= "." IDENT                                  (* member access   *)
-                   | "{" <record-fields> "}"                   (* record literal, only after Var/Member *)
-                   | "(" [ <expr> { "," <expr> } ] ")" [ <http-routes> ]   (* call, +routes if http.serve(...) *)
-                   | "[" <expr> "]"                             (* index            *)
-
-<primary-expr>  ::= INT | "true" | "false" | STRING | IDENT
-                   | "(" <expr> ")"
-                   | <list-lit>
-                   | <lambda-expr>
-                   | <block-expr>
-                   | <if-expr>
-
-<list-lit>      ::= "[" [ <expr> { "," <expr> } ] "]"
-<lambda-expr>   ::= "|" [ <param> { "," <param> } ] "|" <expr>
-<if-expr>       ::= "if" <expr> <expr> [ "else" <expr> ]
-
-<block-expr>    ::= "{" { <block-stmt> } "}"
-<block-stmt>    ::= ( "let" IDENT [ ":" <type> ] "=" <expr> | <expr> ) [ ";" ]
-
-<record-fields> ::= [ IDENT ":" <expr> { "," IDENT ":" <expr> } ]
-
-<http-routes>   ::= "{" { <route> } "}"
-<route>         ::= IDENT STRING "=>" <expr> [ ";" ]
-                     (* IDENT must be one of GET POST PUT DELETE PATCH, case-insensitive *)
+<http-routes>      ::= "{" { <route> [ ";" ] } "}"
+<route>            ::= IDENT STRING "=>" <expr>
 ```
 
 ## Notes
 
-- **Precedence** (loosest to tightest): `||` → `&&` → equality/relational → `+ -` → `* / %` → unary `! -` → postfix (`.`, `()`, `[]`, `{}`) → primary. This matches the `parse_or → parse_and → parse_cmp → parse_add → parse_mul → parse_unary → parse_postfix → parse_primary` call chain.
-- **`let` is expression-scoped**, not a statement: inside a block, `let x = v; rest` desugars to a `LetExpr` wrapping the remainder of the block, so `let` always has a body.
-- **`{ ... }` is context-sensitive**: after a bare `if`/lambda body it's a block; directly after a `Var`/`Member` in postfix position it's a record literal instead (e.g. `Point{x: 1, y: 2}`); after `http.serve(port)` it's a route table.
-- **Sequencing**: consecutive expression statements in a block (not the last one) are desugared as `let _ = expr in rest`.
-- **Records** (`type`) are parsed but their shape is discarded — `type Foo = {...}` only checks syntax.
-- **Comments**: `// line` and `/* block */`, stripped by the lexer, not part of the grammar above.
-- **`go` entrypoint**: a program uses `go()` for an empty body or `go { ... }` for its body. The backend synthesizes native `main`; `fn main` and implicit top-level statements are not entrypoints.
+- **Precedence** from loosest to tightest is `=` → `||` → `&&` → comparison → `+ -` → `* / %` → unary `! -` → postfix → primary. Assignment is right-associative.
+- **Entrypoint**: exactly one `go` is required. It may appear among declarations. `fn main` is rejected, and top-level `let`/expression statements cannot accompany a `go` entrypoint; programs without `go` are rejected.
+- **Imports**: dotted paths with two non-`std` segments are glob imports; a final dotted component on a longer path is a selected function; slash paths name a module namespace. `as` sets an explicit alias. This grammar shows the surface forms; resolution rules are in `SPEC.md`.
+- **Records**: `rec Name { ... }`, `struct Name { ... }`, and bare `Name { ... }` declarations are accepted. A record literal is only accepted after a variable or member expression. Record type shapes are parsed but are not preserved as anonymous structural types.
+- **Blocks**: an empty block evaluates to `0`. `let` and `ret` are accepted statements; the last expression supplies the block value. The current parser desugars earlier expression statements into bindings.
+- **HTTP routes**: route blocks are a special form accepted only after `http.serve(...)`; methods are `GET`, `POST`, `PUT`, `DELETE`, or `PATCH` (case-insensitive).
+- **Comments**: `//` and `/* ... */` comments are stripped by the lexer.
+- `let mut`, `match`, `break`, `continue`, floats, unit literals, tuples, and `Option`/`Result` are not in the current parser grammar, even where they appear in the design/status sections of `SPEC.md`.

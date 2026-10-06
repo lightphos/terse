@@ -1,9 +1,8 @@
 # Terse Language Specification 0.1-beta
 
-**Terse** is a succinct, statically-typed systems language that compiles to native binaries.  
-It emphasizes minimal syntax, first-class higher-order functions, and a small set of built-in conveniences for I/O, JSON, and lightweight HTTP services.
+**Terse** is a succinct, statically typed language that compiles to native binaries. It emphasizes compact syntax, first-class functions, and practical facilities for I/O and services.
 
-This document describes the language shape and the current reference compiler behavior. The reference compiler (`tersec`) currently implements a working subset focused on expressions, functions, higher-order programming, strings, lists, basic I/O, and a minimal HTTP server runtime; broader features such as full records, pattern matching, and database integration remain future work.
+This document separates the intended 0.1 language contract from implementation status. **Implemented** means supported by the Python reference compiler (`tersec`); **Limited** means only a subset works; **Planned** means the syntax or behavior is not yet available. The Terse-written compiler (`tc.te`) is an experimental subset and is not the reference for language conformance. `spec/bnf.md` describes parser grammar and should stay aligned with the syntax here.
 
 ## 1. Design Goals
 
@@ -31,6 +30,8 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 Keywords (reserved):  
 `fn`, `let`, `type`, `if`, `else`, `match`, `use`, `return`, `ret`, `true`, `false`, `mut`, `struct`, `enum`, `impl`, `self`, `pub`, `in`, `for`, `while`, `loop`, `lp`, `break`, `continue`, `None`, `Some`, `Ok`, `Err`, `get`, `post`, `pr`, `put`, `go`, `env`, `delete`, `http`, `db`, `json`, `status`, `tr`
 
+This is the intended keyword set. The current lexer does not reserve or implement every listed word; see Section 12 and `bnf.md` for the accepted 0.1 subset.
+
 ### Literals
 - Integer: `42`, `-7`, `0xFF` (i64 by default)
 - Float: `3.14` (f64)
@@ -38,12 +39,29 @@ Keywords (reserved):
 - Boolean: `true`, `false`
 - Unit: `()`
 
+The reference lexer currently accepts decimal integers, strings with basic escapes, and booleans. Hexadecimal integers and floating-point literals are not currently accepted; `()` is accepted as the empty `go` entrypoint, not as a general unit expression.
+
 ### Operators
 Arithmetic: `+` `-` `*` `/` `%`  
 Comparison: `==` `!=` `<` `>` `<=` `>=`  
 Logical: `&&` `||` `!`  
 Assignment: `=`  
 Function: `|params| body` (lambda), `>>` (compose), `_` (placeholder for partial app)
+
+### Core Semantics
+
+- An executable has exactly one `go` entrypoint. `go()` returns `0`; `go expr` evaluates `expr`; there is no implicit entrypoint and `fn main` is rejected.
+- Functions may call declared functions recursively. In the reference compiler, omitted parameter and return annotations default to `i64`; general type inference is a design goal, not current behavior.
+- `&&` and `||` short-circuit. Comparisons and logical operators produce `bool`; arithmetic uses integer values unless `+` performs string concatenation.
+- A block evaluates its statements in order and has the value of its final expression. An empty block has value `0`. `ret expr` exits the current function with that value; `ret` returns `0`.
+- The intended binding rule is that `let` introduces an immutable local and `let mut` explicitly permits reassignment. The reference compiler currently permits reassignment of some `let` bindings and does not consistently enforce `mut`; that behavior is not yet portable to the intended contract.
+- Strings are UTF-8 byte sequences. In the current implementation, `len(str)` counts bytes and `str[index]` returns the unsigned value of one byte, not a Unicode scalar value.
+- `pr(value)` writes the value followed by a newline and returns `0`. If `go` returns `0` after printing, the current runtime suppresses the extra numeric `0`; otherwise it prints the integer result of `go`.
+- Integer overflow and division by zero do not have portable behavior specified in 0.1. Programs should not depend on either until the rules are defined and enforced.
+
+### Status Labels
+
+Syntax listed in this document is not automatically implemented. Section 12 identifies the reference compiler's current support; reserved words may exist before their constructs are implemented. The parser-derived `bnf.md` describes accepted syntax, not every planned feature.
 
 ## 3. Types
 
@@ -60,14 +78,17 @@ Function: `|params| body` (lambda), `>>` (compose), `_` (placeholder for partial
 
 Type inference is Hindley-Milner inspired for local variables and lambdas. Top-level functions may require annotations for complex cases.
 
+In the current compiler, `i64`, `bool`, `str`, integer lists, named records, and function values have the strongest support. `f64`, tuples, `Option`, `Result`, and general inference are incomplete or planned; listing a type here does not guarantee that it can be compiled.
+
 ## 4. Syntax (Core)
 
 ### Program
 A program is a sequence of top-level declarations (functions, types, uses, traits, and methods) with one entrypoint: `go()` for an empty body or `go { ... }` for a program body. `fn main` is not a Terse entrypoint; the backend generates the native `main` wrapper.
 
 ```
-program ::= item* entrypoint
-item    ::= fn_decl | type_decl | use_decl | trait_decl | method_decl
+program ::= { item } entrypoint { item }
+item    ::= fn_decl | pub_fn_decl | record_decl | type_decl | use_decl
+          | trait_decl | method_decl
 entrypoint ::= "go" "(" ")" | "go" expr
 ```
 
@@ -90,7 +111,7 @@ fn name(params) -> RetType { stmts }
 |param1: Type| { stmts }
 ```
 
-Parameters may omit types when inferable. Return type may be omitted when obvious.
+Parameters and return types may be omitted. In the current reference compiler, omitted types default to `i64` rather than being inferred generally. Function-type annotations and untyped lambdas are limited to cases the type checker can resolve.
 
 Higher-order example:
 ```
@@ -106,25 +127,27 @@ let name: Type = expr
 let mut name = expr
 ```
 
+The intended contract is `let` for immutable bindings and `let mut` for mutable bindings. The current compiler does not consistently enforce that distinction; see Section 12.
+
 ### Control Flow
-```
-if cond { then } else { else }
+```terse
+if cond { then } else { otherwise }
 ret
 ret expr
+
+lp cond { body }
+lp init; cond; post { body }
+
 match expr {
   pat1 => result1
   pat2 if guard => result2
   _ => default
 }
-
-```
-lp cond { body }
-lp init; cond; post { body }
 ```
 
-`lp` repeats its body while the condition remains true. Without semicolons, it behaves like a while loop; with `init; cond; post` it behaves like a for loop. It returns `0` when the loop exits normally.
+`if` is an expression and evaluates one branch. `lp` repeats its body while the condition remains true; without semicolons it behaves like a while loop, and with `init; cond; post` it behaves like a for loop. A loop evaluates to `0` when it exits normally. `match`, `break`, and `continue` are reserved/planned and are not part of the implemented 0.1 subset.
 
-`ret` exits the current function or block immediately. When followed by an expression, it returns that value; otherwise, it returns the default integer value `0`.
+`ret` exits the current function immediately. When followed by an expression, it returns that value; otherwise, it returns `0`.
 
 ### Function Application & Composition
 ```
@@ -228,7 +251,7 @@ http.serve(port: i64) {
 - The implementation is intentionally small and does not yet provide full middleware, path-parameter plumbing, or framework-style request decoding.
 - The `http.serve` block is the main event loop of the process for the current runtime.
 
-## 8. Database Access (Planned, Not Implemented)
+## 8. Database Access (Limited)
 
 ```
 use std.db
@@ -240,7 +263,7 @@ db.exec(sql: str, args...) -> i64   // rows affected
 db.tx { ... }                   // transaction block
 ```
 
-Types are mapped automatically for common primitives and records in the intended design, but the current compiler does not implement database access or prepared statements.
+The reference compiler has an experimental SQLite-backed `db.*` implementation with positional parameters. This is compiler/runtime support, not a separately packaged Terse library. Untyped queries are limited; typed record queries support only selected field types. `query_one` currently lowers to a list query rather than the `Option[T]` contract shown above. PostgreSQL, transactions, migrations, generic drivers, and full `Option` behavior remain planned.
 
 ## 9. Modules & Visibility
 
@@ -266,6 +289,7 @@ go { mod() }
 - Source modules currently export functions only. Functions are private by default; prefix public API declarations with `pub fn`.
 - Imported files contain declarations only and cannot contain a `go()` or `go { ... }` entrypoint.
 - Glob, selective function, and namespace imports are supported; imported records and cyclic imports are not.
+- `std.fs`, `std.http`, and `std.db` currently name compiler-provided behavior, not ordinary source modules. Moving HTTP/DB APIs into Terse libraries requires a stable low-level native interface.
 
 ## 10. Memory & Safety Model (Current Implementation)
 
@@ -276,19 +300,22 @@ go { mod() }
 
 ## 11. Compilation Model
 
-```
-tersec build main.terse -o app
-tersec run main.terse
-tersec check main.terse
+```sh
+python tersec.py build main.te -o app
+python tersec.py run main.te
+python tersec.py check main.te
 ```
 
 - Frontend: lexer → parser → type checker → code generation
 - Backend: currently C code generation + system C compiler (gcc/clang)
+- `check` parses and type-checks without producing a binary; `build` emits a native executable; `run` builds and executes it.
+- Compile-time errors return a nonzero status and include source locations where available. Runtime failures such as file or SQLite errors report to stderr and terminate nonzero.
 - Possible future backend: direct LLVM IR emission for better optimization and cross-compilation.
 
 ## 12. Current Compiler Status (0.1beta)
 
-Implemented:
+### Implemented in `tersec`
+
 - Integer arithmetic and comparisons
 - Booleans and if-expressions
 - Named functions and recursion
@@ -303,13 +330,20 @@ Implemented:
 - Implicit interface satisfaction (a struct satisfies a `tr` when its methods match)
 - Built-in `pr`, `len`, `json`, and a minimal `http.serve` runtime
 - `go()` and `go { ... }` program entrypoints; native `main` is generated by the backend
+- Source-module imports for functions and basic `std.fs` text I/O
 
-Not yet implemented or still limited:
+### Limited or Planned
+
 - Full closures with environment capture
-- Basic pattern matching
-- Generics beyond the current subset
+- Pattern matching (`match`)
+- General generics, tuples, `Option`, and `Result`
 - Full ownership / borrowing / borrow checking
-- Real database integration
+- Database support beyond the experimental SQLite runtime described in Section 8
+- HTTP middleware, path-parameter plumbing, and framework-style request decoding
+- `let mut`, `break`, and `continue` semantics are not consistently implemented
+
+The native compiler in `compiler/tc.te` supports a much smaller subset; its
+coverage is tracked separately from this reference-compiler status.
 
 ## 13. Example Programs
 

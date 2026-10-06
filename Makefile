@@ -8,6 +8,18 @@ tcc:
 
 tc-test:
 	TERSE_TEST_FILE=$(TC_TEST_FILE) python3 compiler/tersec.py run compiler/t_tc.te -o output/t-tc
+	@native_log=$$(./tc compiler/tc_smoke.te -o output/tc-smoke 2>&1); \
+	  printf '%s\n' "$$native_log"; \
+	  printf '%s\n' "$$native_log" | grep -q 'compiled with the Terse frontend'; \
+	  test "$$(output/tc-smoke)" = "hello world"
+	@hello_log=$$(./tc src/hello.te -o output/tc-hello 2>&1); \
+	  printf '%s\n' "$$hello_log"; \
+	  printf '%s\n' "$$hello_log" | grep -q 'compiled with the Terse frontend'; \
+	  test "$$(output/tc-hello)" = "hello world"
+	@fact_log=$$(./tc src/fact.te -o output/tc-fact 2>&1); \
+	  printf '%s\n' "$$fact_log"; \
+	  printf '%s\n' "$$fact_log" | grep -q 'compiled with the Terse frontend'; \
+	  test "$$(output/tc-fact)" = "3628800"
 
 dir ?= src
 terse.%:

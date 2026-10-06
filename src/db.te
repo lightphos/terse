@@ -1,3 +1,4 @@
+// TODO(stdlib extraction): migrate db.* calls from compiler builtins to the DB library.
 // Connection (usually once at startup)
 // db.connect("postgres://user:pass@localhost/db")
 rec User { id: i64, name: str, active: bool }

@@ -1,33 +1,132 @@
-// Stage-one Terse compiler: an arithmetic expression -> portable C.
+// Stage-one Terse compiler: a small function and expression subset -> portable C.
 // Bootstrap with compiler/tersec.py; compile emitted C with GCC.
 
 use std.fs
 
 Token { kind: i64, text: str }
-Node { kind: i64, text: str, left: i64, right: i64 }
-ParseState { tokens: [Token], nodes: [Node], pos: i64, root: i64 }
+Param { name: str }
+Function { name: str, params: [Param], root: i64, is_public: bool }
+Node { kind: i64, text: str, left: i64, right: i64, extra: i64 }
+ParseState { tokens: [Token], nodes: [Node], pos: i64, root: i64, arg_root: i64, functions: [Function], has_entry: bool, valid: bool }
 
 fn token(kind: i64, text: str) -> Token = Token { kind: kind, text: text }
 fn node(kind: i64, text: str, left: i64, right: i64) -> Node =
-  Node { kind: kind, text: text, left: left, right: right }
+  Node { kind: kind, text: text, left: left, right: right, extra: 0 }
+fn node_extra(kind: i64, text: str, left: i64, right: i64, extra: i64) -> Node =
+  Node { kind: kind, text: text, left: left, right: right, extra: extra }
+fn call_node(name: str, args: i64) -> Node =
+  Node { kind: 7, text: name, left: args, right: 0, extra: 0 }
 
 fn is_space(ch: i64) -> bool = ch == 32 || ch == 9 || ch == 10 || ch == 13
 fn is_digit(ch: i64) -> bool = ch >= 48 && ch <= 57
+fn is_letter(ch: i64) -> bool = (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch == 95
+fn is_ident_char(ch: i64) -> bool = is_letter(ch) || is_digit(ch)
 
-fn scan(source: str, start: i64) -> [Token] {
+fn scan(source: str) -> [Token] {
   let tokens: [Token] = []
-  let pos = start
-  let done = false
-  lp pos < len(source) && done == false {
+  let pos = 0
+  lp pos < len(source) {
     let ch = source[pos]
     if is_space(ch) {
       pos = pos + 1
+    } else if ch == 47 && pos + 1 < len(source) && source[pos + 1] == 47 {
+      lp pos < len(source) && source[pos] != 10 {
+        pos = pos + 1
+      }
+    } else if ch == 34 {
+      let begin = pos + 1
+      pos = begin
+      let closed = false
+      lp pos < len(source) && closed == false {
+        if source[pos] == 92 {
+          pos = pos + 2
+        } else if source[pos] == 34 {
+          closed = true
+        } else {
+          pos = pos + 1
+        }
+      }
+      if closed == true {
+        tokens = push(tokens, token(20, substr(source, begin, pos - begin)))
+        pos = pos + 1
+      } else {
+        tokens = push(tokens, token(9, ""))
+        pos = len(source)
+      }
+      0
+    } else if ch == 102 && pos + 1 < len(source) && source[pos + 1] == 110 && (pos + 2 == len(source) || is_ident_char(source[pos + 2]) == false) {
+      tokens = push(tokens, token(22, "fn"))
+      pos = pos + 2
+      0
+    } else if ch == 103 && pos + 1 < len(source) && source[pos + 1] == 111 && (pos + 2 == len(source) || is_ident_char(source[pos + 2]) == false) {
+      tokens = push(tokens, token(23, "go"))
+      pos = pos + 2
+      0
+    } else if ch == 105 && pos + 1 < len(source) && source[pos + 1] == 102 && (pos + 2 == len(source) || is_ident_char(source[pos + 2]) == false) {
+      tokens = push(tokens, token(24, "if"))
+      pos = pos + 2
+      0
+    } else if ch == 105 && pos + 2 < len(source) && source[pos + 1] == 54 && source[pos + 2] == 52 && (pos + 3 == len(source) || is_ident_char(source[pos + 3]) == false) {
+      tokens = push(tokens, token(38, "i64"))
+      pos = pos + 3
+      0
+    } else if ch == 101 && pos + 3 < len(source) && source[pos + 1] == 108 && source[pos + 2] == 115 && source[pos + 3] == 101 && (pos + 4 == len(source) || is_ident_char(source[pos + 4]) == false) {
+      tokens = push(tokens, token(25, "else"))
+      pos = pos + 4
+      0
+    } else if ch == 117 && pos + 2 < len(source) && source[pos + 1] == 115 && source[pos + 2] == 101 && (pos + 3 == len(source) || is_ident_char(source[pos + 3]) == false) {
+      let path_start = pos + 3
+      lp path_start < len(source) && is_space(source[path_start]) && source[path_start] != 10 {
+        path_start = path_start + 1
+      }
+      let is_standard = path_start + 3 < len(source) && source[path_start] == 115 && source[path_start + 1] == 116 && source[path_start + 2] == 100 && (source[path_start + 3] == 46 || source[path_start + 3] == 47)
+      pos = path_start
+      lp pos < len(source) && source[pos] != 10 {
+        pos = pos + 1
+      }
+      if is_standard == true {
+        tokens = push(tokens, token(34, "std"))
+      } else {
+        tokens = push(tokens, token(35, "use"))
+      }
+      0
+    } else if ch == 116 && pos + 3 < len(source) && source[pos + 1] == 121 && source[pos + 2] == 112 && source[pos + 3] == 101 && (pos + 4 == len(source) || is_ident_char(source[pos + 4]) == false) {
+      tokens = push(tokens, token(36, "type"))
+      pos = pos + 4
+      0
+    } else if ch == 114 && pos + 2 < len(source) && source[pos + 1] == 101 && source[pos + 2] == 99 && (pos + 3 == len(source) || is_ident_char(source[pos + 3]) == false) {
+      tokens = push(tokens, token(37, "rec"))
+      pos = pos + 3
+      0
+    } else if ch == 116 && pos + 1 < len(source) && source[pos + 1] == 114 && (pos + 2 == len(source) || is_ident_char(source[pos + 2]) == false) {
+      tokens = push(tokens, token(39, "tr"))
+      pos = pos + 2
+      0
+    } else if ch == 112 && pos + 1 < len(source) && source[pos + 1] == 114 && (pos + 2 == len(source) || is_ident_char(source[pos + 2]) == false) {
+      tokens = push(tokens, token(21, "pr"))
+      pos = pos + 2
+      0
+    } else if ch == 112 && pos + 2 < len(source) && source[pos + 1] == 117 && source[pos + 2] == 98 && (pos + 3 == len(source) || is_ident_char(source[pos + 3]) == false) {
+      tokens = push(tokens, token(33, "pub"))
+      pos = pos + 3
+      0
+    } else if is_letter(ch) {
+      let begin = pos
+      lp pos < len(source) && is_ident_char(source[pos]) {
+        pos = pos + 1
+      }
+      tokens = push(tokens, token(19, substr(source, begin, pos - begin)))
+      0
     } else if is_digit(ch) {
       let begin = pos
       lp pos < len(source) && is_digit(source[pos]) {
         pos = pos + 1
       }
       tokens = push(tokens, token(1, substr(source, begin, pos - begin)))
+      0
+    } else if ch == 45 && pos + 1 < len(source) && source[pos + 1] == 62 {
+      tokens = push(tokens, token(27, "->"))
+      pos = pos + 2
       0
     } else if ch == 43 {
       tokens = push(tokens, token(2, "+"))
@@ -57,14 +156,81 @@ fn scan(source: str, start: i64) -> [Token] {
       tokens = push(tokens, token(8, ")"))
       pos = pos + 1
       0
-    } else if ch == 125 {
+    } else if ch == 46 {
+      tokens = push(tokens, token(43, "."))
       pos = pos + 1
-      done = true
+      0
+    } else if ch == 123 {
+      tokens = push(tokens, token(29, "{"))
+      pos = pos + 1
+      0
+    } else if ch == 125 {
+      tokens = push(tokens, token(30, "}"))
+      pos = pos + 1
+      0
+    } else if ch == 58 {
+      tokens = push(tokens, token(26, ":"))
+      pos = pos + 1
+      0
+    } else if ch == 44 {
+      tokens = push(tokens, token(31, ","))
+      pos = pos + 1
+      0
+    } else if ch == 59 {
+      tokens = push(tokens, token(32, ";"))
+      pos = pos + 1
+      0
+    } else if ch == 91 {
+      tokens = push(tokens, token(41, "["))
+      pos = pos + 1
+      0
+    } else if ch == 93 {
+      tokens = push(tokens, token(42, "]"))
+      pos = pos + 1
+      0
+    } else if ch == 61 && pos + 1 < len(source) && source[pos + 1] == 61 {
+      tokens = push(tokens, token(10, "=="))
+      pos = pos + 2
+      0
+    } else if ch == 33 && pos + 1 < len(source) && source[pos + 1] == 61 {
+      tokens = push(tokens, token(11, "!="))
+      pos = pos + 2
+      0
+    } else if ch == 60 && pos + 1 < len(source) && source[pos + 1] == 61 {
+      tokens = push(tokens, token(14, "<="))
+      pos = pos + 2
+      0
+    } else if ch == 62 && pos + 1 < len(source) && source[pos + 1] == 61 {
+      tokens = push(tokens, token(15, ">="))
+      pos = pos + 2
+      0
+    } else if ch == 38 && pos + 1 < len(source) && source[pos + 1] == 38 {
+      tokens = push(tokens, token(16, "&&"))
+      pos = pos + 2
+      0
+    } else if ch == 124 && pos + 1 < len(source) && source[pos + 1] == 124 {
+      tokens = push(tokens, token(17, "||"))
+      pos = pos + 2
+      0
+    } else if ch == 60 {
+      tokens = push(tokens, token(12, "<"))
+      pos = pos + 1
+      0
+    } else if ch == 62 {
+      tokens = push(tokens, token(13, ">"))
+      pos = pos + 1
+      0
+    } else if ch == 33 {
+      tokens = push(tokens, token(18, "!"))
+      pos = pos + 1
+      0
+    } else if ch == 61 {
+      tokens = push(tokens, token(28, "="))
+      pos = pos + 1
       0
     } else {
       tokens = push(tokens, token(9, substr(source, pos, 1)))
       pos = pos + 1
-      done = true
     }
   }
   push(tokens, token(0, ""))
@@ -77,31 +243,113 @@ fn parse_primary(state: ParseState) -> ParseState {
     state.root = len(state.nodes) - 1
     state.pos = state.pos + 1
     state
+  } else if current.kind == 20 {
+    state.nodes = push(state.nodes, node(4, current.text, 0, 0))
+    state.root = len(state.nodes) - 1
+    state.pos = state.pos + 1
+    state
+  } else if current.kind == 21 && state.tokens[state.pos + 1].kind == 7 {
+    state.pos = state.pos + 2
+    state = parse_expr(state)
+    if state.tokens[state.pos].kind == 8 {
+      state.pos = state.pos + 1
+      state.nodes = push(state.nodes, node(5, "pr", state.root, 0))
+      state.root = len(state.nodes) - 1
+    }
+    state
+  } else if current.kind == 19 {
+    if state.tokens[state.pos + 1].kind == 7 {
+      state.pos = state.pos + 2
+      state = parse_call_args(state)
+      let args = state.arg_root
+      if state.tokens[state.pos].kind == 8 {
+        state.pos = state.pos + 1
+        state.nodes = push(state.nodes, call_node(current.text, args))
+        state.root = len(state.nodes) - 1
+      }
+      state
+    } else {
+      state.nodes = push(state.nodes, node(6, current.text, 0, 0))
+      state.root = len(state.nodes) - 1
+      state.pos = state.pos + 1
+      state
+    }
+  } else if current.kind == 24 {
+    state.pos = state.pos + 1
+    state = parse_expr(state)
+    let condition = state.root
+    state.pos = state.pos + 1
+    state = parse_expr(state)
+    let then_branch = state.root
+    state.pos = state.pos + 1
+    state.pos = state.pos + 1
+    state.pos = state.pos + 1
+    state = parse_expr(state)
+    let else_branch = state.root
+    state.pos = state.pos + 1
+    state.nodes = push(state.nodes, node_extra(8, "", condition, then_branch, else_branch))
+    state.root = len(state.nodes) - 1
+    state
   } else if current.kind == 7 {
     state.pos = state.pos + 1
     state = parse_expr(state)
     if state.tokens[state.pos].kind == 8 {
       state.pos = state.pos + 1
-      state
-    } else {
-      pr("tc: expected closing parenthesis")
-      state
     }
+    state
+  } else if current.kind == 29 {
+    state.pos = state.pos + 1
+    state = parse_expr(state)
+    if state.tokens[state.pos].kind == 30 {
+      state.pos = state.pos + 1
+    }
+    state
   } else {
-    pr("tc: expected integer or parenthesized expression")
     state
   }
 }
 
+fn parse_call_args(state: ParseState) -> ParseState {
+  if state.tokens[state.pos].kind == 8 {
+    state.arg_root = -1
+    state
+  } else {
+    state = parse_expr(state)
+    let argument = state.root
+    let next = -1
+    if state.tokens[state.pos].kind == 31 {
+      state.pos = state.pos + 1
+      state = parse_call_args(state)
+      next = state.arg_root
+    }
+    state.nodes = push(state.nodes, node(9, "", argument, next))
+    state.arg_root = len(state.nodes) - 1
+    state
+  }
+}
+
+fn parse_unary(state: ParseState) -> ParseState {
+  let operation = state.tokens[state.pos]
+  if operation.kind == 3 || operation.kind == 18 {
+    state.pos = state.pos + 1
+    state = parse_unary(state)
+    state.nodes = push(state.nodes, node(3, operation.text, state.root, 0))
+    state.root = len(state.nodes) - 1
+    state
+  } else {
+    parse_primary(state)
+  }
+}
+
 fn parse_term(state: ParseState) -> ParseState {
-  state = parse_primary(state)
+  state = parse_unary(state)
   let keep_parsing = true
   lp keep_parsing == true {
     let operation = state.tokens[state.pos]
     if operation.kind == 4 || operation.kind == 5 || operation.kind == 6 {
       let left = state.root
       state.pos = state.pos + 1
-      state = parse_primary(state)
+      state = parse_unary(state)
       state.nodes = push(state.nodes, node(2, operation.text, left, state.root))
       state.root = len(state.nodes) - 1
     } else {
@@ -111,7 +359,7 @@ fn parse_term(state: ParseState) -> ParseState {
   state
 }
 
-fn parse_expr(state: ParseState) -> ParseState {
+fn parse_add(state: ParseState) -> ParseState {
   state = parse_term(state)
   let keep_parsing = true
   lp keep_parsing == true {
@@ -129,40 +377,292 @@ fn parse_expr(state: ParseState) -> ParseState {
   state
 }
 
+fn parse_compare(state: ParseState) -> ParseState {
+  state = parse_add(state)
+  let keep_parsing = true
+  lp keep_parsing == true {
+    let operation = state.tokens[state.pos]
+    if operation.kind >= 10 && operation.kind <= 15 {
+      let left = state.root
+      state.pos = state.pos + 1
+      state = parse_add(state)
+      state.nodes = push(state.nodes, node(2, operation.text, left, state.root))
+      state.root = len(state.nodes) - 1
+    } else {
+      keep_parsing = false
+    }
+  }
+  state
+}
+
+fn parse_and(state: ParseState) -> ParseState {
+  state = parse_compare(state)
+  let keep_parsing = true
+  lp keep_parsing == true {
+    let operation = state.tokens[state.pos]
+    if operation.kind == 16 {
+      let left = state.root
+      state.pos = state.pos + 1
+      state = parse_compare(state)
+      state.nodes = push(state.nodes, node(2, operation.text, left, state.root))
+      state.root = len(state.nodes) - 1
+    } else {
+      keep_parsing = false
+    }
+  }
+  state
+}
+
+fn parse_expr(state: ParseState) -> ParseState {
+  state = parse_and(state)
+  let keep_parsing = true
+  lp keep_parsing == true {
+    let operation = state.tokens[state.pos]
+    if operation.kind == 17 {
+      let left = state.root
+      state.pos = state.pos + 1
+      state = parse_and(state)
+      state.nodes = push(state.nodes, node(2, operation.text, left, state.root))
+      state.root = len(state.nodes) - 1
+    } else {
+      keep_parsing = false
+    }
+  }
+  state
+}
+
+fn parse_function(state: ParseState, is_public: bool) -> ParseState {
+  state.pos = state.pos + 1
+  let name = state.tokens[state.pos].text
+  let is_method = false
+  if state.tokens[state.pos + 1].kind == 43 {
+    is_method = true
+    state.pos = state.pos + 3
+  } else {
+    state.pos = state.pos + 2
+  }
+  let params: [Param] = []
+  let done = false
+  lp done == false {
+    if state.tokens[state.pos].kind == 8 {
+      done = true
+    } else {
+      let param_name = state.tokens[state.pos].text
+      state.pos = state.pos + 1
+      if state.tokens[state.pos].kind == 26 {
+        state.pos = state.pos + 1
+        if state.tokens[state.pos].kind != 38 {
+          state.valid = false
+        }
+        state.pos = state.pos + 1
+      }
+      params = push(params, Param { name: param_name })
+      if state.tokens[state.pos].kind == 31 {
+        state.pos = state.pos + 1
+      } else {
+        done = true
+      }
+    }
+  }
+  state.pos = state.pos + 1
+  if state.tokens[state.pos].kind == 27 {
+    state.pos = state.pos + 1
+    if state.tokens[state.pos].kind != 38 {
+      state.valid = false
+    }
+    state.pos = state.pos + 1
+  }
+  if state.tokens[state.pos].kind == 28 {
+    state.pos = state.pos + 1
+  }
+  state = parse_expr(state)
+  if is_method == true {
+    state
+  } else {
+    state.functions = push(state.functions, Function { name: name, params: params, root: state.root, is_public: is_public })
+    state
+  }
+}
+
+fn skip_braces(state: ParseState) -> ParseState {
+  let depth = 0
+  let done = false
+  lp done == false && state.tokens[state.pos].kind != 0 {
+    if state.tokens[state.pos].kind == 29 {
+      depth = depth + 1
+      state.pos = state.pos + 1
+    } else if state.tokens[state.pos].kind == 30 {
+      depth = depth - 1
+      state.pos = state.pos + 1
+      if depth == 0 {
+        done = true
+      }
+    } else {
+      state.pos = state.pos + 1
+    }
+  }
+  state
+}
+
+fn skip_named_braces(state: ParseState, has_keyword: bool) -> ParseState {
+  if has_keyword == true {
+    state.pos = state.pos + 1
+  }
+  state.pos = state.pos + 1
+  if state.tokens[state.pos].kind == 29 {
+    skip_braces(state)
+  } else {
+    state.valid = false
+    state
+  }
+}
+
+fn skip_type_decl(state: ParseState) -> ParseState {
+  state.pos = state.pos + 1
+  state.pos = state.pos + 1
+  if state.tokens[state.pos].kind == 28 {
+    state.pos = state.pos + 1
+  }
+  if state.tokens[state.pos].kind == 29 {
+    skip_braces(state)
+  } else if state.tokens[state.pos].kind == 41 {
+    state.pos = state.pos + 1
+    state.pos = state.pos + 1
+    if state.tokens[state.pos].kind == 42 {
+      state.pos = state.pos + 1
+    }
+    state
+  } else {
+    state.pos = state.pos + 1
+    state
+  }
+}
+
+fn parse_program(state: ParseState) -> ParseState {
+  let done = false
+  lp done == false {
+    let current = state.tokens[state.pos]
+    if current.kind == 22 {
+      state = parse_function(state, false)
+    } else if current.kind == 33 {
+      state.pos = state.pos + 1
+      if state.tokens[state.pos].kind == 22 {
+        state = parse_function(state, true)
+      } else {
+        state.valid = false
+        done = true
+        state
+      }
+    } else if current.kind == 34 {
+      state.pos = state.pos + 1
+      state
+    } else if current.kind == 35 {
+      state.valid = false
+      state.pos = state.pos + 1
+      state
+    } else if current.kind == 36 {
+      state = skip_type_decl(state)
+    } else if current.kind == 37 || current.kind == 39 {
+      state = skip_named_braces(state, true)
+    } else if current.kind == 19 && state.tokens[state.pos + 1].kind == 29 {
+      state = skip_named_braces(state, false)
+    } else if current.kind == 23 {
+      if state.has_entry == true {
+        state.valid = false
+        done = true
+        state
+      } else {
+        state.has_entry = true
+        state.pos = state.pos + 1
+        if state.tokens[state.pos].kind == 7 && state.tokens[state.pos + 1].kind == 8 {
+          state.pos = state.pos + 2
+          state.nodes = push(state.nodes, node(1, "0", 0, 0))
+          state.root = len(state.nodes) - 1
+          state
+        } else {
+          state = parse_expr(state)
+          state
+        }
+        state
+      }
+      state
+    } else if current.kind == 0 {
+      done = true
+      state
+    } else {
+      state.valid = false
+      done = true
+      state
+    }
+  }
+  state
+}
+
+fn emit_call_args(nodes: [Node], index: i64) -> str {
+  if index < 0 {
+    ""
+  } else {
+    let argument = nodes[index]
+    if argument.right < 0 {
+      emit_node(nodes, argument.left)
+    } else {
+      emit_node(nodes, argument.left) + ", " + emit_call_args(nodes, argument.right)
+    }
+  }
+}
+
+fn emit_param_declarations(params: [Param], index: i64) -> str {
+  if index >= len(params) {
+    "void"
+  } else if index + 1 >= len(params) {
+    "int64_t " + params[index].name
+  } else {
+    "int64_t " + params[index].name + ", " + emit_param_declarations(params, index + 1)
+  }
+}
+
 fn emit_node(nodes: [Node], index: i64) -> str {
   let current = nodes[index]
   if current.kind == 1 {
     current.text
+  } else if current.kind == 4 {
+    "\"" + current.text + "\""
+  } else if current.kind == 3 {
+    "(" + current.text + emit_node(nodes, current.left) + ")"
+  } else if current.kind == 5 {
+    "(did_print = 1, printf(\"%s\\n\", " + emit_node(nodes, current.left) + "), INT64_C(0))"
+  } else if current.kind == 6 {
+    current.text
+  } else if current.kind == 7 {
+    "terse_" + current.text + "(" + emit_call_args(nodes, current.left) + ")"
+  } else if current.kind == 8 {
+    "(" + emit_node(nodes, current.left) + " ? " + emit_node(nodes, current.right) + " : " + emit_node(nodes, current.extra) + ")"
   } else {
     "(" + emit_node(nodes, current.left) + current.text + emit_node(nodes, current.right) + ")"
   }
 }
 
-fn expression_start(source: str) -> i64 {
-  let pos = 0
-  let found = false
-  lp pos < len(source) && found == false {
-    let ch = source[pos]
-    if ch == 61 || ch == 123 {
-      pos = pos + 1
-      found = true
-    } else {
-      pos = pos + 1
-    }
-  }
-  pos
-}
-
 fn compile_file(source_path: str, output_path: str) -> i64 {
   let source = fs.read_text(source_path)
-  let tokens = scan(source, expression_start(source))
-  let initial = ParseState { tokens: tokens, nodes: [], pos: 0, root: 0 }
-  let parsed = parse_expr(initial)
-  if len(parsed.nodes) == 0 || parsed.tokens[parsed.pos].kind != 0 {
+  let tokens = scan(source)
+  let initial = ParseState { tokens: tokens, nodes: [], pos: 0, root: 0, arg_root: -1, functions: [], has_entry: false, valid: true }
+  let parsed = parse_program(initial)
+  if parsed.valid == false || parsed.has_entry == false || parsed.tokens[parsed.pos].kind != 0 {
     2
   } else {
     let expression = emit_node(parsed.nodes, parsed.root)
-    let c_source = "#include <stdint.h>\n#include <stdio.h>\nint main(void) {\n  int64_t result = " + expression + ";\n  printf(\"%lld\\n\", (long long)result);\n  return 0;\n}\n"
+    let function_prototypes = ""
+    let function_bodies = ""
+    let function_index = 0
+    lp function_index < len(parsed.functions) {
+      let current = parsed.functions[function_index]
+      let c_name = "terse_" + current.name
+      let params = emit_param_declarations(current.params, 0)
+      function_prototypes = function_prototypes + "static int64_t " + c_name + "(" + params + ");\n"
+      function_bodies = function_bodies + "static int64_t " + c_name + "(" + params + ") {\n  return " + emit_node(parsed.nodes, current.root) + ";\n}\n"
+      function_index = function_index + 1
+    }
+    let c_source = "#include <stdint.h>\n#include <stdio.h>\nstatic int did_print = 0;\n" + function_prototypes + function_bodies + "int main(void) {\n  int64_t result = " + expression + ";\n  if (!(did_print && result == 0)) printf(\"%lld\\n\", (long long)result);\n  return 0;\n}\n"
     let c_path = output_path + ".c"
     fs.write_text(c_path, c_source)
     gcc.compile(c_path, output_path)

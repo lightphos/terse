@@ -1,3 +1,4 @@
+// TODO(stdlib extraction): migrate compiler-backed std.http and std.db APIs to library modules.
 use std.http, std.db
 
 rec User { id: i64, name: str, password: str, active: bool }
