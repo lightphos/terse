@@ -121,13 +121,13 @@ through `tersec.py`. `make tc-test` also checks that the multi-function smoke te
 ## TODO: Native Compiler Parity
 
 - [x] Generalize function declarations and calls: multiple functions, arbitrary
-  parameter/argument lists, optional `i64` annotations, `pub`, and one validated
-  `go` entrypoint. The parser also accepts unused type/record/trait/method
-  declarations and standard imports.
+  parameter/argument lists, optional `i64`/`bool` parameter and return
+  annotations, `pub`, and one validated `go` entrypoint. The parser also accepts
+  unused type/record/trait/method declarations and standard imports.
 - [ ] Add semantics for type/record/trait/method declarations and source-module
   imports, including module resolution and visibility enforcement.
-- [ ] Complete lexical and expression coverage: booleans, hexadecimal integers,
-  floats, unit, decoded string escapes, block comments, assignment, composition,
+- [ ] Complete lexical and expression coverage: hexadecimal integers, floats,
+  unit, decoded string escapes, block comments, assignment, composition,
   partial-application `_`, and postfix member/call/index/record/list forms.
 - [ ] Add the documented statement and control forms: general block sequencing,
   `let`/`let mut`, assignment, `ret`, both `lp` loop forms, and `match` with

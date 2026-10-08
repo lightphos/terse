@@ -4,8 +4,8 @@
 use std.fs
 
 Token { kind: i64, text: str }
-Param { name: str }
-Function { name: str, params: [Param], root: i64, is_public: bool }
+Param { name: str, typ: str }
+Function { name: str, params: [Param], return_type: str, root: i64, is_public: bool }
 Node { kind: i64, text: str, left: i64, right: i64, extra: i64 }
 ParseState { tokens: [Token], nodes: [Node], pos: i64, root: i64, arg_root: i64, functions: [Function], has_entry: bool, valid: bool }
 
@@ -66,9 +66,21 @@ fn scan(source: str) -> [Token] {
       tokens = push(tokens, token(24, "if"))
       pos = pos + 2
       0
+    } else if ch == 116 && pos + 3 < len(source) && source[pos + 1] == 114 && source[pos + 2] == 117 && source[pos + 3] == 101 && (pos + 4 == len(source) || is_ident_char(source[pos + 4]) == false) {
+      tokens = push(tokens, token(44, "true"))
+      pos = pos + 4
+      0
+    } else if ch == 102 && pos + 4 < len(source) && source[pos + 1] == 97 && source[pos + 2] == 108 && source[pos + 3] == 115 && source[pos + 4] == 101 && (pos + 5 == len(source) || is_ident_char(source[pos + 5]) == false) {
+      tokens = push(tokens, token(45, "false"))
+      pos = pos + 5
+      0
     } else if ch == 105 && pos + 2 < len(source) && source[pos + 1] == 54 && source[pos + 2] == 52 && (pos + 3 == len(source) || is_ident_char(source[pos + 3]) == false) {
       tokens = push(tokens, token(38, "i64"))
       pos = pos + 3
+      0
+    } else if ch == 98 && pos + 3 < len(source) && source[pos + 1] == 111 && source[pos + 2] == 111 && source[pos + 3] == 108 && (pos + 4 == len(source) || is_ident_char(source[pos + 4]) == false) {
+      tokens = push(tokens, token(46, "bool"))
+      pos = pos + 4
       0
     } else if ch == 101 && pos + 3 < len(source) && source[pos + 1] == 108 && source[pos + 2] == 115 && source[pos + 3] == 101 && (pos + 4 == len(source) || is_ident_char(source[pos + 4]) == false) {
       tokens = push(tokens, token(25, "else"))
@@ -238,7 +250,16 @@ fn scan(source: str) -> [Token] {
 
 fn parse_primary(state: ParseState) -> ParseState {
   let current = state.tokens[state.pos]
-  if current.kind == 1 {
+  if current.kind == 44 || current.kind == 45 {
+    let value = "1"
+    if current.kind == 45 {
+      value = "0"
+    }
+    state.nodes = push(state.nodes, node(10, value, 0, 0))
+    state.root = len(state.nodes) - 1
+    state.pos = state.pos + 1
+    state
+  } else if current.kind == 1 {
     state.nodes = push(state.nodes, node(1, current.text, 0, 0))
     state.root = len(state.nodes) - 1
     state.pos = state.pos + 1
@@ -449,14 +470,19 @@ fn parse_function(state: ParseState, is_public: bool) -> ParseState {
     } else {
       let param_name = state.tokens[state.pos].text
       state.pos = state.pos + 1
+      let param_type = "i64"
       if state.tokens[state.pos].kind == 26 {
         state.pos = state.pos + 1
-        if state.tokens[state.pos].kind != 38 {
+        if state.tokens[state.pos].kind == 38 {
+          param_type = "i64"
+        } else if state.tokens[state.pos].kind == 46 {
+          param_type = "bool"
+        } else {
           state.valid = false
         }
         state.pos = state.pos + 1
       }
-      params = push(params, Param { name: param_name })
+      params = push(params, Param { name: param_name, typ: param_type })
       if state.tokens[state.pos].kind == 31 {
         state.pos = state.pos + 1
       } else {
@@ -465,9 +491,14 @@ fn parse_function(state: ParseState, is_public: bool) -> ParseState {
     }
   }
   state.pos = state.pos + 1
+  let return_type = "i64"
   if state.tokens[state.pos].kind == 27 {
     state.pos = state.pos + 1
-    if state.tokens[state.pos].kind != 38 {
+    if state.tokens[state.pos].kind == 38 {
+      return_type = "i64"
+    } else if state.tokens[state.pos].kind == 46 {
+      return_type = "bool"
+    } else {
       state.valid = false
     }
     state.pos = state.pos + 1
@@ -479,7 +510,7 @@ fn parse_function(state: ParseState, is_public: bool) -> ParseState {
   if is_method == true {
     state
   } else {
-    state.functions = push(state.functions, Function { name: name, params: params, root: state.root, is_public: is_public })
+    state.functions = push(state.functions, Function { name: name, params: params, return_type: return_type, root: state.root, is_public: is_public })
     state
   }
 }
@@ -611,19 +642,23 @@ fn emit_call_args(nodes: [Node], index: i64) -> str {
   }
 }
 
+fn c_type(type_name: str) -> str = if type_name == "bool" { "_Bool" } else { "int64_t" }
+
 fn emit_param_declarations(params: [Param], index: i64) -> str {
   if index >= len(params) {
     "void"
   } else if index + 1 >= len(params) {
-    "int64_t " + params[index].name
+    c_type(params[index].typ) + " " + params[index].name
   } else {
-    "int64_t " + params[index].name + ", " + emit_param_declarations(params, index + 1)
+    c_type(params[index].typ) + " " + params[index].name + ", " + emit_param_declarations(params, index + 1)
   }
 }
 
 fn emit_node(nodes: [Node], index: i64) -> str {
   let current = nodes[index]
   if current.kind == 1 {
+    current.text
+  } else if current.kind == 10 {
     current.text
   } else if current.kind == 4 {
     "\"" + current.text + "\""
@@ -658,8 +693,9 @@ fn compile_file(source_path: str, output_path: str) -> i64 {
       let current = parsed.functions[function_index]
       let c_name = "terse_" + current.name
       let params = emit_param_declarations(current.params, 0)
-      function_prototypes = function_prototypes + "static int64_t " + c_name + "(" + params + ");\n"
-      function_bodies = function_bodies + "static int64_t " + c_name + "(" + params + ") {\n  return " + emit_node(parsed.nodes, current.root) + ";\n}\n"
+      let return_type = c_type(current.return_type)
+      function_prototypes = function_prototypes + "static " + return_type + " " + c_name + "(" + params + ");\n"
+      function_bodies = function_bodies + "static " + return_type + " " + c_name + "(" + params + ") {\n  return " + emit_node(parsed.nodes, current.root) + ";\n}\n"
       function_index = function_index + 1
     }
     let c_source = "#include <stdint.h>\n#include <stdio.h>\nstatic int did_print = 0;\n" + function_prototypes + function_bodies + "int main(void) {\n  int64_t result = " + expression + ";\n  if (!(did_print && result == 0)) printf(\"%lld\\n\", (long long)result);\n  return 0;\n}\n"

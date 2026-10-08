@@ -20,6 +20,10 @@ tc-test:
 	  printf '%s\n' "$$fact_log"; \
 	  printf '%s\n' "$$fact_log" | grep -q 'compiled with the Terse frontend'; \
 	  test "$$(output/tc-fact)" = "3628800"
+	@bool_log=$$(./tc src/bool.te -o output/tc-bool 2>&1); \
+	  printf '%s\n' "$$bool_log"; \
+	  printf '%s\n' "$$bool_log" | grep -q 'compiled with the Terse frontend'; \
+	  test "$$(output/tc-bool)" = "42"
 
 dir ?= src
 terse.%:

@@ -1,4 +1,0 @@
-
-go {
-    pr("hello world")
-}

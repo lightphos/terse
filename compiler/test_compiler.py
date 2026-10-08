@@ -439,6 +439,21 @@ class TestTerseCompiler(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "17")
 
+    def test_tc_compiles_boolean_example_natively(self):
+        with tempfile.TemporaryDirectory(prefix="terse_tc_bool_") as directory:
+            binary_path = os.path.join(directory, "boolean")
+            compiled = subprocess.run(
+                tc_command(os.path.join(EXAMPLES, "bool.te"), "-o", binary_path),
+                capture_output=True, text=True, cwd=ROOT,
+            )
+            self.assertEqual(compiled.returncode, 0, compiled.stderr + compiled.stdout)
+            self.assertIn("compiled with the Terse frontend", compiled.stdout)
+            self.assertNotIn("falling back to tersec.py", compiled.stderr)
+
+            result = subprocess.run([binary_path], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "42")
+
     def test_tc_compiles_recursive_functions_natively(self):
         with tempfile.TemporaryDirectory(prefix="terse_tc_fallback_") as directory:
             binary_path = os.path.join(directory, "fact")
