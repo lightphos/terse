@@ -10,22 +10,29 @@ from enum import Enum, auto
 
 # --- Lexer -----------------------------------------------
 class TT(Enum):
-    EOF=auto(); IDENT=auto(); INT=auto(); STRING=auto()
-    FN=auto(); LET=auto(); IF=auto(); ELSE=auto(); LP=auto()
+    EOF=auto(); IDENT=auto(); INT=auto(); STRING=auto(); FLOAT=auto()
+    FN=auto(); IF=auto(); ELSE=auto(); LP=auto()
     TRUE=auto(); FALSE=auto(); RETURN=auto(); RET=auto(); TR=auto()
     USE=auto(); TYPE=auto(); GO=auto(); PUB=auto()
-    ARROW=auto(); FATARROW=auto()
+    EN=auto(); MATCH=auto()
+    VAL=auto(); VAR=auto(); FOR=auto(); IN=auto(); WHILE=auto()
+    REC=auto(); BRK=auto(); CNT=auto()
+    ARROW=auto(); FATARROW=auto(); PIPEGT=auto()
+    PLUSEQ=auto(); MINUSEQ=auto(); STAREQ=auto(); SLASHEQ=auto(); PERCENTEQ=auto()
     LPAREN=auto(); RPAREN=auto(); LBRACE=auto(); RBRACE=auto()
     LBRACK=auto(); RBRACK=auto()
     COMMA=auto(); COLON=auto(); SEMI=auto(); ASSIGN=auto(); DOT=auto()
     PLUS=auto(); MINUS=auto(); STAR=auto(); SLASH=auto(); PERCENT=auto()
     EQ=auto(); NEQ=auto(); LT=auto(); GT=auto(); LE=auto(); GE=auto()
     AND=auto(); OR=auto(); NOT=auto(); PIPE=auto(); COMPOSE=auto()
-    UNDERSCORE=auto()
+    UNDERSCORE=auto(); QUESTION=auto()
 
-KW = {'fn':TT.FN,'let':TT.LET,'if':TT.IF,'else':TT.ELSE,'lp':TT.LP,
+KW = {'fn':TT.FN,'if':TT.IF,'else':TT.ELSE,'lp':TT.LP,
       'true':TT.TRUE,'false':TT.FALSE,'return':TT.RETURN,'ret':TT.RET,
-    'use':TT.USE,'type':TT.TYPE,'go':TT.GO,'tr':TT.TR,'pub':TT.PUB}
+    'use':TT.USE,'type':TT.TYPE,'go':TT.GO,'tr':TT.TR,'pub':TT.PUB,
+    'en':TT.EN,'match':TT.MATCH,
+    'val':TT.VAL,'var':TT.VAR,'for':TT.FOR,'in':TT.IN,'while':TT.WHILE,
+    'rec':TT.REC,'brk':TT.BRK,'cnt':TT.CNT}
 
 @dataclass
 class Tok:
@@ -57,6 +64,10 @@ class Lexer:
         ln,cl = self.line, self.col; s=''
         if self.p()=='-': s+=self.adv()
         while self.p().isdigit(): s+=self.adv()
+        if self.p()=='.' and self.p(1).isdigit():
+            s+=self.adv()
+            while self.p().isdigit(): s+=self.adv()
+            return Tok(TT.FLOAT, float(s), ln, cl)
         return Tok(TT.INT, int(s), ln, cl)
     def string(self):
         ln,cl = self.line, self.col; self.adv(); s=''
@@ -70,6 +81,8 @@ class Lexer:
     def ident(self):
         ln,cl = self.line, self.col; s=''
         while self.p().isalnum() or self.p()=='_': s+=self.adv()
+        if s == '_':
+            return Tok(TT.UNDERSCORE, s, ln, cl)
         return Tok(KW.get(s, TT.IDENT), s, ln, cl)
     def tokenize(self):
         while self.i < len(self.s):
@@ -87,13 +100,20 @@ class Lexer:
             elif c=='>' and self.p(1)=='=': self.adv(); self.adv(); self.toks.append(Tok(TT.GE,'>=',ln,cl))
             elif c=='&' and self.p(1)=='&': self.adv(); self.adv(); self.toks.append(Tok(TT.AND,'&&',ln,cl))
             elif c=='|' and self.p(1)=='|': self.adv(); self.adv(); self.toks.append(Tok(TT.OR,'||',ln,cl))
+            elif c=='|' and self.p(1)=='>': self.adv(); self.adv(); self.toks.append(Tok(TT.PIPEGT,'|>',ln,cl))
             elif c=='>' and self.p(1)=='>': self.adv(); self.adv(); self.toks.append(Tok(TT.COMPOSE,'>>',ln,cl))
+            elif c=='+' and self.p(1)=='=': self.adv(); self.adv(); self.toks.append(Tok(TT.PLUSEQ,'+=',ln,cl))
+            elif c=='-' and self.p(1)=='=': self.adv(); self.adv(); self.toks.append(Tok(TT.MINUSEQ,'-=',ln,cl))
+            elif c=='*' and self.p(1)=='=': self.adv(); self.adv(); self.toks.append(Tok(TT.STAREQ,'*=',ln,cl))
+            elif c=='/' and self.p(1)=='=': self.adv(); self.adv(); self.toks.append(Tok(TT.SLASHEQ,'/=',ln,cl))
+            elif c=='%' and self.p(1)=='=': self.adv(); self.adv(); self.toks.append(Tok(TT.PERCENTEQ,'%=',ln,cl))
             else:
                 m = {'(':TT.LPAREN,')':TT.RPAREN,'{':TT.LBRACE,'}':TT.RBRACE,
                      '[':TT.LBRACK,']':TT.RBRACK,',':TT.COMMA,':':TT.COLON,
                      ';':TT.SEMI,'=':TT.ASSIGN,'.':TT.DOT,'+':TT.PLUS,'-':TT.MINUS,
                      '*':TT.STAR,'/':TT.SLASH,'%':TT.PERCENT,'<':TT.LT,
-                     '>':TT.GT,'!':TT.NOT,'|':TT.PIPE,'_':TT.UNDERSCORE}
+                     '>':TT.GT,'!':TT.NOT,'|':TT.PIPE,'_':TT.UNDERSCORE,
+                     '?':TT.QUESTION}
                 if c in m: self.adv(); self.toks.append(Tok(m[c],c,ln,cl))
                 else: raise SyntaxError(f"bad char '{c}' at {ln}:{cl}")
         self.toks.append(Tok(TT.EOF,None,self.line,self.col))
@@ -155,6 +175,15 @@ class LoopExpr(Expr):
     post: Optional[Expr]
     body: Expr
 @dataclass
+class ForInExpr(Expr):
+    var: str
+    iterable: Expr
+    body: Expr
+@dataclass
+class AssignExpr(Expr):
+    target: Expr
+    value: Expr
+@dataclass
 class Block(Expr):
     stmts: List[Expr]
 @dataclass
@@ -202,10 +231,59 @@ class UseDecl:
 class RecordLit(Expr):
     ctor: Expr
     fields: List[Tuple[str, Expr]]
+
+@dataclass
+class EnumDecl:
+    name: str
+    variants: List[str]
+
+# Pattern nodes for match
+@dataclass
+class Wildcard:
+    pass
+
+@dataclass
+class LiteralPattern:
+    value: Expr
+
+@dataclass
+class BindPattern:
+    name: str
+
+@dataclass
+class EnumVariant:
+    ctor: str
+    variant: str
+
+@dataclass
+class RecordPattern:
+    name: str
+    fields: List[Tuple[str, Optional[object]]]
+
+@dataclass
+class TuplePattern:
+    items: List[object]
+
+@dataclass
+class ListPattern:
+    items: List[object]
+
+@dataclass
+class MatchArm:
+    pattern: object
+    guard: Optional[Expr]
+    value: Expr
+
+@dataclass
+class MatchExpr(Expr):
+    subject: Expr
+    arms: List[MatchArm]
+
 @dataclass
 class Program:
     funcs: List[FnDecl]
     recs: List[RecDecl]
+    enums: List[EnumDecl] = field(default_factory=list)
     sigs: List[TraitDecl] = field(default_factory=list)
     methods: List[MethodDecl] = field(default_factory=list)
     toplevel: Optional[Expr] = None  # top-level body or go body
@@ -239,12 +317,28 @@ class Parser:
                 self.expect(TT.RPAREN)
                 if self.match(TT.ARROW):
                     self.adv(); args.append(self.parse_type())
+            elif self.match(TT.LBRACK):
+                self.adv()
+                while not self.match(TT.RBRACK):
+                    args.append(self.parse_type())
+                    if self.match(TT.COMMA): self.adv()
+                self.expect(TT.RBRACK)
             return TypeNode(name, args)
         if self.match(TT.LBRACK):
             self.adv()
             inner = self.parse_type()
             self.expect(TT.RBRACK)
             return TypeNode('list', [inner])
+        if self.match(TT.REC):
+            self.adv()
+            self.expect(TT.LBRACE)
+            while not self.match(TT.RBRACE):
+                self.expect(TT.IDENT)
+                self.expect(TT.COLON)
+                self.parse_type()
+                if self.match(TT.COMMA): self.adv()
+            self.expect(TT.RBRACE)
+            return TypeNode('record', [])
         if self.match(TT.LBRACE):  # {id: i64, name: str}
             self.adv()
             while not self.match(TT.RBRACE):
@@ -254,6 +348,22 @@ class Parser:
                 if self.match(TT.COMMA): self.adv()
             self.expect(TT.RBRACE)
             return TypeNode('record', [])
+        if self.match(TT.LPAREN):
+            self.adv()
+            if self.match(TT.RPAREN):
+                self.adv()
+                return TypeNode('unit', [])
+            first = self.parse_type()
+            if self.match(TT.COMMA):
+                args = [first]
+                while self.match(TT.COMMA):
+                    self.adv()
+                    if self.match(TT.RPAREN): break
+                    args.append(self.parse_type())
+                self.expect(TT.RPAREN)
+                return TypeNode('tuple', args)
+            self.expect(TT.RPAREN)
+            return first
         raise SyntaxError(f"type expected at {self.cur().line}:{self.cur().col}")
 
     def parse_params(self):
@@ -288,17 +398,43 @@ class Parser:
     def parse_primary(self):
         t = self.cur()
         if self.match(TT.INT): self.adv(); return IntLit(t.v)
+        if self.match(TT.FLOAT): self.adv(); return IntLit(int(t.v))  # f64 limited
         if self.match(TT.TRUE): self.adv(); return BoolLit(True)
         if self.match(TT.FALSE): self.adv(); return BoolLit(False)
         if self.match(TT.STRING): self.adv(); return StrLit(t.v)
         if self.match(TT.IDENT): self.adv(); return Var(t.v)
         if self.match(TT.RET): return self.parse_ret()
+        if self.match(TT.BRK):
+            self.adv()
+            value = None
+            if not self.match(TT.RBRACE, TT.SEMI, TT.EOF, TT.COMMA):
+                value = self.parse_expr()
+            return RetExpr(value)
+        if self.match(TT.CNT):
+            self.adv()
+            return IntLit(0)
         if self.match(TT.LPAREN):
-            self.adv(); e = self.parse_expr(); self.expect(TT.RPAREN); return e
+            self.adv()
+            if self.match(TT.RPAREN):
+                self.adv()
+                return IntLit(0)
+            e = self.parse_expr()
+            if self.match(TT.COMMA):
+                while self.match(TT.COMMA):
+                    self.adv()
+                    if self.match(TT.RPAREN): break
+                    self.parse_expr()
+                self.expect(TT.RPAREN)
+                return e
+            self.expect(TT.RPAREN)
+            return e
         if self.match(TT.LBRACK): return self.parse_list()
         if self.match(TT.PIPE): return self.parse_lambda()
         if self.match(TT.LBRACE): return self.parse_block()
         if self.match(TT.IF): return self.parse_if()
+        if self.match(TT.MATCH): return self.parse_match()
+        if self.match(TT.FOR): return self.parse_for_in()
+        if self.match(TT.WHILE): return self.parse_while()
         if self.match(TT.LP): return self.parse_loop()
         raise SyntaxError(f"unexpected {t.t.name} ('{t.v}') at {t.line}:{t.col}")
 
@@ -314,20 +450,50 @@ class Parser:
         self.expect(TT.PIPE)
         return Lambda(ps, self.parse_expr())
 
+    def parse_binding(self):
+        """Parse val/var binding: keyword IDENT [':' type] '=' expr"""
+        self.adv()  # consume val/var
+        name = self.expect(TT.IDENT).v
+        typ = None
+        if self.match(TT.COLON):
+            self.adv()
+            typ = self.parse_type()
+        self.expect(TT.ASSIGN)
+        val = self.parse_expr()
+        return name, val, typ
+
+    def parse_for_in(self):
+        self.expect(TT.FOR)
+        var = self.expect(TT.IDENT).v
+        self.expect(TT.IN)
+        iterable = self.parse_expr()
+        body = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
+        return ForInExpr(var, iterable, body)
+
+    def parse_while(self):
+        self.expect(TT.WHILE)
+        cond = self.parse_expr()
+        body = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
+        return LoopExpr(None, cond, None, body)
+
     def parse_loop(self):
         self.expect(TT.LP)
+        # `lp x: xs { body }`  — for-in over list (BNF: lp IDENT ":" expr block)
+        if self.match(TT.IDENT):
+            # Lookahead: IDENT COLON ...
+            if self.i + 1 < len(self.toks) and self.toks[self.i + 1].t == TT.COLON:
+                var = self.adv().v
+                self.expect(TT.COLON)
+                iterable = self.parse_expr()
+                body = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
+                return ForInExpr(var, iterable, body)
+
         init = None
         cond = None
         post = None
 
-        if self.match(TT.LET):
-            self.adv()
-            name = self.expect(TT.IDENT).v
-            typ = None
-            if self.match(TT.COLON):
-                self.adv(); typ = self.parse_type()
-            self.expect(TT.ASSIGN)
-            val = self.parse_expr()
+        if self.match(TT.VAL, TT.VAR):
+            name, val, typ = self.parse_binding()
             init = LetExpr(name, val, IntLit(0), typ=typ)
         else:
             init = self.parse_expr()
@@ -342,30 +508,25 @@ class Parser:
             if not self.match(TT.LBRACE):
                 post = self.parse_expr()
         else:
+            # `lp cond { body }` — while-style
             cond = init
             init = None
 
-        body = self.parse_expr()
+        body = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
         return LoopExpr(init, cond, post, body)
 
     def parse_block(self):
         self.expect(TT.LBRACE)
         stmts = []
         while not self.match(TT.RBRACE):
-            if self.match(TT.LET):
-                self.adv()
-                name = self.expect(TT.IDENT).v
-                typ = None
-                if self.match(TT.COLON):
-                    self.adv()
-                    typ = self.parse_type()
-                self.expect(TT.ASSIGN)
-                val = self.parse_expr()
+            if self.match(TT.VAL, TT.VAR):
+                name, val, typ = self.parse_binding()
                 stmts.append(('let', name, val, typ))
             elif self.match(TT.RET):
                 stmts.append(('ret', self.parse_ret()))
             else:
-                stmts.append(('expr', self.parse_expr()))
+                e = self.parse_expr()
+                stmts.append(('expr', e))
             if self.match(TT.SEMI): self.adv()
         self.expect(TT.RBRACE)
         if not stmts:
@@ -389,11 +550,99 @@ class Parser:
     def parse_if(self):
         self.expect(TT.IF)
         cond = self.parse_expr()
-        then = self.parse_expr()
+        then = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
         els = None
         if self.match(TT.ELSE):
-            self.adv(); els = self.parse_expr()
+            self.adv()
+            if self.match(TT.IF):
+                els = self.parse_if()
+            else:
+                els = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
         return IfExpr(cond, then, els)
+
+    def parse_match(self):
+        self.expect(TT.MATCH)
+        subject = self.parse_expr()
+        self.expect(TT.LBRACE)
+        arms = []
+        while not self.match(TT.RBRACE):
+            pat = self.parse_pattern()
+            guard = None
+            if self.match(TT.IF):
+                self.adv()
+                guard = self.parse_expr()
+            self.expect(TT.FATARROW)
+            value = self.parse_expr()
+            arms.append(MatchArm(pat, guard, value))
+            if self.match(TT.COMMA): self.adv()
+        self.expect(TT.RBRACE)
+        return MatchExpr(subject, arms)
+
+    def parse_pattern(self):
+        t = self.cur()
+        if self.match(TT.UNDERSCORE):
+            self.adv()
+            return Wildcard()
+        if self.match(TT.INT):
+            self.adv()
+            return LiteralPattern(IntLit(t.v))
+        if self.match(TT.STRING):
+            self.adv()
+            return LiteralPattern(StrLit(t.v))
+        if self.match(TT.TRUE):
+            self.adv()
+            return LiteralPattern(BoolLit(True))
+        if self.match(TT.FALSE):
+            self.adv()
+            return LiteralPattern(BoolLit(False))
+        if self.match(TT.LPAREN):
+            self.adv()
+            if self.match(TT.RPAREN):
+                self.adv()
+                return LiteralPattern(IntLit(0))  # unit as 0
+            first = self.parse_pattern()
+            if not self.match(TT.COMMA):
+                self.expect(TT.RPAREN)
+                return first
+            items = [first]
+            while self.match(TT.COMMA):
+                self.adv()
+                if self.match(TT.RPAREN): break
+                items.append(self.parse_pattern())
+            self.expect(TT.RPAREN)
+            return TuplePattern(items)
+        if self.match(TT.LBRACK):
+            self.adv()
+            items = []
+            while not self.match(TT.RBRACK):
+                items.append(self.parse_pattern())
+                if self.match(TT.COMMA): self.adv()
+            self.expect(TT.RBRACK)
+            return ListPattern(items)
+        if self.match(TT.IDENT):
+            name = self.adv().v
+            if self.match(TT.DOT):
+                self.adv()
+                variant = self.expect(TT.IDENT).v
+                return EnumVariant(name, variant)
+            if self.match(TT.LBRACE):
+                return self.parse_record_pattern(name)
+            return BindPattern(name)
+        raise SyntaxError(f"unexpected pattern token {t.t.name} ('{t.v}') at {t.line}:{t.col}")
+
+    def parse_record_pattern(self, name: str):
+        self.expect(TT.LBRACE)
+        fields = []
+        while not self.match(TT.RBRACE):
+            field = self.expect(TT.IDENT).v
+            subpat = None
+            if self.match(TT.COLON):
+                self.adv()
+                subpat = self.parse_pattern()
+            fields.append((field, subpat))
+            if self.match(TT.COMMA): self.adv()
+        self.expect(TT.RBRACE)
+        return RecordPattern(name, fields)
 
     def is_http_serve_call(self, e: Expr) -> bool:
         # Call(Member(Var("http"), "serve"), [...])
@@ -442,8 +691,13 @@ class Parser:
                 field = self.expect(TT.IDENT).v
                 e = Member(e, field)
             elif self.match(TT.LBRACE):
+                # Record literal only when `{ ident : ... }`
                 if isinstance(e, (Var, Member)):
-                    e = self.parse_record_lit(e)
+                    if (self.i + 1 < len(self.toks) and self.toks[self.i + 1].t == TT.IDENT
+                            and self.i + 2 < len(self.toks) and self.toks[self.i + 2].t == TT.COLON):
+                        e = self.parse_record_lit(e)
+                    else:
+                        break
                 else:
                     break
             elif self.match(TT.LPAREN):
@@ -463,6 +717,8 @@ class Parser:
                 idx = self.parse_expr()
                 self.expect(TT.RBRACK)
                 e = Index(e, idx)
+            elif self.match(TT.QUESTION):
+                self.adv()
             else:
                 break
         return e
@@ -512,10 +768,28 @@ class Parser:
             self.adv()
             r = self.parse_assign()
             return Binary('=', l, r)
+        if self.match(TT.PLUSEQ, TT.MINUSEQ, TT.STAREQ, TT.SLASHEQ, TT.PERCENTEQ):
+            op = self.adv().v  # '+=', etc.
+            r = self.parse_assign()
+            # desugar: x += e  =>  x = x + e
+            base_op = op[0]  # '+', '-', '*', '/', '%'
+            return Binary('=', l, Binary(base_op, l, r))
+        return l
+
+    def parse_pipe(self):
+        l = self.parse_assign()
+        while self.match(TT.PIPEGT):
+            self.adv()
+            r = self.parse_assign()
+            # a |> f(args) => f(a, args...); a |> f => f(a)
+            if isinstance(r, Call):
+                l = Call(r.func, [l] + list(r.args))
+            else:
+                l = Call(r, [l])
         return l
 
     def parse_expr(self):
-        return self.parse_assign()
+        return self.parse_pipe()
 
     def skip_use(self):
         self.expect(TT.USE)
@@ -526,6 +800,26 @@ class Parser:
             while self.match(TT.DOT, TT.SLASH):
                 separators.append(self.adv().v)
                 segments.append(self.expect(TT.IDENT).v)
+            if self.match(TT.LBRACE):
+                self.adv()
+                while not self.match(TT.RBRACE):
+                    sub_segs = [self.expect(TT.IDENT).v]
+                    while self.match(TT.DOT):
+                        self.adv()
+                        sub_segs.append(self.expect(TT.IDENT).v)
+                    sub_alias = sub_segs[-1]
+                    if self.match(TT.IDENT) and self.cur().v == 'as':
+                        self.adv()
+                        sub_alias = self.expect(TT.IDENT).v
+                    base = segments[0]
+                    for sep, seg in zip(separators, segments[1:]):
+                        base += sep + seg
+                    uses.append(UseDecl(base, sub_alias, sub_segs[-1], False))
+                    if self.match(TT.COMMA): self.adv()
+                self.expect(TT.RBRACE)
+                if self.match(TT.COMMA):
+                    self.adv(); continue
+                break
             symbol = None
             glob = False
             if (segments[0] != 'std' and len(segments) >= 3
@@ -543,8 +837,10 @@ class Parser:
                 self.adv()
                 alias = self.expect(TT.IDENT).v
                 explicit_alias = True
-            glob = (symbol is None and segments[0] != 'std' and len(segments) == 2
-                    and separators == ['.'] and not explicit_alias)
+            if path.startswith('io.') or path in ('io',) or segments[0] == 'io':
+                path = 'std.' + path if not path.startswith('std.') else path
+            glob = (symbol is None and segments[0] != 'std' and segments[0] != 'io'
+                    and len(segments) == 2 and separators == ['.'] and not explicit_alias)
             uses.append(UseDecl(path, alias, symbol, glob))
             if self.match(TT.COMMA):
                 self.adv(); continue
@@ -561,7 +857,10 @@ class Parser:
         if self.match(TT.SEMI): self.adv()
 
     def parse_rec(self):
-        if self.match(TT.IDENT):
+        if self.match(TT.REC):
+            self.adv()
+            name = self.expect(TT.IDENT).v
+        elif self.match(TT.IDENT):
             tok = self.adv()
             if tok.v in ('rec', 'struct'):
                 name = self.expect(TT.IDENT).v
@@ -579,6 +878,17 @@ class Parser:
             if self.match(TT.COMMA): self.adv()
         self.expect(TT.RBRACE)
         return RecDecl(name, fields)
+
+    def parse_enum(self):
+        self.expect(TT.EN)
+        name = self.expect(TT.IDENT).v
+        self.expect(TT.LBRACE)
+        variants = []
+        while not self.match(TT.RBRACE):
+            variants.append(self.expect(TT.IDENT).v)
+            if self.match(TT.COMMA): self.adv()
+        self.expect(TT.RBRACE)
+        return EnumDecl(name, variants)
 
     def parse_trait(self):
         self.expect(TT.TR)
@@ -639,6 +949,7 @@ class Parser:
     def parse_program(self):
         fs = []
         recs = []
+        enums = []
         sigs = []
         methods = []
         uses = []
@@ -647,6 +958,8 @@ class Parser:
         while not self.match(TT.EOF):
             if self.match(TT.USE):
                 uses.extend(self.skip_use())
+            elif self.match(TT.REC):
+                recs.append(self.parse_rec())
             elif self.match(TT.IDENT):
                 next_tok = self.toks[self.i + 1] if self.i + 1 < len(self.toks) else None
                 if (self.cur().v in ('rec', 'struct') and next_tok is not None and next_tok.t == TT.IDENT and self.i + 2 < len(self.toks) and self.toks[self.i + 2].t == TT.LBRACE) or (next_tok is not None and next_tok.t == TT.LBRACE):
@@ -674,19 +987,14 @@ class Parser:
                     methods.append(decl)
                 else:
                     fs.append(decl)
+            elif self.match(TT.EN):
+                enums.append(self.parse_enum())
             elif self.match(TT.GO):
                 if go_body is not None:
                     raise SyntaxError("multiple go entry points")
                 go_body = self.parse_go()
-            elif self.match(TT.LET):
-                self.adv()
-                name = self.expect(TT.IDENT).v
-                typ = None
-                if self.match(TT.COLON):
-                    self.adv()
-                    typ = self.parse_type()
-                self.expect(TT.ASSIGN)
-                val = self.parse_expr()
+            elif self.match(TT.VAL, TT.VAR):
+                name, val, typ = self.parse_binding()
                 top_stmts.append(('let', name, val, typ))
                 if self.match(TT.SEMI): self.adv()
             else:
@@ -702,7 +1010,7 @@ class Parser:
             toplevel = go_body
         elif top_stmts:
             raise SyntaxError("program entry point required; use go { ... } or go()")
-        return Program(fs, recs, sigs, methods, toplevel, uses)
+        return Program(fs, recs, enums, sigs, methods, toplevel, uses)
 
 # --- Type check (light) -----------------------------------
 class TypeChecker:
@@ -711,6 +1019,7 @@ class TypeChecker:
         self.env = {}
         self.errors = []
         self.recs = {}
+        self.enums = {}
         self.sigs = {}     # trait name -> list of (method_name, [param_type_names], ret_type_name)
         self.methods = {}  # (receiver, method_name) -> ([param_type_names], ret_type_name)
         self.satisfied = set()  # set of (sig_name, struct_name) pairs
@@ -758,6 +1067,7 @@ class TypeChecker:
     def check_program(self, prog):
         self.compute_satisfaction(prog)
         self.recs = {r.name: {n: t.name if t else 'i64' for n, t in r.fields} for r in prog.recs}
+        self.enums = {e.name: e.variants for e in prog.enums}
         for f in prog.funcs:
             ats = [p.typ.name if p.typ else 'i64' for p in f.params]
             self.funcs[f.name] = (ats, f.ret.name if f.ret else 'i64')
@@ -784,13 +1094,24 @@ class TypeChecker:
             return 'i64'
         if isinstance(e, Var):
             if e.name in self.env: return self.env[e.name]
+            if e.name in self.enums: return e.name
             if e.name in self.funcs or e.name in ('pr','len','json','env','str','push','substr','arg'): return 'fn'
             if e.name in ('http','db','tst','fs','gcc'): return 'mod'
             return 'i64'
         if isinstance(e, Member):
+            if isinstance(e.obj, Var) and e.obj.name in self.enums:
+                if e.field in self.enums[e.obj.name]:
+                    return e.obj.name
             base = self.check(e.obj)
             if base in self.recs:
                 return self.recs[base].get(e.field, 'i64')
+            if base in self.enums:
+                if e.field in self.enums[base]:
+                    return base
+                return 'i64'
+            if base in ('List', 'list') or (isinstance(base, str) and base.startswith('list_')):
+                if e.field in ('size', 'len'):
+                    return 'i64'
             return 'i64'
         if isinstance(e, Binary):
             self.check(e.left); self.check(e.right)
@@ -846,6 +1167,14 @@ class TypeChecker:
                 self.check(e.post)
             self.env = old_env
             return 'i64'
+        if isinstance(e, ForInExpr):
+            self.check(e.iterable)
+            old = self.env.get(e.var)
+            self.env[e.var] = 'i64'
+            self.check(e.body)
+            if old is not None: self.env[e.var] = old
+            else: self.env.pop(e.var, None)
+            return 'i64'
         if isinstance(e, LetExpr):
             t = e.typ.name if e.typ else self.check(e.value)
             old = self.env.get(e.name)
@@ -861,6 +1190,14 @@ class TypeChecker:
             self.check(e.body)
             self.env = old
             return 'fn'
+        if isinstance(e, MatchExpr):
+            subj_type = self.check(e.subject)
+            for arm in e.arms:
+                self.check_pattern(arm.pattern, subj_type)
+                if arm.guard is not None:
+                    self.check(arm.guard)
+                self.check(arm.value)
+            return self.check(e.arms[0].value)
         if isinstance(e, HttpServe):
             self.check(e.port)
             for r in e.routes:
@@ -871,6 +1208,32 @@ class TypeChecker:
             for s in e.stmts: t = self.check(s)
             return t
         return 'i64'
+
+    def check_pattern(self, pat, subj_type):
+        if isinstance(pat, Wildcard):
+            return
+        if isinstance(pat, BindPattern):
+            self.env[pat.name] = subj_type
+            return
+        if isinstance(pat, LiteralPattern):
+            self.check(pat.value)
+            return
+        if isinstance(pat, EnumVariant):
+            if subj_type in self.enums and pat.variant in self.enums[subj_type]:
+                return
+            return
+        if isinstance(pat, TuplePattern):
+            for p in pat.items: self.check_pattern(p, 'i64')
+            return
+        if isinstance(pat, ListPattern):
+            for p in pat.items: self.check_pattern(p, 'i64')
+            return
+        if isinstance(pat, RecordPattern):
+            for field_name, subpat in pat.fields:
+                if subpat is not None:
+                    self.check_pattern(subpat, 'i64')
+            return
+        raise SyntaxError(f"unsupported pattern type {type(pat).__name__}")
 
 # --- C runtime + HTTP server ------------------------------
 RUNTIME = r'''
@@ -931,21 +1294,22 @@ typedef struct sqlite3_stmt sqlite3_stmt;
         #undef LOAD_SQLITE
     }
 #else
-    extern int sqlite3_open(const char*, sqlite3**);
-    extern int sqlite3_initialize(void);
-    extern int sqlite3_close(sqlite3*);
-    extern const char* sqlite3_errmsg(sqlite3*);
-    extern int sqlite3_prepare_v2(sqlite3*, const char*, int, sqlite3_stmt**, const char**);
-    extern int sqlite3_step(sqlite3_stmt*);
-    extern int sqlite3_finalize(sqlite3_stmt*);
-    extern int sqlite3_bind_int64(sqlite3_stmt*, int, int64_t);
-    extern int sqlite3_bind_text(sqlite3_stmt*, int, const char*, int, void(*)(void*));
-    extern int64_t sqlite3_column_int64(sqlite3_stmt*, int);
-    extern int sqlite3_column_int(sqlite3_stmt*, int);
-    extern double sqlite3_column_double(sqlite3_stmt*, int);
-    extern const unsigned char* sqlite3_column_text(sqlite3_stmt*, int);
-    extern int sqlite3_column_count(sqlite3_stmt*);
-    extern int sqlite3_changes(sqlite3*);
+    /* DB/sqlite support disabled — stubs so we do not need -lsqlite3 */
+    static int sqlite3_open(const char* a, sqlite3** b) { (void)a;(void)b; fprintf(stderr,"db support disabled\n"); exit(1); return 1; }
+    static int sqlite3_initialize(void) { return 0; }
+    static int sqlite3_close(sqlite3* a) { (void)a; return 0; }
+    static const char* sqlite3_errmsg(sqlite3* a) { (void)a; return "db disabled"; }
+    static int sqlite3_prepare_v2(sqlite3* a, const char* b, int c, sqlite3_stmt** d, const char** e) { (void)a;(void)b;(void)c;(void)d;(void)e; return 1; }
+    static int sqlite3_step(sqlite3_stmt* a) { (void)a; return SQLITE_DONE; }
+    static int sqlite3_finalize(sqlite3_stmt* a) { (void)a; return 0; }
+    static int sqlite3_bind_int64(sqlite3_stmt* a, int b, int64_t c) { (void)a;(void)b;(void)c; return 0; }
+    static int sqlite3_bind_text(sqlite3_stmt* a, int b, const char* c, int d, void(*e)(void*)) { (void)a;(void)b;(void)c;(void)d;(void)e; return 0; }
+    static int64_t sqlite3_column_int64(sqlite3_stmt* a, int b) { (void)a;(void)b; return 0; }
+    static int sqlite3_column_int(sqlite3_stmt* a, int b) { (void)a;(void)b; return 0; }
+    static double sqlite3_column_double(sqlite3_stmt* a, int b) { (void)a;(void)b; return 0; }
+    static const unsigned char* sqlite3_column_text(sqlite3_stmt* a, int b) { (void)a;(void)b; return (const unsigned char*)""; }
+    static int sqlite3_column_count(sqlite3_stmt* a) { (void)a; return 0; }
+    static int sqlite3_changes(sqlite3* a) { (void)a; return 0; }
     static void db_load_sqlite(void) {}
 #endif
 
@@ -1213,7 +1577,7 @@ static int64_t terse_gcc_compile(const char* source, const char* output) {
 #ifdef _WIN32
     args[count++] = "-lws2_32";
 #else
-    args[count++] = "-lsqlite3";
+    /* sqlite disabled */
 #endif
     args[count++] = "-o";
     args[count++] = (char*)output;
@@ -1352,6 +1716,7 @@ class CodeGen:
         self.interface_methods = {}
         self.interface_method_returns = {}
         self.interface_helpers = {}
+        self.enum_values = {}  # enum name -> {variant: value}
         self.func_param_types = {}
         self.func_return_types = {}
 
@@ -1485,8 +1850,11 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
 
     def c_type(self, t):
         if t.startswith('list_'):
-            return f"List_{t[5:]}"
-        return {'fn':'void*','str':'const char*','list':'List','i64':'int64_t','i32':'int32_t','u64':'uint64_t','bool':'bool','f64':'double'}.get(t, t)
+            inner = t[5:]
+            if inner in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
+                return 'List'
+            return f"List_{inner}"
+        return {'fn':'void*','str':'const char*','list':'List','List':'List','i64':'int64_t','i32':'int32_t','u64':'uint64_t','bool':'bool','f64':'double'}.get(t, t)
 
     def expr_type(self, e) -> str:
         if isinstance(e, Var):
@@ -1496,7 +1864,12 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         if isinstance(e, RecordLit):
             return e.ctor.name if isinstance(e.ctor, Var) else 'record'
         if isinstance(e, Member):
+            if isinstance(e.obj, Var) and e.obj.name in self.enum_values:
+                return e.obj.name
             base_type = self.expr_type(e.obj)
+            if base_type in ('List', 'list') or (isinstance(base_type, str) and base_type.startswith('list_')):
+                if e.field in ('size', 'len'):
+                    return 'i64'
             return self.record_field_types.get(base_type, {}).get(e.field, 'i64')
         return 'i64'
 
@@ -1521,16 +1894,22 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 return f"(void*){self.known[e.name]}", "fn"
             return e.name, self.env.get(e.name, "i64")
         if isinstance(e, Member):
+            # Enum variant: Colour.Green -> integer constant
+            if isinstance(e.obj, Var) and e.obj.name in self.enum_values:
+                variants = self.enum_values[e.obj.name]
+                if e.field in variants:
+                    return f"INT64_C({variants[e.field]})", e.obj.name
             base, btype = self.gen_expr(e.obj)
             if btype in self.interface_methods:
                 ret_type = self.interface_method_returns.get((btype, e.field), 'i64')
                 return f"(({base}).{e.field})", btype
+            # List .size / .len
+            if btype in ('List', 'list') or (isinstance(btype, str) and btype.startswith('list_')):
+                if e.field in ('size', 'len'):
+                    if btype.startswith('list_') and btype[5:] not in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
+                        return f"list_len_{btype[5:]}({base})", "i64"
+                    return f"list_len({base})", "i64"
             field_type = self.record_field_types.get(btype, {}).get(e.field, 'i64')
-
-            # Special handling for List.len() - generate a call to list_len()
-            if btype == 'List' and e.field == 'len':
-                return f"list_len({base})", "i64"
-
             return f"(({base}).{e.field})", field_type
         if isinstance(e, Binary):
             l, lt = self.gen_expr(e.left)
@@ -1585,6 +1964,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 return f"((int64_t)((unsigned char){c}[{i}]))", "i64"
             if ct.startswith('list_'):
                 record_name = ct[5:]
+                if record_name in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
+                    return f"list_get({c}, {i})", "i64"
                 return f"list_get_{record_name}({c}, {i})", record_name
             return f"list_get({c}, {i})", "i64"
         if isinstance(e, Call):
@@ -1607,6 +1988,23 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 if at in self.record_field_types:
                     return f"(print_{at}({a}), INT64_C(0))", "i64"
                 return f"(print_i64({a}), INT64_C(0))", "i64"
+            if isinstance(e.func, Var) and e.func.name == 'map':
+                coll, ct = self.gen_expr(e.args[0])
+                fn_e = e.args[1]
+                if isinstance(fn_e, Var) and fn_e.name in self.known:
+                    fn_c = self.known[fn_e.name]
+                else:
+                    fn_c, _ = self.gen_expr(fn_e)
+                    fn_c = f"((int64_t(*)(int64_t)){fn_c})"
+                tmp = self.fresh()
+                idx = self.fresh()
+                return (
+                    f"({{ List __map_in = {coll}; List {tmp} = list_new(__map_in.n); "
+                    f"for (int64_t {idx} = 0; {idx} < __map_in.n; {idx}++) "
+                    f"{tmp}.d[{idx}] = {fn_c}(__map_in.d[{idx}]); "
+                    f"{tmp}; }})",
+                    "List"
+                )
             if isinstance(e.func, Var) and e.func.name == 'len':
                 a, at = self.gen_expr(e.args[0])
                 if at.startswith('list_'):
@@ -1753,6 +2151,78 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             if init_stmt is not None:
                 return (f"({{ {init_stmt} while({cond_c}) {{ (void)({body_c}); {post_c} }} INT64_C(0); }})", "i64")
             return (f"({{ while({cond_c}) {{ (void)({body_c}); {post_c} }} INT64_C(0); }})", "i64")
+        if isinstance(e, ForInExpr):
+            coll, ct = self.gen_expr(e.iterable)
+            old = self.env.get(e.var)
+            self.env[e.var] = 'i64'
+            body_c, _ = self.gen_expr(e.body)
+            if old is not None: self.env[e.var] = old
+            else: self.env.pop(e.var, None)
+            idx = self.fresh()
+            return (
+                f"({{ List __for_coll = {coll}; "
+                f"for (int64_t {idx} = 0; {idx} < __for_coll.n; {idx}++) {{ "
+                f"int64_t {e.var} = __for_coll.d[{idx}]; (void)({body_c}); }} "
+                f"INT64_C(0); }})",
+                "i64"
+            )
+        if isinstance(e, MatchExpr):
+            subj, st = self.gen_expr(e.subject)
+            tmp = self.fresh()
+            result = self.fresh()
+            bind_names = []
+            for arm in e.arms:
+                if isinstance(arm.pattern, BindPattern) and arm.pattern.name not in bind_names:
+                    bind_names.append(arm.pattern.name)
+            probe_env = self.env.copy()
+            for bn in bind_names:
+                probe_env[bn] = st
+            old_env = self.env
+            self.env = probe_env
+            _, ret_t = self.gen_expr(e.arms[0].value)
+            self.env = old_env
+            zero = '""' if ret_t == 'str' else ("INT64_C(0)" if ret_t == 'i64' else f"({self.c_type(ret_t)}){{0}}")
+            ctype = self.c_type(st) if st not in ('str',) else 'int64_t'
+            parts = [f"{ctype} {tmp} = {subj};"]
+            for bn in bind_names:
+                parts.append(f"{ctype} {bn} = {tmp};")
+            parts.append(f"{self.c_type(ret_t)} {result} = {zero};")
+            chain = []
+            for arm in e.arms:
+                old_env = self.env.copy()
+                for bn in bind_names:
+                    self.env[bn] = st
+                if isinstance(arm.pattern, BindPattern):
+                    self.env[arm.pattern.name] = st
+                conds = []
+                if isinstance(arm.pattern, Wildcard):
+                    pass
+                elif isinstance(arm.pattern, LiteralPattern):
+                    lit, _ = self.gen_expr(arm.pattern.value)
+                    conds.append(f"({tmp} == {lit})")
+                elif isinstance(arm.pattern, EnumVariant):
+                    variants = self.enum_values.get(arm.pattern.ctor, {})
+                    if arm.pattern.variant in variants:
+                        conds.append(f"({tmp} == INT64_C({variants[arm.pattern.variant]}))")
+                    else:
+                        conds.append("0")
+                elif isinstance(arm.pattern, BindPattern):
+                    pass
+                else:
+                    conds.append("1")
+                if arm.guard is not None:
+                    g, _ = self.gen_expr(arm.guard)
+                    conds.append(f"({g})")
+                val_c, _ = self.gen_expr(arm.value)
+                self.env = old_env
+                cond_str = " && ".join(conds) if conds else "1"
+                chain.append(f"if ({cond_str}) {{ {result} = {val_c}; }}")
+            else_chain = chain[0]
+            for c in chain[1:]:
+                else_chain += " else " + c
+            parts.append(else_chain)
+            parts.append(result)
+            return "({ " + " ".join(parts) + "; })", ret_t
         if isinstance(e, LetExpr):
             v, vt = self.gen_expr(e.value, self.type_name(e.typ) if e.typ else None)
             if e.typ is not None:
@@ -1891,6 +2361,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
 
     def generate(self, prog: Program) -> str:
         self.record_field_types = {r.name: {n: self.type_name(t) for n, t in r.fields} for r in prog.recs}
+        self.enum_values = {e.name: {v: i for i, v in enumerate(e.variants)} for e in prog.enums}
         self.method_names = {}
         self.method_returns = {}
         self.interface_methods = {sig.name: [m[0] for m in sig.methods] for sig in prog.sigs}
@@ -1977,6 +2448,12 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     )
         for rec in prog.recs:
             out.append(f"typedef struct {rec.name} {rec.name};")
+        for en in prog.enums:
+            out.append(f"typedef enum {{")
+            for i, variant in enumerate(en.variants):
+                out.append(f"    {en.name}_{variant.upper()} = {i},")
+            out.append(f"}} {en.name};")
+            out.append("")
         for rec in prog.recs:
             out.append(f"typedef struct {{ {rec.name} *d; int64_t n; int64_t cap; }} List_{rec.name};")
         if prog.recs:
@@ -2069,6 +2546,15 @@ def _rewrite_module_expr(e, local_functions, imported_modules):
         if e.post is not None:
             e.post = _rewrite_module_expr(e.post, local_functions, imported_modules)
         e.body = _rewrite_module_expr(e.body, local_functions, imported_modules)
+    elif isinstance(e, ForInExpr):
+        e.iterable = _rewrite_module_expr(e.iterable, local_functions, imported_modules)
+        e.body = _rewrite_module_expr(e.body, local_functions, imported_modules)
+    elif isinstance(e, MatchExpr):
+        e.subject = _rewrite_module_expr(e.subject, local_functions, imported_modules)
+        for arm in e.arms:
+            if arm.guard is not None:
+                arm.guard = _rewrite_module_expr(arm.guard, local_functions, imported_modules)
+            arm.value = _rewrite_module_expr(arm.value, local_functions, imported_modules)
     elif isinstance(e, Block):
         e.stmts = [_rewrite_module_expr(stmt, local_functions, imported_modules) for stmt in e.stmts]
     elif isinstance(e, ListLit):
@@ -2247,10 +2733,9 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None):
             gcc_out = out_bin + ".exe"
 
         cmd = ["gcc", "-O2", "-std=c11", c_file, "-o", gcc_out]
-        if sys.platform != "win32":
-            cmd.append("-lsqlite3")
         if sys.platform == "win32":
             cmd.append("-lws2_32")
+        # sqlite/db support removed for now — no -lsqlite3
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
             print("C compile failed:", file=sys.stderr)

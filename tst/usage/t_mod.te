@@ -1,0 +1,6 @@
+// use std.tst
+use usage/mod
+
+
+
+go { mod() }

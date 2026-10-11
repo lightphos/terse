@@ -11,7 +11,7 @@ Usage:
   tc --help
 
 Compile a Terse source file to a native executable with GCC.
-By default, writes output/<source-basename> and its C source beside it.
+By default, writes to out/<source-basename> and its C source beside it.
 Use -o to choose a different executable path.
 
 The Terse frontend currently supports arithmetic and logical expressions,
@@ -52,7 +52,7 @@ if [ -z "$output_path" ]; then
   case "$file_name" in
     *.*) file_name=${file_name%.*} ;;
   esac
-  output_path="$root_dir/output/$file_name"
+  output_path="$root_dir/out/$file_name"
 else
   case "$output_path" in
     /*) ;;
@@ -61,15 +61,15 @@ else
 fi
 
 cd "$root_dir"
-mkdir -p output
-if [ ! -x output/tc-stage0 ] ||
-   [ compiler/tc.te -nt output/tc-stage0 ] ||
-   [ compiler/tersec.py -nt output/tc-stage0 ]; then
-  python3 compiler/tersec.py build compiler/tc.te -o output/tc-stage0 >/dev/null
+mkdir -p out
+if [ ! -x out/tc-stage0 ] ||
+   [ compiler/tc.te -nt out/tc-stage0 ] ||
+   [ compiler/tersec.py -nt out/tc-stage0 ]; then
+  python3 compiler/tersec.py build compiler/tc.te -o out/tc-stage0 >/dev/null
 fi
 
-stage1_log=output/.tc-stage1.log
-if TERSE_SOURCE=$source_path TERSE_OUTPUT=$output_path output/tc-stage0 >"$stage1_log" 2>&1; then
+stage1_log=out/.tc-stage1.log
+if TERSE_SOURCE=$source_path TERSE_OUTPUT=$output_path out/tc-stage0 >"$stage1_log" 2>&1; then
   if grep -q '^TC_OK$' "$stage1_log"; then
     rm -f "$stage1_log"
     printf 'tc: compiled with the Terse frontend: %s\n' "$output_path"

@@ -1,0 +1,16 @@
+// strings, lists, pr, len — terse print demo
+
+go {
+  pr("hello terse")
+  pr(40 + 2)
+
+  val xs = [10, 20, 30, 40]
+  pr(xs)
+  pr(len(xs))
+  pr(xs[2])
+
+  val s = "hel" + "lo"
+  pr(s)
+  pr(len(s))
+}
+ 

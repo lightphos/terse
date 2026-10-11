@@ -18,7 +18,7 @@ import subprocess
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 TERSEC = os.path.join(os.path.dirname(__file__), "tersec.py")
 TEST_DIR = os.path.join(ROOT, "tests")
-OUT_DIR = os.path.join(ROOT, "output", "tests")
+OUT_DIR = os.path.join(ROOT, "out", "tests")
 TIMEOUT = 10.0
 
 

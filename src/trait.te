@@ -1,4 +1,3 @@
-// inter.terse — implicit interface satisfaction.
 // A structure automatically satisfies a trait when it has methods with matching
 // signatures. 
 
@@ -26,7 +25,7 @@ fn print(p: Printable) {
 }
 
 go {
-    let p = Point {x: 3, y: 2};
+    val p = Point {x: 3, y: 2}
     p.show()
     print(p)
     pr(p.add())

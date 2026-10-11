@@ -6,9 +6,9 @@ fn double(n: i64) -> i64 = n * 2
 fn add(a: i64, b: i64) -> i64 = a + b
 
 go {
-  let d = double
-  let r1 = apply(d, 21) // 42
+  val d = double
+  val r1 = apply(d, 21) // 42
   // lambda
-  let r2 = apply(|x| x + 100, 7) // 107
+  val r2 = apply(|x| x + 100, 7) // 107
   r1 + r2 // 149
 }

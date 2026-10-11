@@ -1,0 +1,32 @@
+use io.pr
+
+rec Point {
+  x: i64,
+  y: i64,
+}
+
+fn double(n: i64) -> i64 = n * 2
+
+fn sum(xs: [i64]) -> i64 {
+  var total = 0
+  lp x:xs {
+    total += x
+  }
+  total
+}
+
+fn classify(n: i64) -> str =
+  match n {
+    0 => "zero"
+    n if n < 0 => "negative"
+    _ => "positive"
+  }
+
+go {
+  val p = Point { x: 3, y: 4 }
+  val xs = [1, 2, 3]
+
+  pr(p.x)
+  pr(xs |> map(double) |> sum())
+  pr(classify(-4))
+}

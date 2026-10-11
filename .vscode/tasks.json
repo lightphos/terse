@@ -10,7 +10,7 @@
         "build",
         "${file}",
         "-o",
-        "output/${fileBasenameNoExtension}${env:OS == 'Windows_NT' ? '.exe' : ''}"
+        "out/${fileBasenameNoExtension}${env:OS == 'Windows_NT' ? '.exe' : ''}"
       ],
       "presentation": {
         "reveal": "always",

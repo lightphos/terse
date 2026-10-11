@@ -66,7 +66,7 @@ async function compileCommand() {
     }
     const sourcePath = path.relative(workspace.uri.fsPath, document.uri.fsPath);
     const outputName = path.basename(document.fileName, '.te');
-    const outPath = path.join('output', outputName + (process.platform === 'win32' ? '.exe' : ''));
+    const outPath = path.join('out', outputName + (process.platform === 'win32' ? '.exe' : ''));
     const outFsPath = path.join(workspace.uri.fsPath, outPath);
     ensureDirectory(outFsPath);
     try {
@@ -100,7 +100,7 @@ async function runCommand() {
     }
     const sourcePath = path.relative(workspace.uri.fsPath, document.uri.fsPath);
     const outputName = path.basename(document.fileName, '.te');
-    const outPath = path.join('output', outputName + (process.platform === 'win32' ? '.exe' : ''));
+    const outPath = path.join('out', outputName + (process.platform === 'win32' ? '.exe' : ''));
     const outFsPath = path.join(workspace.uri.fsPath, outPath);
     ensureDirectory(outFsPath);
     try {

@@ -4,8 +4,8 @@ fn f(s: str) {
 }
 
 go {
-    let s: str = "s"
-    let i = 1
+    val s: str = "s"
+    var i = 1
     pr(i)
     f("hi")
     pr(s)

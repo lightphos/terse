@@ -1,16 +1,5 @@
-// strings, lists, pr, len — terse I/O demo
 
 go {
-  pr("hello terse")
-  pr(40 + 2)
-
-  let xs = [10, 20, 30, 40]
-  pr(xs)
-  pr(len(xs))
-  pr(xs[2])
-
-  let s = "hel" + "lo"
-  pr(s)
-  pr(len(s))
+// file ios tbd
 }
  

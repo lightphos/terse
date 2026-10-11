@@ -1,0 +1,39 @@
+use io.pr
+
+en Colour {
+  Red,
+  Green,
+  Blue
+}
+
+rec Point {
+  x: i64,
+  y: i64,
+}
+
+fn name(c: Colour) -> str =
+  match c {
+    Colour.Red => "red"
+    Colour.Green => "green"
+    Colour.Blue => "blue"
+  }
+
+fn sum(xs: [i64]) -> i64 {
+  var total = 0
+  lp i = 0; i < xs.size; i = i + 1 {
+    total = total + xs[i]
+  }
+  total
+}
+
+fn double(n: i64) -> i64 = n * 2
+
+go {
+  val c = Colour.Green
+  val p = Point { x: 3, y: 4 }
+  val xs = [1, 2, 3]
+
+  pr(name(c))
+  pr(p.x + p.y)
+  pr(xs |> map(double) |> sum())
+}

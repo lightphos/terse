@@ -10,7 +10,7 @@ A succinct language that compiles to native binaries, with structures, interface
 ```bash
 # Build program in example directory to a binary
 make terse.hello dir=src
-./output/hello          # prints hello world
+./out/hello          # prints hello world
 ```
 ### VS Code Support
 ```bash
@@ -107,8 +107,8 @@ make tcc
 
 # Compile and run a source file through tc.
 ./tc compiler/tc_smoke.te
-output/tc_smoke
-./tc compiler/tc_smoke.te -o output/tc-smoke
+out/tc_smoke
+./tc compiler/tc_smoke.te -o out/tc-smoke
 
 # Run the Terse-language regression suite.
 make tc-test

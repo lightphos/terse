@@ -1,0 +1,9 @@
+// Simple arithmetic and main
+fn add() -> i64 = 40 + 2
+
+fn mult(a: i64, b: i64) -> i64 = a * b
+
+go {
+    pr(add())
+    pr(mult(5, 6))
+}
