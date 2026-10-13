@@ -6,34 +6,44 @@ en Colour {
   Blue
 }
 
-rec Point {
-  x: i64,
-  y: i64,
+en Option {
+  Some(i64),
+  None
+}
+
+en Result {
+  Ok(i64),
+  Err(str)
 }
 
 fn name(c: Colour) -> str =
-  match c {
+  if c {
     Colour.Red => "red"
     Colour.Green => "green"
     Colour.Blue => "blue"
   }
 
-fn sum(xs: [i64]) -> i64 {
-  var total = 0
-  lp i = 0; i < xs.size; i = i + 1 {
-    total = total + xs[i]
+fn unwrap(o: Option) -> i64 =
+  if o {
+    Option.Some(n) => n
+    Option.None => 0
   }
-  total
-}
 
-fn double(n: i64) -> i64 = n * 2
+fn describe(r: Result) -> str =
+  if r {
+    Result.Ok(n) => "ok"
+    Result.Err(msg) => msg
+  }
 
 go {
   val c = Colour.Green
-  val p = Point { x: 3, y: 4 }
-  val xs = [1, 2, 3]
-
   pr(name(c))
-  pr(p.x + p.y)
-  pr(xs |> map(double) |> sum())
+
+  val o = Option.Some(42)
+  pr(unwrap(o))
+  pr(unwrap(Option.None))
+
+  val r = Result.Ok(7)
+  pr(describe(r))
+  pr(describe(Result.Err("boom")))
 }

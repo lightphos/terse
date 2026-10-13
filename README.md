@@ -196,3 +196,33 @@ MIT (for this reference implementation)
 - Lists: `[1, 2, 3]`, `len(xs)`, `xs[i]`, `pr(xs)`
 - `pr(x)` for ints, strings, lists
 - See `src/io.te`
+
+## BOOTSTRAP
+
+Start self-hosting when most are true:
+
+1. tc.te is written in current syntax
+val/var, rec, en, match-style if, no let.
+2. Feature parity for “compiler-shaped” code
+  - Enough to implement a compiler:
+records, lists, strings
+- functions + recursion
+- if (boolean + match-style)
+- enums with data (useful for tokens/AST)
+- file I/O (fs.read_text / write_text)
+- string building / concat
+
+3. tersec.py can build tc.te cleanly
+Stage‑0 stays Python until stage‑1 is solid.
+4. Round-trip test passes
+```text
+tersec.py  build tc.te     →  tc1
+tc1        build tc.te     →  tc2
+tc2        build tc.te     →  tc3
+diff tc2 tc3   (or same output on a fixed suite)
+```
+5. You have a fixed test suite
+eg.te, en.te, constant.te, plus a few mini programs.
+
+6. Language surface is mostly frozen for a while
+Bootstrapping while still renaming keywords (const→fix, match→if) means rewriting tc.te every week.

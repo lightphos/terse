@@ -15,7 +15,7 @@ class TT(Enum):
     TRUE=auto(); FALSE=auto(); RETURN=auto(); RET=auto(); TR=auto()
     USE=auto(); TYPE=auto(); GO=auto(); PUB=auto()
     EN=auto(); MATCH=auto()
-    VAL=auto(); VAR=auto(); FOR=auto(); IN=auto(); WHILE=auto()
+    VAL=auto(); VAR=auto(); FIX=auto(); WHILE=auto()
     REC=auto(); BRK=auto(); CNT=auto()
     ARROW=auto(); FATARROW=auto(); PIPEGT=auto()
     PLUSEQ=auto(); MINUSEQ=auto(); STAREQ=auto(); SLASHEQ=auto(); PERCENTEQ=auto()
@@ -31,7 +31,7 @@ KW = {'fn':TT.FN,'if':TT.IF,'else':TT.ELSE,'lp':TT.LP,
       'true':TT.TRUE,'false':TT.FALSE,'return':TT.RETURN,'ret':TT.RET,
     'use':TT.USE,'type':TT.TYPE,'go':TT.GO,'tr':TT.TR,'pub':TT.PUB,
     'en':TT.EN,'match':TT.MATCH,
-    'val':TT.VAL,'var':TT.VAR,'for':TT.FOR,'in':TT.IN,'while':TT.WHILE,
+    'val':TT.VAL,'var':TT.VAR,'fix':TT.FIX,'while':TT.WHILE,
     'rec':TT.REC,'brk':TT.BRK,'cnt':TT.CNT}
 
 @dataclass
@@ -233,9 +233,21 @@ class RecordLit(Expr):
     fields: List[Tuple[str, Expr]]
 
 @dataclass
+class EnumVariantDecl:
+    name: str
+    fields: List[TypeNode] = field(default_factory=list)  # empty = tag-only
+
+@dataclass
 class EnumDecl:
     name: str
-    variants: List[str]
+    variants: List[EnumVariantDecl]  # was List[str]
+
+@dataclass
+class FixDecl:
+    name: str
+    value: Expr
+    typ: Optional[TypeNode] = None
+    public: bool = False
 
 # Pattern nodes for match
 @dataclass
@@ -254,6 +266,7 @@ class BindPattern:
 class EnumVariant:
     ctor: str
     variant: str
+    fields: List[object] = field(default_factory=list)  # sub-patterns for payloads
 
 @dataclass
 class RecordPattern:
@@ -288,6 +301,7 @@ class Program:
     methods: List[MethodDecl] = field(default_factory=list)
     toplevel: Optional[Expr] = None  # top-level body or go body
     uses: List[UseDecl] = field(default_factory=list)
+    fixes: List[FixDecl] = field(default_factory=list)
 
 # --- Parser -----------------------------------------------
 class Parser:
@@ -433,7 +447,6 @@ class Parser:
         if self.match(TT.LBRACE): return self.parse_block()
         if self.match(TT.IF): return self.parse_if()
         if self.match(TT.MATCH): return self.parse_match()
-        if self.match(TT.FOR): return self.parse_for_in()
         if self.match(TT.WHILE): return self.parse_while()
         if self.match(TT.LP): return self.parse_loop()
         raise SyntaxError(f"unexpected {t.t.name} ('{t.v}') at {t.line}:{t.col}")
@@ -462,13 +475,6 @@ class Parser:
         val = self.parse_expr()
         return name, val, typ
 
-    def parse_for_in(self):
-        self.expect(TT.FOR)
-        var = self.expect(TT.IDENT).v
-        self.expect(TT.IN)
-        iterable = self.parse_expr()
-        body = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
-        return ForInExpr(var, iterable, body)
 
     def parse_while(self):
         self.expect(TT.WHILE)
@@ -550,7 +556,50 @@ class Parser:
     def parse_if(self):
         self.expect(TT.IF)
         cond = self.parse_expr()
-        then = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
+        # Match-style if: if expr { pattern => expr ... } [ else block ]
+        if self.match(TT.LBRACE):
+            save = self.i
+            self.adv()  # consume '{'
+            is_match = False
+            if not self.match(TT.RBRACE):
+                try:
+                    # probe: pattern then =>
+                    probe_i = self.i
+                    self.parse_pattern()
+                    if self.match(TT.IF):
+                        self.adv()
+                        self.parse_expr()
+                    if self.match(TT.FATARROW):
+                        is_match = True
+                    self.i = probe_i
+                except Exception:
+                    self.i = save + 1  # after '{'
+            if is_match:
+                arms = []
+                while not self.match(TT.RBRACE):
+                    pat = self.parse_pattern()
+                    guard = None
+                    if self.match(TT.IF):
+                        self.adv()
+                        guard = self.parse_expr()
+                    self.expect(TT.FATARROW)
+                    value = self.parse_expr()
+                    arms.append(MatchArm(pat, guard, value))
+                    if self.match(TT.COMMA): self.adv()
+                self.expect(TT.RBRACE)
+                # optional else → catch-all arm
+                if self.match(TT.ELSE):
+                    self.adv()
+                    if self.match(TT.IF):
+                        raise SyntaxError("match-style if cannot use 'else if'; use '_ =>' or a final else block")
+                    els = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
+                    arms.append(MatchArm(Wildcard(), None, els))
+                return MatchExpr(cond, arms)
+            # normal if body block — reparse from '{'
+            self.i = save
+            then = self.parse_block()
+        else:
+            then = self.parse_expr()
         els = None
         if self.match(TT.ELSE):
             self.adv()
@@ -624,7 +673,14 @@ class Parser:
             if self.match(TT.DOT):
                 self.adv()
                 variant = self.expect(TT.IDENT).v
-                return EnumVariant(name, variant)
+                fields = []
+                if self.match(TT.LPAREN):
+                    self.adv()
+                    while not self.match(TT.RPAREN):
+                        fields.append(self.parse_pattern())
+                        if self.match(TT.COMMA): self.adv()
+                    self.expect(TT.RPAREN)
+                return EnumVariant(name, variant, fields)
             if self.match(TT.LBRACE):
                 return self.parse_record_pattern(name)
             return BindPattern(name)
@@ -885,7 +941,15 @@ class Parser:
         self.expect(TT.LBRACE)
         variants = []
         while not self.match(TT.RBRACE):
-            variants.append(self.expect(TT.IDENT).v)
+            vname = self.expect(TT.IDENT).v
+            fields = []
+            if self.match(TT.LPAREN):
+                self.adv()
+                while not self.match(TT.RPAREN):
+                    fields.append(self.parse_type())
+                    if self.match(TT.COMMA): self.adv()
+                self.expect(TT.RPAREN)
+            variants.append(EnumVariantDecl(vname, fields))
             if self.match(TT.COMMA): self.adv()
         self.expect(TT.RBRACE)
         return EnumDecl(name, variants)
@@ -953,6 +1017,7 @@ class Parser:
         sigs = []
         methods = []
         uses = []
+        fixes = []
         top_stmts = []
         go_body = None
         while not self.match(TT.EOF):
@@ -989,6 +1054,17 @@ class Parser:
                     fs.append(decl)
             elif self.match(TT.EN):
                 enums.append(self.parse_enum())
+            elif self.match(TT.FIX):
+                self.adv()
+                name = self.expect(TT.IDENT).v
+                typ = None
+                if self.match(TT.COLON):
+                    self.adv()
+                    typ = self.parse_type()
+                self.expect(TT.ASSIGN)
+                val = self.parse_expr()
+                fixes.append(FixDecl(name, val, typ))
+                if self.match(TT.SEMI): self.adv()
             elif self.match(TT.GO):
                 if go_body is not None:
                     raise SyntaxError("multiple go entry points")
@@ -1010,7 +1086,7 @@ class Parser:
             toplevel = go_body
         elif top_stmts:
             raise SyntaxError("program entry point required; use go { ... } or go()")
-        return Program(fs, recs, enums, sigs, methods, toplevel, uses)
+        return Program(fs, recs, enums, sigs, methods, toplevel, uses, fixes)
 
 # --- Type check (light) -----------------------------------
 class TypeChecker:
@@ -1067,7 +1143,16 @@ class TypeChecker:
     def check_program(self, prog):
         self.compute_satisfaction(prog)
         self.recs = {r.name: {n: t.name if t else 'i64' for n, t in r.fields} for r in prog.recs}
-        self.enums = {e.name: e.variants for e in prog.enums}
+        self.enums = {
+            e.name: {v.name: [self._type_name(t) for t in v.fields] for v in e.variants}
+            for e in prog.enums
+        }
+        self.fixes = {}
+        for c in getattr(prog, 'fixes', []) or []:
+            if c.typ is not None:
+                self.fixes[c.name] = c.typ.name
+            else:
+                self.fixes[c.name] = self.check(c.value)
         for f in prog.funcs:
             ats = [p.typ.name if p.typ else 'i64' for p in f.params]
             self.funcs[f.name] = (ats, f.ret.name if f.ret else 'i64')
@@ -1094,6 +1179,7 @@ class TypeChecker:
             return 'i64'
         if isinstance(e, Var):
             if e.name in self.env: return self.env[e.name]
+            if hasattr(self, 'fixes') and e.name in self.fixes: return self.fixes[e.name]
             if e.name in self.enums: return e.name
             if e.name in self.funcs or e.name in ('pr','len','json','env','str','push','substr','arg'): return 'fn'
             if e.name in ('http','db','tst','fs','gcc'): return 'mod'
@@ -1121,6 +1207,10 @@ class TypeChecker:
             if e.value is not None:
                 return self.check(e.value)
             return 'i64'
+        if isinstance(e, Call) and isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name in self.enums:
+            for a in e.args:
+                self.check(a)
+            return e.func.obj.name
         if isinstance(e, Call):
             self.check(e.func)
             for a in e.args: self.check(a)
@@ -1220,7 +1310,10 @@ class TypeChecker:
             return
         if isinstance(pat, EnumVariant):
             if subj_type in self.enums and pat.variant in self.enums[subj_type]:
-                return
+                ftypes = self.enums[subj_type][pat.variant]
+                for i, sub in enumerate(pat.fields):
+                    ft = ftypes[i] if i < len(ftypes) else 'i64'
+                    self.check_pattern(sub, ft)
             return
         if isinstance(pat, TuplePattern):
             for p in pat.items: self.check_pattern(p, 'i64')
@@ -1859,6 +1952,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
     def expr_type(self, e) -> str:
         if isinstance(e, Var):
             return self.env.get(e.name, 'i64')
+        if isinstance(e, Call) and isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name in self.enum_values:
+            return e.func.obj.name
         if isinstance(e, Call) and isinstance(e.func, Var):
             return self.func_return_types.get(e.func.name, 'i64')
         if isinstance(e, RecordLit):
@@ -1892,13 +1987,20 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         if isinstance(e, Var):
             if e.name in self.known:
                 return f"(void*){self.known[e.name]}", "fn"
+            # top-level const or local
             return e.name, self.env.get(e.name, "i64")
         if isinstance(e, Member):
-            # Enum variant: Colour.Green -> integer constant
+            # Enum variant: Colour.Green (tag-only) or base for Option.Some(...)
             if isinstance(e.obj, Var) and e.obj.name in self.enum_values:
                 variants = self.enum_values[e.obj.name]
                 if e.field in variants:
-                    return f"INT64_C({variants[e.field]})", e.obj.name
+                    tag, ftypes = variants[e.field]
+                    if not ftypes:
+                        if self.enum_has_data.get(e.obj.name):
+                            return f"(({e.obj.name}){{ .tag = INT64_C({tag}) }})", e.obj.name
+                        return f"INT64_C({tag})", e.obj.name
+                    # data variant used without call — treat as incomplete; still emit tag shell
+                    return f"(({e.obj.name}){{ .tag = INT64_C({tag}) }})", e.obj.name
             base, btype = self.gen_expr(e.obj)
             if btype in self.interface_methods:
                 ret_type = self.interface_method_returns.get((btype, e.field), 'i64')
@@ -1913,7 +2015,10 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             return f"(({base}).{e.field})", field_type
         if isinstance(e, Binary):
             l, lt = self.gen_expr(e.left)
-            r, rt = self.gen_expr(e.right)
+            r, rt = self.gen_expr(e.right, lt if e.op == '=' else None)
+            if e.op == '=':
+                # Assignment expression type is the LHS type (not always i64)
+                return f"({l} = {r})", lt
             if e.op == '+' and (lt == 'str' or rt == 'str'):
                 if lt == 'str' and rt == 'str':
                     return f"str_concat({l}, {r})", "str"
@@ -1968,6 +2073,18 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     return f"list_get({c}, {i})", "i64"
                 return f"list_get_{record_name}({c}, {i})", record_name
             return f"list_get({c}, {i})", "i64"
+        if isinstance(e, Call) and isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name in self.enum_values:
+            ename = e.func.obj.name
+            vname = e.func.field
+            variants = self.enum_values[ename]
+            if vname in variants:
+                tag, ftypes = variants[vname]
+                parts = [f".tag = INT64_C({tag})"]
+                for i, arg in enumerate(e.args):
+                    expected = ftypes[i] if i < len(ftypes) else None
+                    ac, at = self.gen_expr(arg, expected)
+                    parts.append(f".u.{vname}.v{i} = {ac}")
+                return f"(({ename}){{ {', '.join(parts)} }})", ename
         if isinstance(e, Call):
             # builtins
             if isinstance(e.func, Var) and e.func.name == 'push':
@@ -2117,10 +2234,33 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             arg_ts = ", ".join(["int64_t"] * n) if n else "void"
             return f"((int64_t(*)({arg_ts}))({fptr}))({args})", "i64"
         if isinstance(e, IfExpr):
+            # Statement if/else (not C ternary) avoids pointer/integer mismatches when
+            # branches have different C types (str assign vs bool assign vs list assign).
             c, _ = self.gen_expr(e.cond)
             t, tt = self.gen_expr(e.then)
-            f, _ = self.gen_expr(e.els) if e.els else ("INT64_C(0)", "i64")
-            return f"({c} ? {t} : {f})", tt
+            if e.els is not None:
+                f, ft = self.gen_expr(e.els)
+            else:
+                f, ft = None, tt
+            result = self.fresh()
+            def zero_for(ty):
+                if ty == 'str': return '""'
+                if ty == 'bool': return 'false'
+                if ty == 'i64': return 'INT64_C(0)'
+                return f'({self.c_type(ty)}){{0}}'
+            if f is None:
+                ctype = self.c_type(tt)
+                body = f"if ({c}) {{ {result} = {t}; }}"
+                return f"({{ {ctype} {result} = {zero_for(tt)}; {body} {result}; }})", tt
+            if ft == tt:
+                ctype = self.c_type(tt)
+                body = f"if ({c}) {{ {result} = {t}; }} else {{ {result} = {f}; }}"
+                return f"({{ {ctype} {result} = {zero_for(tt)}; {body} {result}; }})", tt
+            # Mismatched branch types: evaluate both for side effects only; yield 0
+            return (
+                f"({{ if ({c}) {{ (void)({t}); }} else {{ (void)({f}); }} INT64_C(0); }})",
+                "i64",
+            )
         if isinstance(e, LoopExpr):
             old_env = self.env.copy()
             init_decl = None
@@ -2182,7 +2322,12 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             _, ret_t = self.gen_expr(e.arms[0].value)
             self.env = old_env
             zero = '""' if ret_t == 'str' else ("INT64_C(0)" if ret_t == 'i64' else f"({self.c_type(ret_t)}){{0}}")
-            ctype = self.c_type(st) if st not in ('str',) else 'int64_t'
+            if st in self.enum_has_data and self.enum_has_data[st]:
+                ctype = st
+            elif st in self.enum_values and not self.enum_has_data.get(st, False):
+                ctype = 'int64_t'
+            else:
+                ctype = self.c_type(st) if st not in ('str',) else 'int64_t'
             parts = [f"{ctype} {tmp} = {subj};"]
             for bn in bind_names:
                 parts.append(f"{ctype} {bn} = {tmp};")
@@ -2203,7 +2348,23 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 elif isinstance(arm.pattern, EnumVariant):
                     variants = self.enum_values.get(arm.pattern.ctor, {})
                     if arm.pattern.variant in variants:
-                        conds.append(f"({tmp} == INT64_C({variants[arm.pattern.variant]}))")
+                        tag, ftypes = variants[arm.pattern.variant]
+                        has_data = self.enum_has_data.get(arm.pattern.ctor, False)
+                        if has_data:
+                            conds.append(f"({tmp}.tag == INT64_C({tag}))")
+                            for i, sub in enumerate(arm.pattern.fields):
+                                if isinstance(sub, BindPattern):
+                                    ft = ftypes[i] if i < len(ftypes) else 'i64'
+                                    self.env[sub.name] = ft
+                                    # declare bind in outer parts if needed - extract via assignment in body
+                                elif isinstance(sub, Wildcard):
+                                    pass
+                                else:
+                                    # literal compare on payload
+                                    lit, _ = self.gen_expr(sub.value) if isinstance(sub, LiteralPattern) else ("0", "i64")
+                                    conds.append(f"({tmp}.u.{arm.pattern.variant}.v{i} == {lit})")
+                        else:
+                            conds.append(f"({tmp} == INT64_C({tag}))")
                     else:
                         conds.append("0")
                 elif isinstance(arm.pattern, BindPattern):
@@ -2213,10 +2374,23 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 if arm.guard is not None:
                     g, _ = self.gen_expr(arm.guard)
                     conds.append(f"({g})")
+                # bind payload fields before body
+                bind_stmts = []
+                if isinstance(arm.pattern, EnumVariant) and arm.pattern.fields:
+                    variants = self.enum_values.get(arm.pattern.ctor, {})
+                    if arm.pattern.variant in variants:
+                        _, ftypes = variants[arm.pattern.variant]
+                        for i, sub in enumerate(arm.pattern.fields):
+                            if isinstance(sub, BindPattern):
+                                ft = ftypes[i] if i < len(ftypes) else 'i64'
+                                bind_stmts.append(
+                                    f"{self.c_type(ft)} {sub.name} = {tmp}.u.{arm.pattern.variant}.v{i};"
+                                )
                 val_c, _ = self.gen_expr(arm.value)
                 self.env = old_env
                 cond_str = " && ".join(conds) if conds else "1"
-                chain.append(f"if ({cond_str}) {{ {result} = {val_c}; }}")
+                body_block = " ".join(bind_stmts) + f" {result} = {val_c};"
+                chain.append(f"if ({cond_str}) {{ {body_block} }}")
             else_chain = chain[0]
             for c in chain[1:]:
                 else_chain += " else " + c
@@ -2361,11 +2535,36 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
 
     def generate(self, prog: Program) -> str:
         self.record_field_types = {r.name: {n: self.type_name(t) for n, t in r.fields} for r in prog.recs}
-        self.enum_values = {e.name: {v: i for i, v in enumerate(e.variants)} for e in prog.enums}
+        # enum_values: name -> {variant: (tag, [field_type_names])}
+        self.enum_values = {
+            e.name: {
+                v.name: (i, [self.type_name(t) for t in v.fields])
+                for i, v in enumerate(e.variants)
+            }
+            for e in prog.enums
+        }
+        self.enum_has_data = {
+            e.name: any(len(v.fields) > 0 for v in e.variants)
+            for e in prog.enums
+        }
         self.method_names = {}
         self.method_returns = {}
         self.interface_methods = {sig.name: [m[0] for m in sig.methods] for sig in prog.sigs}
         self.interface_method_returns = {(sig.name, m[0]): self.type_name(m[2]) if m[2] else 'i64' for sig in prog.sigs for m in sig.methods}
+        # Top-level fix constants: register types in env for later expressions
+        self.const_decls = list(getattr(prog, 'fixes', []) or [])
+        for c in self.const_decls:
+            tn = self.type_name(c.typ) if c.typ else None
+            if tn is None:
+                if isinstance(c.value, StrLit):
+                    tn = 'str'
+                elif isinstance(c.value, BoolLit):
+                    tn = 'bool'
+                elif isinstance(c.value, IntLit):
+                    tn = 'i64'
+                else:
+                    tn = 'i64'
+            self.env[c.name] = tn
         funcs = list(prog.funcs)
         entry_name = None
         for m in prog.methods:
@@ -2384,6 +2583,21 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         for f in funcs:
             self.known[f.name] = "terse_" + f.name
         out = [RUNTIME, ""]
+        # Emit top-level fix constants
+        for c in self.const_decls:
+            tn = self.env.get(c.name, 'i64')
+            ct = self.c_type(tn)
+            if isinstance(c.value, StrLit):
+                esc = c.value.value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\t', '\\t')
+                out.append(f'static const char* {c.name} = "{esc}";')
+            elif isinstance(c.value, BoolLit):
+                out.append(f'static const bool {c.name} = {"true" if c.value.value else "false"};')
+            elif isinstance(c.value, IntLit):
+                out.append(f'static const int64_t {c.name} = INT64_C({c.value.value});')
+            else:
+                val_c, vt = self.gen_expr(c.value)
+                out.append(f'static {self.c_type(vt)} {c.name} = {val_c};')
+            out.append('')
         for sig in prog.sigs:
             fields = ["  void* value;"]
             for name, _, _ in sig.methods:
@@ -2449,11 +2663,30 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         for rec in prog.recs:
             out.append(f"typedef struct {rec.name} {rec.name};")
         for en in prog.enums:
-            out.append(f"typedef enum {{")
-            for i, variant in enumerate(en.variants):
-                out.append(f"    {en.name}_{variant.upper()} = {i},")
-            out.append(f"}} {en.name};")
-            out.append("")
+            has_data = any(len(v.fields) > 0 for v in en.variants)
+            if not has_data:
+                out.append(f"typedef enum {{")
+                for i, variant in enumerate(en.variants):
+                    out.append(f"    {en.name}_{variant.name.upper()} = {i},")
+                out.append(f"}} {en.name};")
+                out.append("")
+            else:
+                # tagged union
+                out.append(f"typedef struct {en.name} {en.name};")
+                out.append(f"struct {en.name} {{")
+                out.append(f"  int64_t tag;")
+                out.append(f"  union {{")
+                out.append(f"    int64_t _pad;")
+                for variant in en.variants:
+                    if variant.fields:
+                        out.append(f"    struct {{")
+                        for i, ft in enumerate(variant.fields):
+                            tn = self.type_name(ft)
+                            out.append(f"      {self.c_type(tn)} v{i};")
+                        out.append(f"    }} {variant.name};")
+                out.append(f"  }} u;")
+                out.append(f"}};")
+                out.append("")
         for rec in prog.recs:
             out.append(f"typedef struct {{ {rec.name} *d; int64_t n; int64_t cap; }} List_{rec.name};")
         if prog.recs:

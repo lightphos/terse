@@ -27,7 +27,8 @@ tc-test:
 
 dir ?= src
 terse.%:
-	python3 compiler/tersec.py build $(dir)/$*.te -o out/$*
+# 	python3 compiler/tersec.py build $(dir)/$*.te -o out/$*
+	./tc $(dir)/$*.te -o out/$*
 	./out/$*
 
 vscode-terse:

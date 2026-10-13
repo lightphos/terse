@@ -1,245 +1,143 @@
-// Stage-one Terse compiler: a small function and expression subset -> portable C.
-// Bootstrap with compiler/tersec.py; compile emitted C with GCC.
+// Stage-1 Terse compiler — grown toward self-host.
+// Bootstrap: python tersec.py build tc.te -o tc
+// Self-host: TERSE_SOURCE=tc.te TERSE_OUTPUT=tc2 ./tc
+//
+// Implements enough of the dialect this file uses:
+//   rec (hardcoded Token/Param/Function/Node/ParseState in runtime),
+//   fn/go, var, if/else, lp, field access, record literals,
+//   lists push/len/index, strings +/len/substr/index,
+//   pr, fs.read_text, fs.write_text, env, gcc.compile
 
 use std.fs
 
-Token { kind: i64, text: str }
-Param { name: str, typ: str }
-Function { name: str, params: [Param], return_type: str, root: i64, is_public: bool }
-Node { kind: i64, text: str, left: i64, right: i64, extra: i64 }
-ParseState { tokens: [Token], nodes: [Node], pos: i64, root: i64, arg_root: i64, functions: [Function], has_entry: bool, valid: bool }
+rec Token { kind: i64, text: str }
+rec Param { name: str, typ: str }
+rec Function { name: str, params: [Param], return_type: str, root: i64, is_public: bool }
+rec Node { kind: i64, text: str, left: i64, right: i64, extra: i64, typ: str }
+rec Binding { name: str, typ: str }
+
+rec ParseState {
+  tokens: [Token],
+  nodes: [Node],
+  pos: i64,
+  root: i64,
+  arg_root: i64,
+  functions: [Function],
+  has_entry: bool,
+  valid: bool
+}
 
 fn token(kind: i64, text: str) -> Token = Token { kind: kind, text: text }
-fn node(kind: i64, text: str, left: i64, right: i64) -> Node =
-  Node { kind: kind, text: text, left: left, right: right, extra: 0 }
-fn node_extra(kind: i64, text: str, left: i64, right: i64, extra: i64) -> Node =
-  Node { kind: kind, text: text, left: left, right: right, extra: extra }
-fn call_node(name: str, args: i64) -> Node =
-  Node { kind: 7, text: name, left: args, right: 0, extra: 0 }
+fn mk(kind: i64, text: str, left: i64, right: i64) -> Node =
+  Node { kind: kind, text: text, left: left, right: right, extra: 0, typ: "" }
+fn mkx(kind: i64, text: str, left: i64, right: i64, extra: i64) -> Node =
+  Node { kind: kind, text: text, left: left, right: right, extra: extra, typ: "" }
+fn mkt(kind: i64, text: str, left: i64, right: i64, typ: str) -> Node =
+  Node { kind: kind, text: text, left: left, right: right, extra: 0, typ: typ }
 
 fn is_space(ch: i64) -> bool = ch == 32 || ch == 9 || ch == 10 || ch == 13
 fn is_digit(ch: i64) -> bool = ch >= 48 && ch <= 57
-fn is_letter(ch: i64) -> bool = (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch == 95
+fn is_letter(ch: i64) -> bool =
+  (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch == 95
 fn is_ident_char(ch: i64) -> bool = is_letter(ch) || is_digit(ch)
 
+fn starts_kw(source: str, pos: i64, word: str) -> bool {
+  var i = 0
+  lp i < len(word) {
+    if pos + i >= len(source) { ret false }
+    if source[pos + i] != word[i] { ret false }
+    i = i + 1
+  }
+  if pos + len(word) < len(source) && is_ident_char(source[pos + len(word)]) {
+    false
+  } else {
+    true
+  }
+}
+
 fn scan(source: str) -> [Token] {
-  let tokens: [Token] = []
-  let pos = 0
+  var tokens: [Token] = []
+  var pos = 0
   lp pos < len(source) {
-    let ch = source[pos]
+    var ch = source[pos]
     if is_space(ch) {
       pos = pos + 1
     } else if ch == 47 && pos + 1 < len(source) && source[pos + 1] == 47 {
-      lp pos < len(source) && source[pos] != 10 {
-        pos = pos + 1
-      }
+      lp pos < len(source) && source[pos] != 10 { pos = pos + 1 }
     } else if ch == 34 {
-      let begin = pos + 1
+      var begin = pos + 1
       pos = begin
-      let closed = false
+      var closed = false
       lp pos < len(source) && closed == false {
-        if source[pos] == 92 {
-          pos = pos + 2
-        } else if source[pos] == 34 {
-          closed = true
-        } else {
-          pos = pos + 1
-        }
+        if source[pos] == 92 { pos = pos + 2 }
+        else if source[pos] == 34 { closed = true }
+        else { pos = pos + 1 }
       }
-      if closed == true {
+      if closed {
         tokens = push(tokens, token(20, substr(source, begin, pos - begin)))
         pos = pos + 1
       } else {
         tokens = push(tokens, token(9, ""))
         pos = len(source)
       }
-      0
-    } else if ch == 102 && pos + 1 < len(source) && source[pos + 1] == 110 && (pos + 2 == len(source) || is_ident_char(source[pos + 2]) == false) {
-      tokens = push(tokens, token(22, "fn"))
-      pos = pos + 2
-      0
-    } else if ch == 103 && pos + 1 < len(source) && source[pos + 1] == 111 && (pos + 2 == len(source) || is_ident_char(source[pos + 2]) == false) {
-      tokens = push(tokens, token(23, "go"))
-      pos = pos + 2
-      0
-    } else if ch == 105 && pos + 1 < len(source) && source[pos + 1] == 102 && (pos + 2 == len(source) || is_ident_char(source[pos + 2]) == false) {
-      tokens = push(tokens, token(24, "if"))
-      pos = pos + 2
-      0
-    } else if ch == 116 && pos + 3 < len(source) && source[pos + 1] == 114 && source[pos + 2] == 117 && source[pos + 3] == 101 && (pos + 4 == len(source) || is_ident_char(source[pos + 4]) == false) {
-      tokens = push(tokens, token(44, "true"))
-      pos = pos + 4
-      0
-    } else if ch == 102 && pos + 4 < len(source) && source[pos + 1] == 97 && source[pos + 2] == 108 && source[pos + 3] == 115 && source[pos + 4] == 101 && (pos + 5 == len(source) || is_ident_char(source[pos + 5]) == false) {
-      tokens = push(tokens, token(45, "false"))
-      pos = pos + 5
-      0
-    } else if ch == 105 && pos + 2 < len(source) && source[pos + 1] == 54 && source[pos + 2] == 52 && (pos + 3 == len(source) || is_ident_char(source[pos + 3]) == false) {
-      tokens = push(tokens, token(38, "i64"))
-      pos = pos + 3
-      0
-    } else if ch == 98 && pos + 3 < len(source) && source[pos + 1] == 111 && source[pos + 2] == 111 && source[pos + 3] == 108 && (pos + 4 == len(source) || is_ident_char(source[pos + 4]) == false) {
-      tokens = push(tokens, token(46, "bool"))
-      pos = pos + 4
-      0
-    } else if ch == 101 && pos + 3 < len(source) && source[pos + 1] == 108 && source[pos + 2] == 115 && source[pos + 3] == 101 && (pos + 4 == len(source) || is_ident_char(source[pos + 4]) == false) {
-      tokens = push(tokens, token(25, "else"))
-      pos = pos + 4
-      0
-    } else if ch == 117 && pos + 2 < len(source) && source[pos + 1] == 115 && source[pos + 2] == 101 && (pos + 3 == len(source) || is_ident_char(source[pos + 3]) == false) {
-      let path_start = pos + 3
-      lp path_start < len(source) && is_space(source[path_start]) && source[path_start] != 10 {
-        path_start = path_start + 1
-      }
-      let is_standard = path_start + 3 < len(source) && source[path_start] == 115 && source[path_start + 1] == 116 && source[path_start + 2] == 100 && (source[path_start + 3] == 46 || source[path_start + 3] == 47)
-      pos = path_start
-      lp pos < len(source) && source[pos] != 10 {
-        pos = pos + 1
-      }
-      if is_standard == true {
-        tokens = push(tokens, token(34, "std"))
-      } else {
-        tokens = push(tokens, token(35, "use"))
-      }
-      0
-    } else if ch == 116 && pos + 3 < len(source) && source[pos + 1] == 121 && source[pos + 2] == 112 && source[pos + 3] == 101 && (pos + 4 == len(source) || is_ident_char(source[pos + 4]) == false) {
-      tokens = push(tokens, token(36, "type"))
-      pos = pos + 4
-      0
-    } else if ch == 114 && pos + 2 < len(source) && source[pos + 1] == 101 && source[pos + 2] == 99 && (pos + 3 == len(source) || is_ident_char(source[pos + 3]) == false) {
-      tokens = push(tokens, token(37, "rec"))
-      pos = pos + 3
-      0
-    } else if ch == 116 && pos + 1 < len(source) && source[pos + 1] == 114 && (pos + 2 == len(source) || is_ident_char(source[pos + 2]) == false) {
-      tokens = push(tokens, token(39, "tr"))
-      pos = pos + 2
-      0
-    } else if ch == 112 && pos + 1 < len(source) && source[pos + 1] == 114 && (pos + 2 == len(source) || is_ident_char(source[pos + 2]) == false) {
-      tokens = push(tokens, token(21, "pr"))
-      pos = pos + 2
-      0
-    } else if ch == 112 && pos + 2 < len(source) && source[pos + 1] == 117 && source[pos + 2] == 98 && (pos + 3 == len(source) || is_ident_char(source[pos + 3]) == false) {
-      tokens = push(tokens, token(33, "pub"))
-      pos = pos + 3
-      0
+    } else if starts_kw(source, pos, "fn") { tokens = push(tokens, token(22, "fn")); pos = pos + 2
+    } else if starts_kw(source, pos, "go") { tokens = push(tokens, token(23, "go")); pos = pos + 2
+    } else if starts_kw(source, pos, "if") { tokens = push(tokens, token(24, "if")); pos = pos + 2
+    } else if starts_kw(source, pos, "else") { tokens = push(tokens, token(25, "else")); pos = pos + 4
+    } else if starts_kw(source, pos, "true") { tokens = push(tokens, token(44, "true")); pos = pos + 4
+    } else if starts_kw(source, pos, "false") { tokens = push(tokens, token(45, "false")); pos = pos + 5
+    } else if starts_kw(source, pos, "var") { tokens = push(tokens, token(50, "var")); pos = pos + 3
+    } else if starts_kw(source, pos, "val") { tokens = push(tokens, token(51, "val")); pos = pos + 3
+    } else if starts_kw(source, pos, "ret") { tokens = push(tokens, token(52, "ret")); pos = pos + 3
+    } else if starts_kw(source, pos, "lp") { tokens = push(tokens, token(53, "lp")); pos = pos + 2
+    } else if starts_kw(source, pos, "rec") { tokens = push(tokens, token(54, "rec")); pos = pos + 3
+    } else if starts_kw(source, pos, "use") {
+      lp pos < len(source) && source[pos] != 10 { pos = pos + 1 }
+    } else if starts_kw(source, pos, "i64") { tokens = push(tokens, token(38, "i64")); pos = pos + 3
+    } else if starts_kw(source, pos, "str") { tokens = push(tokens, token(55, "str")); pos = pos + 3
+    } else if starts_kw(source, pos, "bool") { tokens = push(tokens, token(46, "bool")); pos = pos + 4
+    } else if starts_kw(source, pos, "pr") { tokens = push(tokens, token(21, "pr")); pos = pos + 2
     } else if is_letter(ch) {
-      let begin = pos
-      lp pos < len(source) && is_ident_char(source[pos]) {
-        pos = pos + 1
-      }
-      tokens = push(tokens, token(19, substr(source, begin, pos - begin)))
-      0
-    } else if is_digit(ch) {
-      let begin = pos
-      lp pos < len(source) && is_digit(source[pos]) {
-        pos = pos + 1
-      }
+      var begin = pos
+      lp pos < len(source) && is_ident_char(source[pos]) { pos = pos + 1 }
       tokens = push(tokens, token(1, substr(source, begin, pos - begin)))
-      0
+    } else if is_digit(ch) {
+      var begin = pos
+      lp pos < len(source) && is_digit(source[pos]) { pos = pos + 1 }
+      tokens = push(tokens, token(19, substr(source, begin, pos - begin)))
     } else if ch == 45 && pos + 1 < len(source) && source[pos + 1] == 62 {
-      tokens = push(tokens, token(27, "->"))
-      pos = pos + 2
-      0
-    } else if ch == 43 {
-      tokens = push(tokens, token(2, "+"))
-      pos = pos + 1
-      0
-    } else if ch == 45 {
-      tokens = push(tokens, token(3, "-"))
-      pos = pos + 1
-      0
-    } else if ch == 42 {
-      tokens = push(tokens, token(4, "*"))
-      pos = pos + 1
-      0
-    } else if ch == 47 {
-      tokens = push(tokens, token(5, "/"))
-      pos = pos + 1
-      0
-    } else if ch == 37 {
-      tokens = push(tokens, token(6, "%"))
-      pos = pos + 1
-      0
-    } else if ch == 40 {
-      tokens = push(tokens, token(7, "("))
-      pos = pos + 1
-      0
-    } else if ch == 41 {
-      tokens = push(tokens, token(8, ")"))
-      pos = pos + 1
-      0
-    } else if ch == 46 {
-      tokens = push(tokens, token(43, "."))
-      pos = pos + 1
-      0
-    } else if ch == 123 {
-      tokens = push(tokens, token(29, "{"))
-      pos = pos + 1
-      0
-    } else if ch == 125 {
-      tokens = push(tokens, token(30, "}"))
-      pos = pos + 1
-      0
-    } else if ch == 58 {
-      tokens = push(tokens, token(26, ":"))
-      pos = pos + 1
-      0
-    } else if ch == 44 {
-      tokens = push(tokens, token(31, ","))
-      pos = pos + 1
-      0
-    } else if ch == 59 {
-      tokens = push(tokens, token(32, ";"))
-      pos = pos + 1
-      0
-    } else if ch == 91 {
-      tokens = push(tokens, token(41, "["))
-      pos = pos + 1
-      0
-    } else if ch == 93 {
-      tokens = push(tokens, token(42, "]"))
-      pos = pos + 1
-      0
+      tokens = push(tokens, token(27, "->")); pos = pos + 2
     } else if ch == 61 && pos + 1 < len(source) && source[pos + 1] == 61 {
-      tokens = push(tokens, token(10, "=="))
-      pos = pos + 2
-      0
+      tokens = push(tokens, token(10, "==")); pos = pos + 2
     } else if ch == 33 && pos + 1 < len(source) && source[pos + 1] == 61 {
-      tokens = push(tokens, token(11, "!="))
-      pos = pos + 2
-      0
+      tokens = push(tokens, token(11, "!=")); pos = pos + 2
     } else if ch == 60 && pos + 1 < len(source) && source[pos + 1] == 61 {
-      tokens = push(tokens, token(14, "<="))
-      pos = pos + 2
-      0
+      tokens = push(tokens, token(14, "<=")); pos = pos + 2
     } else if ch == 62 && pos + 1 < len(source) && source[pos + 1] == 61 {
-      tokens = push(tokens, token(15, ">="))
-      pos = pos + 2
-      0
+      tokens = push(tokens, token(15, ">=")); pos = pos + 2
     } else if ch == 38 && pos + 1 < len(source) && source[pos + 1] == 38 {
-      tokens = push(tokens, token(16, "&&"))
-      pos = pos + 2
-      0
+      tokens = push(tokens, token(16, "&&")); pos = pos + 2
     } else if ch == 124 && pos + 1 < len(source) && source[pos + 1] == 124 {
-      tokens = push(tokens, token(17, "||"))
-      pos = pos + 2
-      0
-    } else if ch == 60 {
-      tokens = push(tokens, token(12, "<"))
-      pos = pos + 1
-      0
-    } else if ch == 62 {
-      tokens = push(tokens, token(13, ">"))
-      pos = pos + 1
-      0
-    } else if ch == 33 {
-      tokens = push(tokens, token(18, "!"))
-      pos = pos + 1
-      0
-    } else if ch == 61 {
-      tokens = push(tokens, token(28, "="))
-      pos = pos + 1
-      0
+      tokens = push(tokens, token(17, "||")); pos = pos + 2
+    } else if ch == 43 { tokens = push(tokens, token(2, "+")); pos = pos + 1
+    } else if ch == 45 { tokens = push(tokens, token(3, "-")); pos = pos + 1
+    } else if ch == 42 { tokens = push(tokens, token(4, "*")); pos = pos + 1
+    } else if ch == 47 { tokens = push(tokens, token(5, "/")); pos = pos + 1
+    } else if ch == 37 { tokens = push(tokens, token(6, "%")); pos = pos + 1
+    } else if ch == 40 { tokens = push(tokens, token(7, "(")); pos = pos + 1
+    } else if ch == 41 { tokens = push(tokens, token(8, ")")); pos = pos + 1
+    } else if ch == 123 { tokens = push(tokens, token(29, "{")); pos = pos + 1
+    } else if ch == 125 { tokens = push(tokens, token(30, "}")); pos = pos + 1
+    } else if ch == 58 { tokens = push(tokens, token(26, ":")); pos = pos + 1
+    } else if ch == 44 { tokens = push(tokens, token(31, ",")); pos = pos + 1
+    } else if ch == 59 { tokens = push(tokens, token(32, ";")); pos = pos + 1
+    } else if ch == 61 { tokens = push(tokens, token(28, "=")); pos = pos + 1
+    } else if ch == 33 { tokens = push(tokens, token(18, "!")); pos = pos + 1
+    } else if ch == 60 { tokens = push(tokens, token(12, "<")); pos = pos + 1
+    } else if ch == 62 { tokens = push(tokens, token(13, ">")); pos = pos + 1
+    } else if ch == 46 { tokens = push(tokens, token(43, ".")); pos = pos + 1
+    } else if ch == 91 { tokens = push(tokens, token(41, "[")); pos = pos + 1
+    } else if ch == 93 { tokens = push(tokens, token(42, "]")); pos = pos + 1
     } else {
       tokens = push(tokens, token(9, substr(source, pos, 1)))
       pos = pos + 1
@@ -248,471 +146,823 @@ fn scan(source: str) -> [Token] {
   push(tokens, token(0, ""))
 }
 
-fn parse_primary(state: ParseState) -> ParseState {
-  let current = state.tokens[state.pos]
-  if current.kind == 44 || current.kind == 45 {
-    let value = "1"
-    if current.kind == 45 {
-      value = "0"
-    }
-    state.nodes = push(state.nodes, node(10, value, 0, 0))
-    state.root = len(state.nodes) - 1
-    state.pos = state.pos + 1
-    state
-  } else if current.kind == 1 {
-    state.nodes = push(state.nodes, node(1, current.text, 0, 0))
-    state.root = len(state.nodes) - 1
-    state.pos = state.pos + 1
-    state
-  } else if current.kind == 20 {
-    state.nodes = push(state.nodes, node(4, current.text, 0, 0))
-    state.root = len(state.nodes) - 1
-    state.pos = state.pos + 1
-    state
-  } else if current.kind == 21 && state.tokens[state.pos + 1].kind == 7 {
-    state.pos = state.pos + 2
-    state = parse_expr(state)
-    if state.tokens[state.pos].kind == 8 {
-      state.pos = state.pos + 1
-      state.nodes = push(state.nodes, node(5, "pr", state.root, 0))
-      state.root = len(state.nodes) - 1
-    }
-    state
-  } else if current.kind == 19 {
-    if state.tokens[state.pos + 1].kind == 7 {
-      state.pos = state.pos + 2
-      state = parse_call_args(state)
-      let args = state.arg_root
-      if state.tokens[state.pos].kind == 8 {
-        state.pos = state.pos + 1
-        state.nodes = push(state.nodes, call_node(current.text, args))
-        state.root = len(state.nodes) - 1
+fn ck(state: ParseState) -> i64 =
+  if state.pos >= len(state.tokens) { 0 } else { state.tokens[state.pos].kind }
+fn ct(state: ParseState) -> str =
+  if state.pos >= len(state.tokens) { "" } else { state.tokens[state.pos].text }
+
+fn bump(state: ParseState) -> ParseState {
+  state.pos = state.pos + 1
+  state
+}
+
+fn add(state: ParseState, n: Node) -> ParseState {
+  state.nodes = push(state.nodes, n)
+  state.root = len(state.nodes) - 1
+  state
+}
+
+fn parse_type_name(state: ParseState) -> ParseState {
+  var k = ck(state)
+  if k == 41 {
+    // [T] list type
+    state = bump(state)
+    var inner = "i64"
+    if ck(state) != 42 {
+      state = parse_type_name(state)
+      if state.root >= 0 {
+        inner = state.nodes[state.root].text
       }
-      state
-    } else {
-      state.nodes = push(state.nodes, node(6, current.text, 0, 0))
-      state.root = len(state.nodes) - 1
-      state.pos = state.pos + 1
-      state
     }
-  } else if current.kind == 24 {
-    state.pos = state.pos + 1
-    state = parse_expr(state)
-    let condition = state.root
-    state.pos = state.pos + 1
-    state = parse_expr(state)
-    let then_branch = state.root
-    state.pos = state.pos + 1
-    state.pos = state.pos + 1
-    state.pos = state.pos + 1
-    state = parse_expr(state)
-    let else_branch = state.root
-    state.pos = state.pos + 1
-    state.nodes = push(state.nodes, node_extra(8, "", condition, then_branch, else_branch))
-    state.root = len(state.nodes) - 1
+    if ck(state) == 42 { state = bump(state) }
+    var name = "List_" + inner
+    if inner == "i64" { name = "List_i64" }
+    state = add(state, mk(100, name, -1, -1))
     state
-  } else if current.kind == 7 {
-    state.pos = state.pos + 1
-    state = parse_expr(state)
-    if state.tokens[state.pos].kind == 8 {
-      state.pos = state.pos + 1
-    }
-    state
-  } else if current.kind == 29 {
-    state.pos = state.pos + 1
-    state = parse_expr(state)
-    if state.tokens[state.pos].kind == 30 {
-      state.pos = state.pos + 1
-    }
+  } else if k == 38 || k == 55 || k == 46 || k == 1 {
+    var name = ct(state)
+    if k == 38 { name = "i64" }
+    if k == 55 { name = "str" }
+    if k == 46 { name = "bool" }
+    state = bump(state)
+    // trailing [T] after name is unusual; ignore
+    state = add(state, mk(100, name, -1, -1))
     state
   } else {
+    state = add(state, mk(100, "i64", -1, -1))
     state
   }
 }
 
-fn parse_call_args(state: ParseState) -> ParseState {
-  if state.tokens[state.pos].kind == 8 {
-    state.arg_root = -1
-    state
-  } else {
-    state = parse_expr(state)
-    let argument = state.root
-    let next = -1
-    if state.tokens[state.pos].kind == 31 {
-      state.pos = state.pos + 1
-      state = parse_call_args(state)
-      next = state.arg_root
-    }
-    state.nodes = push(state.nodes, node(9, "", argument, next))
-    state.arg_root = len(state.nodes) - 1
-    state
-  }
-}
+fn parse_expr(state: ParseState) -> ParseState = parse_assign(state)
 
-fn parse_unary(state: ParseState) -> ParseState {
-  let operation = state.tokens[state.pos]
-  if operation.kind == 3 || operation.kind == 18 {
-    state.pos = state.pos + 1
-    state = parse_unary(state)
-    state.nodes = push(state.nodes, node(3, operation.text, state.root, 0))
-    state.root = len(state.nodes) - 1
-    state
-  } else {
-    parse_primary(state)
-  }
-}
-
-fn parse_term(state: ParseState) -> ParseState {
-  state = parse_unary(state)
-  let keep_parsing = true
-  lp keep_parsing == true {
-    let operation = state.tokens[state.pos]
-    if operation.kind == 4 || operation.kind == 5 || operation.kind == 6 {
-      let left = state.root
-      state.pos = state.pos + 1
-      state = parse_unary(state)
-      state.nodes = push(state.nodes, node(2, operation.text, left, state.root))
-      state.root = len(state.nodes) - 1
-    } else {
-      keep_parsing = false
-    }
+fn parse_assign(state: ParseState) -> ParseState {
+  state = parse_or(state)
+  // loop to allow chained assigns rare; single is enough
+  if ck(state) == 28 {
+    var left = state.root
+    state = bump(state)
+    state = parse_assign(state)
+    var right = state.root
+    state = add(state, mk(2, "=", left, right))
   }
   state
 }
 
-fn parse_add(state: ParseState) -> ParseState {
-  state = parse_term(state)
-  let keep_parsing = true
-  lp keep_parsing == true {
-    let operation = state.tokens[state.pos]
-    if operation.kind == 2 || operation.kind == 3 {
-      let left = state.root
-      state.pos = state.pos + 1
-      state = parse_term(state)
-      state.nodes = push(state.nodes, node(2, operation.text, left, state.root))
-      state.root = len(state.nodes) - 1
-    } else {
-      keep_parsing = false
-    }
-  }
-  state
-}
-
-fn parse_compare(state: ParseState) -> ParseState {
-  state = parse_add(state)
-  let keep_parsing = true
-  lp keep_parsing == true {
-    let operation = state.tokens[state.pos]
-    if operation.kind >= 10 && operation.kind <= 15 {
-      let left = state.root
-      state.pos = state.pos + 1
-      state = parse_add(state)
-      state.nodes = push(state.nodes, node(2, operation.text, left, state.root))
-      state.root = len(state.nodes) - 1
-    } else {
-      keep_parsing = false
-    }
+fn parse_or(state: ParseState) -> ParseState {
+  state = parse_and(state)
+  lp ck(state) == 17 {
+    var left = state.root
+    state = bump(state)
+    state = parse_and(state)
+    state = add(state, mk(2, "||", left, state.root))
   }
   state
 }
 
 fn parse_and(state: ParseState) -> ParseState {
-  state = parse_compare(state)
-  let keep_parsing = true
-  lp keep_parsing == true {
-    let operation = state.tokens[state.pos]
-    if operation.kind == 16 {
-      let left = state.root
-      state.pos = state.pos + 1
-      state = parse_compare(state)
-      state.nodes = push(state.nodes, node(2, operation.text, left, state.root))
-      state.root = len(state.nodes) - 1
-    } else {
-      keep_parsing = false
-    }
+  state = parse_cmp(state)
+  lp ck(state) == 16 {
+    var left = state.root
+    state = bump(state)
+    state = parse_cmp(state)
+    state = add(state, mk(2, "&&", left, state.root))
   }
   state
 }
 
-fn parse_expr(state: ParseState) -> ParseState {
-  state = parse_and(state)
-  let keep_parsing = true
-  lp keep_parsing == true {
-    let operation = state.tokens[state.pos]
-    if operation.kind == 17 {
-      let left = state.root
-      state.pos = state.pos + 1
-      state = parse_and(state)
-      state.nodes = push(state.nodes, node(2, operation.text, left, state.root))
-      state.root = len(state.nodes) - 1
-    } else {
-      keep_parsing = false
-    }
+fn parse_cmp(state: ParseState) -> ParseState {
+  state = parse_add(state)
+  lp ck(state) == 10 || ck(state) == 11 || ck(state) == 12 || ck(state) == 13 || ck(state) == 14 || ck(state) == 15 {
+    var op = ct(state)
+    var left = state.root
+    state = bump(state)
+    state = parse_add(state)
+    state = add(state, mk(2, op, left, state.root))
   }
   state
 }
 
-fn parse_function(state: ParseState, is_public: bool) -> ParseState {
-  state.pos = state.pos + 1
-  let name = state.tokens[state.pos].text
-  let is_method = false
-  if state.tokens[state.pos + 1].kind == 43 {
-    is_method = true
-    state.pos = state.pos + 3
+fn parse_add(state: ParseState) -> ParseState {
+  state = parse_mul(state)
+  lp ck(state) == 2 || ck(state) == 3 {
+    var op = ct(state)
+    var left = state.root
+    state = bump(state)
+    state = parse_mul(state)
+    state = add(state, mk(2, op, left, state.root))
+  }
+  state
+}
+
+fn parse_mul(state: ParseState) -> ParseState {
+  state = parse_unary(state)
+  lp ck(state) == 4 || ck(state) == 5 || ck(state) == 6 {
+    var op = ct(state)
+    var left = state.root
+    state = bump(state)
+    state = parse_unary(state)
+    state = add(state, mk(2, op, left, state.root))
+  }
+  state
+}
+
+fn parse_unary(state: ParseState) -> ParseState {
+  if ck(state) == 18 || ck(state) == 3 {
+    var op = ct(state)
+    state = bump(state)
+    state = parse_unary(state)
+    state = add(state, mk(3, op, state.root, -1))
   } else {
-    state.pos = state.pos + 2
+    state = parse_postfix(state)
   }
-  let params: [Param] = []
-  let done = false
-  lp done == false {
-    if state.tokens[state.pos].kind == 8 {
-      done = true
-    } else {
-      let param_name = state.tokens[state.pos].text
-      state.pos = state.pos + 1
-      let param_type = "i64"
-      if state.tokens[state.pos].kind == 26 {
-        state.pos = state.pos + 1
-        if state.tokens[state.pos].kind == 38 {
-          param_type = "i64"
-        } else if state.tokens[state.pos].kind == 46 {
-          param_type = "bool"
-        } else {
-          state.valid = false
-        }
-        state.pos = state.pos + 1
+  state
+}
+
+fn parse_postfix(state: ParseState) -> ParseState {
+  state = parse_primary(state)
+  var keep = true
+  lp keep {
+    if ck(state) == 43 {
+      state = bump(state)
+      var field = ct(state)
+      state = bump(state)
+      state = add(state, mk(11, field, state.root, -1))
+      if ck(state) == 7 {
+        state = bump(state)
+        state = parse_args(state)
+        var args = state.arg_root
+        if ck(state) == 8 { state = bump(state) }
+        // method/module call: kind 7 with text "__method__", left=args, right=object node
+        state = add(state, mk(21, field, args, state.root))
       }
-      params = push(params, Param { name: param_name, typ: param_type })
-      if state.tokens[state.pos].kind == 31 {
-        state.pos = state.pos + 1
+    } else if ck(state) == 41 {
+      state = bump(state)
+      var coll = state.root
+      state = parse_expr(state)
+      var idx = state.root
+      if ck(state) == 42 { state = bump(state) }
+      state = add(state, mk(15, "idx", coll, idx))
+    } else {
+      keep = false
+    }
+  }
+  state
+}
+
+fn parse_args(state: ParseState) -> ParseState {
+  if ck(state) == 8 {
+    state.arg_root = -1
+    state
+  } else {
+    state = parse_expr(state)
+    var first = state.root
+    var next = -1
+    if ck(state) == 31 {
+      state = bump(state)
+      state = parse_args(state)
+      next = state.arg_root
+    }
+    state = add(state, mk(9, "", first, next))
+    state.arg_root = state.root
+    state
+  }
+}
+
+fn parse_record_fields(state: ParseState) -> ParseState {
+  // field: expr pairs, chain via kind 13
+  if ck(state) == 30 {
+    state.arg_root = -1
+    state
+  } else {
+    var fname = ct(state)
+    state = bump(state)
+    if ck(state) == 26 { state = bump(state) }
+    state = parse_expr(state)
+    var vexpr = state.root
+    var next = -1
+    if ck(state) == 31 {
+      state = bump(state)
+      state = parse_record_fields(state)
+      next = state.arg_root
+    }
+    state = add(state, mk(13, fname, vexpr, next))
+    state.arg_root = state.root
+    state
+  }
+}
+
+fn parse_primary(state: ParseState) -> ParseState {
+  var k = ck(state)
+  if k == 19 {
+    state = add(state, mk(19, ct(state), -1, -1))
+    state = bump(state)
+  } else if k == 20 {
+    state = add(state, mk(4, ct(state), -1, -1))
+    state = bump(state)
+  } else if k == 44 {
+    state = add(state, mk(10, "1", -1, -1))
+    state = bump(state)
+  } else if k == 45 {
+    state = add(state, mk(10, "0", -1, -1))
+    state = bump(state)
+  } else if k == 21 {
+    state = bump(state)
+    if ck(state) == 7 { state = bump(state) }
+    state = parse_expr(state)
+    var arg = state.root
+    if ck(state) == 8 { state = bump(state) }
+    state = add(state, mk(5, "pr", arg, -1))
+  } else if k == 41 {
+    // empty list []
+    state = bump(state)
+    if ck(state) == 42 { state = bump(state) }
+    state = add(state, mk(14, "list", -1, -1))
+  } else if k == 1 {
+    var name = ct(state)
+    state = bump(state)
+    if ck(state) == 7 {
+      state = bump(state)
+      state = parse_args(state)
+      var args = state.arg_root
+      if ck(state) == 8 { state = bump(state) }
+      state = add(state, mk(7, name, args, -1))
+    } else if ck(state) == 29 && state.pos + 2 < len(state.tokens) && state.tokens[state.pos + 1].kind == 1 && state.tokens[state.pos + 2].kind == 26 {
+      // record literal Name { field : ... }  — require field-colon, not block
+      state = bump(state)
+      state = parse_record_fields(state)
+      var fields = state.arg_root
+      if ck(state) == 30 { state = bump(state) }
+      state = add(state, mk(12, name, fields, -1))
+    } else {
+      state = add(state, mk(6, name, -1, -1))
+    }
+  } else if k == 24 {
+    // if expr { then } [ else if ... | else { ... } ]
+    state = bump(state)
+    state = parse_expr(state)
+    var cond = state.root
+    if ck(state) == 29 { state = bump(state) }
+    state = parse_block(state)
+    var then_b = state.root
+    if ck(state) == 30 { state = bump(state) }
+    var else_b = -1
+    if ck(state) == 25 {
+      state = bump(state)
+      if ck(state) == 24 {
+        // else if — parse nested if as else branch
+        state = parse_primary(state)
+        else_b = state.root
       } else {
-        done = true
+        if ck(state) == 29 { state = bump(state) }
+        state = parse_block(state)
+        else_b = state.root
+        if ck(state) == 30 { state = bump(state) }
       }
     }
-  }
-  state.pos = state.pos + 1
-  let return_type = "i64"
-  if state.tokens[state.pos].kind == 27 {
-    state.pos = state.pos + 1
-    if state.tokens[state.pos].kind == 38 {
-      return_type = "i64"
-    } else if state.tokens[state.pos].kind == 46 {
-      return_type = "bool"
-    } else {
-      state.valid = false
-    }
-    state.pos = state.pos + 1
-  }
-  if state.tokens[state.pos].kind == 28 {
-    state.pos = state.pos + 1
-  }
-  state = parse_expr(state)
-  if is_method == true {
-    state
-  } else {
-    state.functions = push(state.functions, Function { name: name, params: params, return_type: return_type, root: state.root, is_public: is_public })
-    state
-  }
-}
-
-fn skip_braces(state: ParseState) -> ParseState {
-  let depth = 0
-  let done = false
-  lp done == false && state.tokens[state.pos].kind != 0 {
-    if state.tokens[state.pos].kind == 29 {
-      depth = depth + 1
-      state.pos = state.pos + 1
-    } else if state.tokens[state.pos].kind == 30 {
-      depth = depth - 1
-      state.pos = state.pos + 1
-      if depth == 0 {
-        done = true
-      }
-    } else {
-      state.pos = state.pos + 1
-    }
-  }
-  state
-}
-
-fn skip_named_braces(state: ParseState, has_keyword: bool) -> ParseState {
-  if has_keyword == true {
-    state.pos = state.pos + 1
-  }
-  state.pos = state.pos + 1
-  if state.tokens[state.pos].kind == 29 {
-    skip_braces(state)
+    state = add(state, mkx(8, "if", cond, then_b, else_b))
+  } else if k == 53 {
+    // lp cond { body }
+    state = bump(state)
+    state = parse_expr(state)
+    var cond = state.root
+    if ck(state) == 29 { state = bump(state) }
+    state = parse_block(state)
+    var body = state.root
+    if ck(state) == 30 { state = bump(state) }
+    state = add(state, mk(17, "lp", cond, body))
+  } else if k == 7 {
+    state = bump(state)
+    state = parse_expr(state)
+    if ck(state) == 8 { state = bump(state) }
+  } else if k == 29 {
+    state = bump(state)
+    state = parse_block(state)
+    if ck(state) == 30 { state = bump(state) }
   } else {
     state.valid = false
-    state
   }
+  state
 }
 
-fn skip_type_decl(state: ParseState) -> ParseState {
-  state.pos = state.pos + 1
-  state.pos = state.pos + 1
-  if state.tokens[state.pos].kind == 28 {
-    state.pos = state.pos + 1
-  }
-  if state.tokens[state.pos].kind == 29 {
-    skip_braces(state)
-  } else if state.tokens[state.pos].kind == 41 {
-    state.pos = state.pos + 1
-    state.pos = state.pos + 1
-    if state.tokens[state.pos].kind == 42 {
-      state.pos = state.pos + 1
+fn parse_block(state: ParseState) -> ParseState {
+  // Build a list of statement roots, then fold into kind-20 sequence (left=stmt, right=rest)
+  var stmts = []
+  lp ck(state) != 30 && ck(state) != 0 && state.valid {
+    lp ck(state) == 32 { state = bump(state) }
+    if ck(state) == 30 || ck(state) == 0 {
+      0
+    } else if ck(state) == 50 || ck(state) == 51 {
+      state = bump(state)
+      var vname = ct(state)
+      state = bump(state)
+      var vtyp = "i64"
+      if ck(state) == 26 {
+        state = bump(state)
+        state = parse_type_name(state)
+        if state.root >= 0 {
+          vtyp = state.nodes[state.root].text
+        }
+      }
+      if ck(state) == 28 { state = bump(state) }
+      state = parse_expr(state)
+      var vexpr = state.root
+      state = add(state, mk(18, vname + ":" + vtyp, vexpr, -1))
+      stmts = push(stmts, state.root)
+    } else if ck(state) == 52 {
+      state = bump(state)
+      if ck(state) != 30 && ck(state) != 0 {
+        state = parse_expr(state)
+        state = add(state, mk(16, "ret", state.root, -1))
+      } else {
+        state = add(state, mk(16, "ret", -1, -1))
+      }
+      stmts = push(stmts, state.root)
+    } else if ck(state) == 53 {
+      // lp as statement
+      state = bump(state)
+      state = parse_expr(state)
+      var cond = state.root
+      if ck(state) == 29 { state = bump(state) }
+      state = parse_block(state)
+      var body = state.root
+      if ck(state) == 30 { state = bump(state) }
+      state = add(state, mk(17, "lp", cond, body))
+      stmts = push(stmts, state.root)
+    } else if ck(state) == 1 && state.pos + 1 < len(state.tokens) && state.tokens[state.pos + 1].kind == 28 {
+      // assignment statement: name = expr  (and name.field = expr via parse_assign fallback)
+      state = parse_expr(state)
+      stmts = push(stmts, state.root)
+    } else if ck(state) == 1 && state.pos + 1 < len(state.tokens) && state.tokens[state.pos + 1].kind == 43 {
+      // possible field assign: obj.field = expr — use full parse_expr
+      state = parse_expr(state)
+      stmts = push(stmts, state.root)
+    } else {
+      state = parse_expr(state)
+      stmts = push(stmts, state.root)
     }
+  }
+  if len(stmts) == 0 {
+    state = add(state, mk(19, "0", -1, -1))
+  } else {
+    // fold from end: seq(s0, seq(s1, s2))
+    var i = len(stmts) - 1
+    var acc = stmts[i]
+    lp i > 0 {
+      i = i - 1
+      state = add(state, mk(20, "seq", stmts[i], acc))
+      acc = state.root
+    }
+    state.root = acc
+  }
+  state
+}
+
+fn skip_rec(state: ParseState) -> ParseState {
+  state = bump(state)
+  if ck(state) == 1 { state = bump(state) }
+  if ck(state) == 29 {
+    state = bump(state)
+    var depth = 1
+    lp depth > 0 && ck(state) != 0 {
+      if ck(state) == 29 { depth = depth + 1 }
+      if ck(state) == 30 { depth = depth - 1 }
+      state = bump(state)
+    }
+  }
+  state
+}
+
+fn parse_fn(state: ParseState) -> ParseState {
+  state = bump(state)
+  if ck(state) != 1 {
+    state.valid = false
     state
   } else {
-    state.pos = state.pos + 1
+    var name = ct(state)
+    state = bump(state)
+    var params: [Param] = []
+    if ck(state) == 7 {
+      state = bump(state)
+      lp ck(state) != 8 && ck(state) != 0 {
+        if ck(state) == 1 {
+          var pname = ct(state)
+          state = bump(state)
+          var ptyp = "i64"
+          if ck(state) == 26 {
+            state = bump(state)
+            if ck(state) == 38 { ptyp = "i64"; state = bump(state) }
+            else if ck(state) == 55 { ptyp = "str"; state = bump(state) }
+            else if ck(state) == 46 { ptyp = "bool"; state = bump(state) }
+            else if ck(state) == 41 {
+              state = bump(state)
+              if ck(state) == 1 || ck(state) == 38 || ck(state) == 55 || ck(state) == 46 {
+                var inn = ct(state)
+                if ck(state) == 38 { inn = "i64" }
+                if ck(state) == 55 { inn = "str" }
+                if ck(state) == 46 { inn = "bool" }
+                state = bump(state)
+                ptyp = "List_" + inn
+              }
+              if ck(state) == 42 { state = bump(state) }
+            } else if ck(state) == 1 {
+              ptyp = ct(state)
+              state = bump(state)
+            }
+          }
+          params = push(params, Param { name: pname, typ: ptyp })
+          if ck(state) == 31 { state = bump(state) }
+        } else {
+          state = bump(state)
+        }
+      }
+      if ck(state) == 8 { state = bump(state) }
+    }
+    var rtype = "i64"
+    if ck(state) == 27 {
+      state = bump(state)
+      if ck(state) == 38 { rtype = "i64"; state = bump(state) }
+      else if ck(state) == 55 { rtype = "str"; state = bump(state) }
+      else if ck(state) == 46 { rtype = "bool"; state = bump(state) }
+      else if ck(state) == 41 {
+        state = bump(state)
+        if ck(state) == 1 || ck(state) == 38 || ck(state) == 55 || ck(state) == 46 {
+          var inn = ct(state)
+          if ck(state) == 38 { inn = "i64" }
+          if ck(state) == 55 { inn = "str" }
+          if ck(state) == 46 { inn = "bool" }
+          state = bump(state)
+          rtype = "List_" + inn
+        }
+        if ck(state) == 42 { state = bump(state) }
+      } else if ck(state) == 1 {
+        rtype = ct(state)
+        state = bump(state)
+      }
+    }
+    if ck(state) == 28 { state = bump(state) }
+    if ck(state) == 29 {
+      state = bump(state)
+      state = parse_block(state)
+      if ck(state) == 30 { state = bump(state) }
+    } else {
+      state = parse_expr(state)
+    }
+    state.functions = push(state.functions, Function {
+      name: name,
+      params: params,
+      return_type: rtype,
+      root: state.root,
+      is_public: false
+    })
     state
   }
 }
 
 fn parse_program(state: ParseState) -> ParseState {
-  let done = false
-  lp done == false {
-    let current = state.tokens[state.pos]
-    if current.kind == 22 {
-      state = parse_function(state, false)
-    } else if current.kind == 33 {
-      state.pos = state.pos + 1
-      if state.tokens[state.pos].kind == 22 {
-        state = parse_function(state, true)
-      } else {
-        state.valid = false
-        done = true
-        state
-      }
-    } else if current.kind == 34 {
-      state.pos = state.pos + 1
-      state
-    } else if current.kind == 35 {
-      state.valid = false
-      state.pos = state.pos + 1
-      state
-    } else if current.kind == 36 {
-      state = skip_type_decl(state)
-    } else if current.kind == 37 || current.kind == 39 {
-      state = skip_named_braces(state, true)
-    } else if current.kind == 19 && state.tokens[state.pos + 1].kind == 29 {
-      state = skip_named_braces(state, false)
-    } else if current.kind == 23 {
-      if state.has_entry == true {
-        state.valid = false
-        done = true
-        state
-      } else {
-        state.has_entry = true
-        state.pos = state.pos + 1
-        if state.tokens[state.pos].kind == 7 && state.tokens[state.pos + 1].kind == 8 {
-          state.pos = state.pos + 2
-          state.nodes = push(state.nodes, node(1, "0", 0, 0))
-          state.root = len(state.nodes) - 1
-          state
-        } else {
-          state = parse_expr(state)
-          state
-        }
-        state
-      }
-      state
-    } else if current.kind == 0 {
-      done = true
-      state
+  lp ck(state) != 0 && state.valid {
+    if ck(state) == 22 {
+      state = parse_fn(state)
+    } else if ck(state) == 54 {
+      state = skip_rec(state)
+    } else if ck(state) == 23 {
+      state = bump(state)
+      if ck(state) == 29 { state = bump(state) }
+      state = parse_block(state)
+      if ck(state) == 30 { state = bump(state) }
+      state.has_entry = true
     } else {
       state.valid = false
-      done = true
-      state
     }
   }
   state
 }
 
-fn emit_call_args(nodes: [Node], index: i64) -> str {
-  if index < 0 {
-    ""
+
+fn field_type(obj: str, field: str) -> str {
+  if obj == "Token" {
+    if field == "kind" { "i64" } else if field == "text" { "str" } else { "i64" }
+  } else if obj == "Param" {
+    if field == "name" { "str" } else if field == "typ" { "str" } else { "i64" }
+  } else if obj == "Node" {
+    if field == "kind" { "i64" } else if field == "text" { "str" } else if field == "typ" { "str" } else { "i64" }
+  } else if obj == "Function" {
+    if field == "name" { "str" } else if field == "params" { "List_Param" } else if field == "return_type" { "str" } else if field == "is_public" { "bool" } else { "i64" }
+  } else if obj == "ParseState" {
+    if field == "tokens" { "List_Token" } else if field == "nodes" { "List_Node" } else if field == "functions" { "List_Function" } else if field == "has_entry" { "bool" } else if field == "valid" { "bool" } else { "i64" }
   } else {
-    let argument = nodes[index]
-    if argument.right < 0 {
-      emit_node(nodes, argument.left)
+    "i64"
+  }
+}
+
+fn elem_type(list_ty: str) -> str {
+  if list_ty == "List_Token" { "Token" }
+  else if list_ty == "List_Node" { "Node" }
+  else if list_ty == "List_Param" { "Param" }
+  else if list_ty == "List_Function" { "Function" }
+  else if list_ty == "List_i64" { "i64" }
+  else { "i64" }
+}
+
+fn env_get(env: [Binding], name: str) -> str {
+  var i = 0
+  var found = ""
+  lp i < len(env) {
+    if env[i].name == name {
+      found = env[i].typ
+      i = len(env)
+    }
+    i = i + 1
+  }
+  found
+}
+
+fn env_put(env: [Binding], name: str, typ: str) -> [Binding] {
+  push(env, Binding { name: name, typ: typ })
+}
+
+fn fn_return(functions: [Function], name: str) -> str {
+  var i = 0
+  var rt = "i64"
+  lp i < len(functions) {
+    if functions[i].name == name {
+      rt = functions[i].return_type
+      i = len(functions)
+    }
+    i = i + 1
+  }
+  if name == "token" { "Token" }
+  else if name == "mk" { "Node" }
+  else if name == "mkx" { "Node" }
+  else if name == "mkt" { "Node" }
+  else if name == "len" { "i64" }
+  else if name == "substr" { "str" }
+  else if name == "env" { "str" }
+  else if name == "push" { "" }
+  else { rt }
+}
+
+fn c_type(t: str) -> str {
+  if t == "str" { "const char*" }
+  else if t == "bool" { "bool" }
+  else if t == "i64" { "int64_t" }
+  else if t == "list" { "List_i64" }
+  else if t == "list_Token" { "List_Token" }
+  else if t == "list_Param" { "List_Param" }
+  else if t == "list_Node" { "List_Node" }
+  else if t == "list_Function" { "List_Function" }
+  else if t == "list_i64" { "List_i64" }
+  else if t == "" { "int64_t" }
+  else { t }
+}
+
+fn emit_args(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str {
+  if index < 0 { "" }
+  else {
+    var n = nodes[index]
+    if n.kind == 9 {
+      if n.right < 0 { emit(nodes, n.left, env, functions) }
+      else { emit(nodes, n.left, env, functions) + ", " + emit_args(nodes, n.right, env, functions) }
     } else {
-      emit_node(nodes, argument.left) + ", " + emit_call_args(nodes, argument.right)
+      emit(nodes, index, env, functions)
     }
   }
 }
 
-fn c_type(type_name: str) -> str = if type_name == "bool" { "_Bool" } else { "int64_t" }
-
-fn emit_param_declarations(params: [Param], index: i64) -> str {
-  if index >= len(params) {
-    "void"
-  } else if index + 1 >= len(params) {
-    c_type(params[index].typ) + " " + params[index].name
-  } else {
-    c_type(params[index].typ) + " " + params[index].name + ", " + emit_param_declarations(params, index + 1)
+fn emit_fields(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str {
+  if index < 0 { "" }
+  else {
+    var n = nodes[index]
+    if n.right < 0 {
+      "." + n.text + " = " + emit(nodes, n.left, env, functions)
+    } else {
+      "." + n.text + " = " + emit(nodes, n.left, env, functions) + ", " + emit_fields(nodes, n.right, env, functions)
+    }
   }
 }
 
-fn emit_node(nodes: [Node], index: i64) -> str {
-  let current = nodes[index]
-  if current.kind == 1 {
-    current.text
-  } else if current.kind == 10 {
-    current.text
-  } else if current.kind == 4 {
-    "\"" + current.text + "\""
-  } else if current.kind == 3 {
-    "(" + current.text + emit_node(nodes, current.left) + ")"
-  } else if current.kind == 5 {
-    "(did_print = 1, printf(\"%s\\n\", " + emit_node(nodes, current.left) + "), INT64_C(0))"
-  } else if current.kind == 6 {
-    current.text
-  } else if current.kind == 7 {
-    "terse_" + current.text + "(" + emit_call_args(nodes, current.left) + ")"
-  } else if current.kind == 8 {
-    "(" + emit_node(nodes, current.left) + " ? " + emit_node(nodes, current.right) + " : " + emit_node(nodes, current.extra) + ")"
-  } else {
-    "(" + emit_node(nodes, current.left) + current.text + emit_node(nodes, current.right) + ")"
+fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str {
+  if index < 0 { "INT64_C(0)" }
+  else {
+    var n = nodes[index]
+    if n.kind == 19 { "INT64_C(" + n.text + ")" }
+    else if n.kind == 10 { if n.text == "1" { "true" } else { "false" } }
+    else if n.kind == 4 { "\"" + n.text + "\"" }
+    else if n.kind == 6 { n.text }
+    else if n.kind == 3 { "(" + n.text + emit(nodes, n.left, env, functions) + ")" }
+    else if n.kind == 5 {
+      var at = ""
+      if n.left >= 0 { at = nodes[n.left].typ }
+      if at == "str" || (n.left >= 0 && nodes[n.left].kind == 4) {
+        "terse_pr_str(" + emit(nodes, n.left, env, functions) + ")"
+      } else {
+        "terse_pr(" + emit(nodes, n.left, env, functions) + ")"
+      }
+    } else if n.kind == 7 {
+      if n.text == "len" {
+        "terse_len(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else if n.text == "push" {
+        "terse_push(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else if n.text == "substr" {
+        "terse_substr(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else if n.text == "env" {
+        "terse_env(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else {
+        "terse_" + n.text + "(" + emit_args(nodes, n.left, env, functions) + ")"
+      }
+    } else if n.kind == 8 {
+      "(" + emit(nodes, n.left, env, functions) + " ? " + emit(nodes, n.right, env, functions) + " : " + emit(nodes, n.extra, env, functions) + ")"
+    } else if n.kind == 2 {
+      if n.text == "=" {
+        "(" + emit(nodes, n.left, env, functions) + " = " + emit(nodes, n.right, env, functions) + ")"
+      } else if n.text == "+" {
+        "terse_plus(" + emit(nodes, n.left, env, functions) + ", " + emit(nodes, n.right, env, functions) + ")"
+      } else {
+        "(" + emit(nodes, n.left, env, functions) + " " + n.text + " " + emit(nodes, n.right, env, functions) + ")"
+      }
+    } else if n.kind == 21 {
+      if n.text == "read_text" {
+        "fs_read_text(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else if n.text == "write_text" {
+        "fs_write_text(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else if n.text == "compile" {
+        "terse_gcc_compile(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else {
+        "terse_" + n.text + "(" + emit_args(nodes, n.left, env, functions) + ")"
+      }
+    } else if n.kind == 11 {
+      "((" + emit(nodes, n.left, env, functions) + ")." + n.text + ")"
+    } else if n.kind == 12 {
+      "((" + n.text + "){ " + emit_fields(nodes, n.left, env, functions) + " })"
+    } else if n.kind == 14 {
+      if n.typ != "" {
+        "(" + c_type(n.typ) + "){0}"
+      } else {
+        "(List_i64){0}"
+      }
+    } else if n.kind == 15 {
+      "terse_at(" + emit(nodes, n.left, env, functions) + ", " + emit(nodes, n.right, env, functions) + ")"
+    } else if n.kind == 17 {
+      "({ while (" + emit(nodes, n.left, env, functions) + ") { (void)(" + emit(nodes, n.right, env, functions) + "); } INT64_C(0); })"
+    } else if n.kind == 20 {
+      "({ " + emit(nodes, n.left, env, functions) + "; " + emit(nodes, n.right, env, functions) + "; })"
+    } else if n.kind == 18 {
+      var nm = n.text
+      var tp = ""
+      var ci = 0
+      lp ci < len(nm) {
+        if nm[ci] == 58 {
+          tp = substr(nm, ci + 1, len(nm) - ci - 1)
+          nm = substr(nm, 0, ci)
+          ci = len(nm)
+        }
+        ci = ci + 1
+      }
+      if n.left >= 0 && nodes[n.left].kind == 14 {
+        var lt = c_type(tp)
+        if lt == "int64_t" || lt == "" { lt = "List_i64" }
+        lt + " " + nm + " = (" + lt + "){0}"
+      } else if n.left >= 0 && nodes[n.left].kind == 12 {
+        nodes[n.left].text + " " + nm + " = " + emit(nodes, n.left, env, functions)
+      } else if tp != "" && tp != "i64" {
+        c_type(tp) + " " + nm + " = " + emit(nodes, n.left, env, functions)
+      } else {
+        "__auto_type " + nm + " = " + emit(nodes, n.left, env, functions)
+      }
+    } else if n.kind == 16 {
+      if n.left < 0 { "({ return INT64_C(0); INT64_C(0); })" }
+      else { "({ return " + emit(nodes, n.left, env, functions) + "; INT64_C(0); })" }
+    } else {
+      "INT64_C(0)"
+    }
   }
+}
+
+fn emit_params(params: [Param], index: i64) -> str {
+  if index >= len(params) { "void" }
+  else if index + 1 >= len(params) {
+    c_type(params[index].typ) + " " + params[index].name
+  } else {
+    c_type(params[index].typ) + " " + params[index].name + ", " + emit_params(params, index + 1)
+  }
+}
+
+fn runtime() -> str {
+  "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n" +
+  "static int did_print = 0;\n" +
+  "typedef int64_t i64;\n" +
+  "typedef const char* str;\n" +
+  "typedef struct { int64_t kind; const char* text; } Token;\n" +
+  "typedef struct { const char* name; const char* typ; } Param;\n" +
+  "typedef struct { const char* name; const char* typ; } Binding;\n" +
+  "typedef struct { Binding *d; int64_t n; int64_t cap; } List_Binding;\n" +
+  "typedef struct { int64_t kind; const char* text; int64_t left; int64_t right; int64_t extra; const char* typ; } Node;\n" +
+  "typedef struct { Param *d; int64_t n; int64_t cap; } List_Param;\n" +
+  "typedef struct { Token *d; int64_t n; int64_t cap; } List_Token;\n" +
+  "typedef struct { Node *d; int64_t n; int64_t cap; } List_Node;\n" +
+  "typedef struct { const char* name; List_Param params; const char* return_type; int64_t root; bool is_public; } Function;\n" +
+  "typedef struct { Function *d; int64_t n; int64_t cap; } List_Function;\n" +
+  "typedef struct { List_Token tokens; List_Node nodes; int64_t pos; int64_t root; int64_t arg_root; List_Function functions; bool has_entry; bool valid; } ParseState;\n" +
+  "typedef struct { int64_t *d; int64_t n; int64_t cap; } List_i64;\n" +
+  "static List_Token list_new_Token(int64_t n){List_Token L={NULL,0,n};if(n)L.d=calloc(n,sizeof(Token));return L;}\n" +
+  "static List_Token list_push_Token(List_Token L, Token v){if(L.n>=L.cap){L.cap=L.cap?L.cap*2:8;L.d=realloc(L.d,L.cap*sizeof(Token));}L.d[L.n++]=v;return L;}\n" +
+  "static int64_t list_len_Token(List_Token L){return L.n;}\n" +
+  "static Token list_get_Token(List_Token L,int64_t i){return L.d[i];}\n" +
+  "static List_Node list_new_Node(int64_t n){List_Node L={NULL,0,n};if(n)L.d=calloc(n,sizeof(Node));return L;}\n" +
+  "static List_Node list_push_Node(List_Node L, Node v){if(L.n>=L.cap){L.cap=L.cap?L.cap*2:8;L.d=realloc(L.d,L.cap*sizeof(Node));}L.d[L.n++]=v;return L;}\n" +
+  "static int64_t list_len_Node(List_Node L){return L.n;}\n" +
+  "static Node list_get_Node(List_Node L,int64_t i){return L.d[i];}\n" +
+  "static List_Param list_new_Param(int64_t n){List_Param L={NULL,0,n};if(n)L.d=calloc(n,sizeof(Param));return L;}\n" +
+  "static List_Param list_push_Param(List_Param L, Param v){if(L.n>=L.cap){L.cap=L.cap?L.cap*2:8;L.d=realloc(L.d,L.cap*sizeof(Param));}L.d[L.n++]=v;return L;}\n" +
+  "static int64_t list_len_Param(List_Param L){return L.n;}\n" +
+  "static Param list_get_Param(List_Param L,int64_t i){return L.d[i];}\n" +
+  "static List_Binding list_new_Binding(int64_t n){List_Binding L={NULL,0,n};if(n)L.d=calloc(n,sizeof(Binding));return L;}\n" +
+  "static List_Binding list_push_Binding(List_Binding L, Binding v){if(L.n>=L.cap){L.cap=L.cap?L.cap*2:8;L.d=realloc(L.d,L.cap*sizeof(Binding));}L.d[L.n++]=v;return L;}\n" +
+  "static int64_t list_len_Binding(List_Binding L){return L.n;}\n" +
+  "static Binding list_get_Binding(List_Binding L,int64_t i){return L.d[i];}\n" +
+  "static List_Function list_new_Function(int64_t n){List_Function L={NULL,0,n};if(n)L.d=calloc(n,sizeof(Function));return L;}\n" +
+  "static List_Function list_push_Function(List_Function L, Function v){if(L.n>=L.cap){L.cap=L.cap?L.cap*2:8;L.d=realloc(L.d,L.cap*sizeof(Function));}L.d[L.n++]=v;return L;}\n" +
+  "static int64_t list_len_Function(List_Function L){return L.n;}\n" +
+  "static Function list_get_Function(List_Function L,int64_t i){return L.d[i];}\n" +
+  "static List_i64 list_new_i64(int64_t n){List_i64 L={NULL,0,n};if(n)L.d=calloc(n,sizeof(int64_t));return L;}\n" +
+  "static List_i64 list_push_i64(List_i64 L,int64_t v){if(L.n>=L.cap){L.cap=L.cap?L.cap*2:8;L.d=realloc(L.d,L.cap*sizeof(int64_t));}L.d[L.n++]=v;return L;}\n" +
+  "static char* str_concat(const char* a,const char* b){size_t na=a?strlen(a):0,nb=b?strlen(b):0;char* r=malloc(na+nb+1);if(a)memcpy(r,a,na);if(b)memcpy(r+na,b,nb);r[na+nb]=0;return r;}\n" +
+  "static char* str_from_i64(int64_t x){char* b=malloc(32);snprintf(b,32,\"%lld\",(long long)x);return b;}\n" +
+  "static int64_t terse_pr(int64_t x){did_print=1;printf(\"%lld\\n\",(long long)x);return 0;}\n" +
+  "static int64_t terse_pr_str(const char* s){did_print=1;printf(\"%s\\n\",s?s:\"\");return 0;}\n" +
+  "static int64_t terse_len_str(const char* s){return s?(int64_t)strlen(s):0;}\n" +
+  "static char* terse_substr(const char* s,int64_t start,int64_t len){if(!s)s=\"\";size_t n=strlen(s);if(start<0)start=0;if(start>(int64_t)n)start=n;if(len<0)len=0;if(start+len>(int64_t)n)len=n-start;char* r=malloc(len+1);memcpy(r,s+start,len);r[len]=0;return r;}\n" +
+  "static int64_t terse_str_len(const char* s){return s?(int64_t)strlen(s):0;}\n" +
+  "static int64_t terse_str_at(const char* s,int64_t i){return (s&&i>=0&&i<(int64_t)strlen(s))?(int64_t)(unsigned char)s[i]:0;}\n" +
+  "static int64_t list_len_i64(List_i64 L){return L.n;}\n" +
+  "static int64_t list_get_i64(List_i64 L,int64_t i){return L.d[i];}\n" +
+  "#define terse_len(x) _Generic((x), const char*: terse_str_len, char*: terse_str_len, List_Token: list_len_Token, List_Node: list_len_Node, List_Param: list_len_Param, List_Function: list_len_Function, List_i64: list_len_i64)(x)\n" +
+  "#define terse_at(c,i) _Generic((c), const char*: terse_str_at, char*: terse_str_at, List_Token: list_get_Token, List_Node: list_get_Node, List_Param: list_get_Param, List_Function: list_get_Function, List_i64: list_get_i64)(c,i)\n" +
+  "static int64_t terse_iadd(int64_t a,int64_t b){return a+b;}\n" +
+  "#define terse_plus(a,b) _Generic((a), const char*: str_concat, char*: str_concat, default: terse_iadd)(a,b)\n" +
+  "#define terse_push(L,v) _Generic((v), Token: list_push_Token, Node: list_push_Node, Param: list_push_Param, Function: list_push_Function, int64_t: list_push_i64, default: list_push_i64)(L,v)\n" +
+  "static const char* terse_env(const char* k){const char* v=getenv(k);return v?v:\"\";}\n" +
+  "static char* fs_read_text(const char* path){FILE* f=fopen(path,\"rb\");if(!f){fprintf(stderr,\"read fail %s\\n\",path);exit(1);}fseek(f,0,SEEK_END);long n=ftell(f);fseek(f,0,SEEK_SET);char* b=malloc(n+1);fread(b,1,n,f);b[n]=0;fclose(f);return b;}\n" +
+  "static int64_t fs_write_text(const char* path,const char* text){FILE* f=fopen(path,\"wb\");if(!f){fprintf(stderr,\"write fail %s\\n\",path);exit(1);}size_t n=text?strlen(text):0;fwrite(text,1,n,f);fclose(f);return (int64_t)n;}\n" +
+  "static int64_t terse_gcc_compile(const char* src,const char* out){char cmd[4096];snprintf(cmd,sizeof(cmd),\"gcc -O2 -std=c11 %s -o %s\",src,out);return (int64_t)system(cmd);}\n"
 }
 
 fn compile_file(source_path: str, output_path: str) -> i64 {
-  let source = fs.read_text(source_path)
-  let tokens = scan(source)
-  let initial = ParseState { tokens: tokens, nodes: [], pos: 0, root: 0, arg_root: -1, functions: [], has_entry: false, valid: true }
-  let parsed = parse_program(initial)
-  if parsed.valid == false || parsed.has_entry == false || parsed.tokens[parsed.pos].kind != 0 {
+  var source = fs.read_text(source_path)
+  var tokens = scan(source)
+  var empty_nodes: [Node] = []
+  var empty_fns: [Function] = []
+  var initial = ParseState {
+    tokens: tokens,
+    nodes: empty_nodes,
+    pos: 0,
+    root: -1,
+    arg_root: -1,
+    functions: empty_fns,
+    has_entry: false,
+    valid: true
+  }
+  var parsed = parse_program(initial)
+  if parsed.valid == false || parsed.has_entry == false {
     2
   } else {
-    let expression = emit_node(parsed.nodes, parsed.root)
-    let function_prototypes = ""
-    let function_bodies = ""
-    let function_index = 0
-    lp function_index < len(parsed.functions) {
-      let current = parsed.functions[function_index]
-      let c_name = "terse_" + current.name
-      let params = emit_param_declarations(current.params, 0)
-      let return_type = c_type(current.return_type)
-      function_prototypes = function_prototypes + "static " + return_type + " " + c_name + "(" + params + ");\n"
-      function_bodies = function_bodies + "static " + return_type + " " + c_name + "(" + params + ") {\n  return " + emit_node(parsed.nodes, current.root) + ";\n}\n"
-      function_index = function_index + 1
+    var empty_env: [Binding] = []
+    var expression = emit(parsed.nodes, parsed.root, empty_env, parsed.functions)
+    var protos = ""
+    var bodies = ""
+    var i = 0
+    lp i < len(parsed.functions) {
+      var f = parsed.functions[i]
+      var cn = "terse_" + f.name
+      var ps = emit_params(f.params, 0)
+      var rt = c_type(f.return_type)
+      var param_env: [Binding] = []
+      var pi = 0
+      lp pi < len(f.params) {
+        param_env = env_put(param_env, f.params[pi].name, f.params[pi].typ)
+        pi = pi + 1
+      }
+      protos = protos + "static " + rt + " " + cn + "(" + ps + ");\n"
+      bodies = bodies + "static " + rt + " " + cn + "(" + ps + ") {\n  return " + emit(parsed.nodes, f.root, param_env, parsed.functions) + ";\n}\n"
+      i = i + 1
     }
-    let c_source = "#include <stdint.h>\n#include <stdio.h>\nstatic int did_print = 0;\n" + function_prototypes + function_bodies + "int main(void) {\n  int64_t result = " + expression + ";\n  if (!(did_print && result == 0)) printf(\"%lld\\n\", (long long)result);\n  return 0;\n}\n"
-    let c_path = output_path + ".c"
+    var c_source = runtime() + protos + bodies +
+      "int main(void){\n  int64_t result = " + expression + ";\n" +
+      "  if(!(did_print && result==0)) printf(\"%lld\\n\",(long long)result);\n  return (int)result;\n}\n"
+    var c_path = output_path + ".c"
     fs.write_text(c_path, c_source)
     gcc.compile(c_path, output_path)
   }
 }
 
 go {
-  let source_path = env("TERSE_SOURCE")
-  let output_path = env("TERSE_OUTPUT")
+  var source_path = env("TERSE_SOURCE")
+  var output_path = env("TERSE_OUTPUT")
   if len(source_path) == 0 || len(output_path) == 0 {
-    pr("tc: invoke through ./tc; run ./tc --help for usage")
+    pr("tc: set TERSE_SOURCE and TERSE_OUTPUT")
     1
   } else {
-    let status = compile_file(source_path, output_path)
+    var status = compile_file(source_path, output_path)
     if status == 0 {
       pr("TC_OK")
       0

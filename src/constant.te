@@ -1,0 +1,14 @@
+use io.pr
+
+fix GREETING: str = "CONST_STRING"
+fix ANSWER: i64 = 42
+
+fn show() -> i64 {
+  pr(GREETING)
+  pr(ANSWER)
+}
+
+go {
+  show()
+  pr(GREETING)
+}
