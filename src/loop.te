@@ -30,8 +30,21 @@ fn sum_list() -> i64 {
   sum
 }
 
+fn sum_skip() -> i64 {
+  val list = [1, 2, 3, 4, -1, 5, 6]
+  var sum = 0
+  lp idx = 0; idx < list.len(); idx = idx + 1 {
+    if list[idx] < 0 { brk }
+    if list[idx] % 2 == 0 { skip }
+    sum = sum + list[idx]
+  }
+  sum
+}
+
+
 go {
   pr("sum_while = " + sum_while())
   pr("sum_for = " + sum_for())
   pr("sum_list = " + sum_list())
+  pr("sum_skip = " + sum_skip())
 }

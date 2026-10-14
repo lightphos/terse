@@ -180,7 +180,7 @@
 <ret-expr>      ::= "ret" [ <expr> ]
 
 <jump-expr>     ::= "brk" [ <expr> ]
-                  | "cnt"
+                  | "skip"
 
 
 (* Blocks, bindings, assignment *)

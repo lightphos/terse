@@ -16,7 +16,7 @@ class TT(Enum):
     USE=auto(); TYPE=auto(); GO=auto(); PUB=auto()
     EN=auto(); MATCH=auto()
     VAL=auto(); VAR=auto(); FIX=auto(); WHILE=auto()
-    REC=auto(); BRK=auto(); CNT=auto()
+    REC=auto(); BRK=auto(); SKIP=auto()
     ARROW=auto(); FATARROW=auto(); PIPEGT=auto()
     PLUSEQ=auto(); MINUSEQ=auto(); STAREQ=auto(); SLASHEQ=auto(); PERCENTEQ=auto()
     LPAREN=auto(); RPAREN=auto(); LBRACE=auto(); RBRACE=auto()
@@ -32,7 +32,7 @@ KW = {'fn':TT.FN,'if':TT.IF,'else':TT.ELSE,'lp':TT.LP,
     'use':TT.USE,'type':TT.TYPE,'go':TT.GO,'tr':TT.TR,'pub':TT.PUB,
     'en':TT.EN,'match':TT.MATCH,
     'val':TT.VAL,'var':TT.VAR,'fix':TT.FIX,'while':TT.WHILE,
-    'rec':TT.REC,'brk':TT.BRK,'cnt':TT.CNT}
+    'rec':TT.REC,'brk':TT.BRK,'skip':TT.SKIP}
 
 @dataclass
 class Tok:
@@ -165,6 +165,11 @@ class LetExpr(Expr):
 @dataclass
 class RetExpr(Expr):
     value: Optional[Expr] = None
+@dataclass
+class JumpExpr(Expr):
+    """brk / skip — loop break and continue."""
+    kind: str  # 'brk' | 'skip'
+    value: Optional[Expr] = None  # optional brk value (ignored for C break for now)
 @dataclass
 class Lambda(Expr):
     params: List[Param]; body: Expr
@@ -423,10 +428,10 @@ class Parser:
             value = None
             if not self.match(TT.RBRACE, TT.SEMI, TT.EOF, TT.COMMA):
                 value = self.parse_expr()
-            return RetExpr(value)
-        if self.match(TT.CNT):
+            return JumpExpr('brk', value)
+        if self.match(TT.SKIP):
             self.adv()
-            return IntLit(0)
+            return JumpExpr('skip', None)
         if self.match(TT.LPAREN):
             self.adv()
             if self.match(TT.RPAREN):
@@ -1660,12 +1665,12 @@ static const char* terse_arg(int64_t index) {
 }
 
 static int64_t terse_gcc_compile(const char* source, const char* output) {
-    char* args[12];
+    char* args[16];
     int count = 0;
     args[count++] = "gcc";
+    args[count++] = "-O2";
     args[count++] = "-std=c11";
-    args[count++] = "-Wall";
-    args[count++] = "-Wextra";
+    args[count++] = "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value";
     args[count++] = (char*)source;
 #ifdef _WIN32
     args[count++] = "-lws2_32";
@@ -1968,6 +1973,55 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             return self.record_field_types.get(base_type, {}).get(e.field, 'i64')
         return 'i64'
 
+
+    def gen_loop_body(self, e) -> str:
+        """Emit loop body as C statements so break/continue bind to the enclosing while/for."""
+        if isinstance(e, JumpExpr):
+            if e.kind == 'brk':
+                return 'break;'
+            return 'continue;'
+        if isinstance(e, Block):
+            parts = []
+            for st in e.stmts:
+                parts.append(self.gen_loop_body(st))
+            return ' '.join(parts)
+        if isinstance(e, IfExpr):
+            c, _ = self.gen_expr(e.cond)
+            t = self.gen_loop_body(e.then)
+            f = self.gen_loop_body(e.els) if e.els is not None else ''
+            if f:
+                return f"if ({c}) {{ {t} }} else {{ {f} }}"
+            return f"if ({c}) {{ {t} }}"
+        if isinstance(e, RetExpr):
+            if e.value is not None:
+                v, _ = self.gen_expr(e.value)
+                return f"return {v};"
+            return "return INT64_C(0);"
+        if isinstance(e, LetExpr):
+            # Blocks desugar to LetExpr("_", stmt, rest) — emit as statements
+            if e.name == "_":
+                head = self.gen_loop_body(e.value)
+                if e.body is not None:
+                    return head + ' ' + self.gen_loop_body(e.body)
+                return head
+            expected = self.type_name(e.typ) if e.typ is not None else None
+            v, vt = self.gen_expr(e.value, expected)
+            if e.typ is not None:
+                vt = self.type_name(e.typ)
+            # Empty typed lists must use typed list_new_* even if inference missed
+            if expected and expected.startswith('list_') and 'list_new(' in v and 'list_new_' not in v:
+                elem = expected[5:]
+                v = f"({{ List_{elem} _le = list_new_{elem}(0); _le; }})"
+                vt = expected
+            decl = f"{self.c_type(vt)} {e.name} = {v};"
+            self.env[e.name] = vt
+            if e.body is not None:
+                return decl + ' ' + self.gen_loop_body(e.body)
+            return decl
+        # Default: expression statement
+        code, _ = self.gen_expr(e)
+        return f"(void)({code});"
+
     def gen_expr(self, e, expected_type=None) -> Tuple[str, str]:
         if isinstance(e, IntLit):
             return f"INT64_C({e.value})", "i64"
@@ -2030,10 +2084,19 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     return f"str_concat({l}, str_from_bool({r}))", "str"
                 if lt == 'bool' and rt == 'str':
                     return f"str_concat(str_from_bool({l}), {r})", "str"
+            if e.op in ('==', '!=') and (lt == 'str' or rt == 'str'):
+                cmp = f"(strcmp(({l}) ? ({l}) : \"\", ({r}) ? ({r}) : \"\") == 0)"
+                if e.op == '!=':
+                    cmp = f"(!{cmp})"
+                return cmp, "bool"
             return f"({l} {e.op} {r})", ("bool" if e.op in ('==','!=','<','>','<=','>=','&&','||') else "i64")
         if isinstance(e, Unary):
             x, _ = self.gen_expr(e.expr)
             return f"({e.op}{x})", "i64"
+        if isinstance(e, JumpExpr):
+            if e.kind == 'brk':
+                return "({ break; INT64_C(0); })", "i64"
+            return "({ continue; INT64_C(0); })", "i64"
         if isinstance(e, RetExpr):
             if e.value is not None:
                 v, vt = self.gen_expr(e.value)
@@ -2047,15 +2110,22 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 element_type = expected_type[5:]
             elif e.items:
                 element_type = self.expr_type(e.items[0])
-            if element_type in self.record_field_types:
+            if element_type and element_type not in ('i64', 'int', 'bool', 'str', 'f64') and (
+                element_type in self.record_field_types or expected_type
+            ):
                 parts = [f"List_{element_type} {tmp} = list_new_{element_type}({n})"]
                 for i, item in enumerate(e.items):
-                    value, value_type = self.gen_expr(item)
-                    if value_type != element_type:
-                        raise TypeError(f"list elements must all have type {element_type}")
+                    value, value_type = self.gen_expr(item, element_type)
                     parts.append(f"{tmp}.d[{i}] = {value}")
                 parts.append(tmp)
                 return "({ " + "; ".join(parts) + "; })", f"list_{element_type}"
+            if element_type in ('i64', 'int') or (expected_type == 'list_i64'):
+                parts = [f"List {tmp} = list_new({n})"]
+                for i, item in enumerate(e.items):
+                    value, _ = self.gen_expr(item)
+                    parts.append(f"{tmp}.d[{i}] = {value}")
+                parts.append(tmp)
+                return "({ " + "; ".join(parts) + "; })", "List"
             parts = [f"List {tmp} = list_new({n})"]
             for i, it in enumerate(e.items):
                 v, _ = self.gen_expr(it)
@@ -2280,29 +2350,44 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     init_e, _ = self.gen_expr(e.init)
                     init_stmt = f"(void)({init_e});"
             cond_c, _ = self.gen_expr(e.cond)
-            body_c, _ = self.gen_expr(e.body)
+            body_stmts = self.gen_loop_body(e.body)
             post_c = ''
             if e.post is not None:
                 post_e, _ = self.gen_expr(e.post)
-                post_c = f"(void)({post_e});"
+                post_c = f"(void)({post_e})"
             self.env = old_env
+            # Use for() when post exists so continue still runs the increment
+            if post_c and init_decl is not None:
+                # init_decl is "type name = val;" — strip trailing ; for for-init
+                init_for = init_decl.rstrip(';')
+                loop = f"for ({init_for}; {cond_c}; {post_c}) {{ {body_stmts} }}"
+                return (f"({{ {loop} INT64_C(0); }})", "i64")
+            if post_c and init_stmt is not None:
+                loop = f"while({cond_c}) {{ {body_stmts} {post_c}; }}"
+                # continue would skip post — wrap body so continue goes through post via for with empty init
+                loop = f"for (; {cond_c}; {post_c}) {{ {body_stmts} }}"
+                return (f"({{ {init_stmt} {loop} INT64_C(0); }})", "i64")
+            if post_c:
+                loop = f"for (; {cond_c}; {post_c}) {{ {body_stmts} }}"
+                return (f"({{ {loop} INT64_C(0); }})", "i64")
+            loop = f"while({cond_c}) {{ {body_stmts} }}"
             if init_decl is not None:
-                return (f"({{ {init_decl} while({cond_c}) {{ (void)({body_c}); {post_c} }} INT64_C(0); }})", "i64")
+                return (f"({{ {init_decl} {loop} INT64_C(0); }})", "i64")
             if init_stmt is not None:
-                return (f"({{ {init_stmt} while({cond_c}) {{ (void)({body_c}); {post_c} }} INT64_C(0); }})", "i64")
-            return (f"({{ while({cond_c}) {{ (void)({body_c}); {post_c} }} INT64_C(0); }})", "i64")
+                return (f"({{ {init_stmt} {loop} INT64_C(0); }})", "i64")
+            return (f"({{ {loop} INT64_C(0); }})", "i64")
         if isinstance(e, ForInExpr):
             coll, ct = self.gen_expr(e.iterable)
             old = self.env.get(e.var)
             self.env[e.var] = 'i64'
-            body_c, _ = self.gen_expr(e.body)
+            body_stmts = self.gen_loop_body(e.body)
             if old is not None: self.env[e.var] = old
             else: self.env.pop(e.var, None)
             idx = self.fresh()
             return (
                 f"({{ List __for_coll = {coll}; "
                 f"for (int64_t {idx} = 0; {idx} < __for_coll.n; {idx}++) {{ "
-                f"int64_t {e.var} = __for_coll.d[{idx}]; (void)({body_c}); }} "
+                f"int64_t {e.var} = __for_coll.d[{idx}]; {body_stmts} }} "
                 f"INT64_C(0); }})",
                 "i64"
             )
@@ -2965,7 +3050,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None):
         if sys.platform == "win32" and os.path.splitext(out_bin)[1].lower() != ".exe":
             gcc_out = out_bin + ".exe"
 
-        cmd = ["gcc", "-O2", "-std=c11", c_file, "-o", gcc_out]
+        cmd = ["gcc", "-O2", "-std=c11", "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value", c_file, "-o", gcc_out]
         if sys.platform == "win32":
             cmd.append("-lws2_32")
         # sqlite/db support removed for now — no -lsqlite3

@@ -6,24 +6,11 @@ tcc:
 	@mkdir -p out
 	python3 compiler/tersec.py build compiler/tc.te -o out/tc-stage0
 
-tc-test:
-	TERSE_TEST_FILE=$(TC_TEST_FILE) python3 compiler/tersec.py run compiler/t_tc.te -o out/t-tc
-	@native_log=$$(./tc compiler/tc_smoke.te -o out/tc-smoke 2>&1); \
-	  printf '%s\n' "$$native_log"; \
-	  printf '%s\n' "$$native_log" | grep -q 'compiled with the Terse frontend'; \
-	  test "$$(out/tc-smoke)" = "hello world"
-	@hello_log=$$(./tc src/hello.te -o out/tc-hello 2>&1); \
-	  printf '%s\n' "$$hello_log"; \
-	  printf '%s\n' "$$hello_log" | grep -q 'compiled with the Terse frontend'; \
-	  test "$$(out/tc-hello)" = "hello world"
-	@fact_log=$$(./tc src/fact.te -o out/tc-fact 2>&1); \
-	  printf '%s\n' "$$fact_log"; \
-	  printf '%s\n' "$$fact_log" | grep -q 'compiled with the Terse frontend'; \
-	  test "$$(out/tc-fact)" = "3628800"
-	@bool_log=$$(./tc src/bool.te -o out/tc-bool 2>&1); \
-	  printf '%s\n' "$$bool_log"; \
-	  printf '%s\n' "$$bool_log" | grep -q 'compiled with the Terse frontend'; \
-	  test "$$(out/tc-bool)" = "42"
+tcc1: tcc
+	out/tc-stage0 compiler/tc.te out/tc-stage1
+
+bootstrap: tcc1
+	out/tc-stage1 compiler/tc.te out/tc 
 
 dir ?= src
 terse.%:
@@ -39,3 +26,8 @@ install-vscode-terse:
 
 compile.%:
 	python3 compiler/tersec.py build src/$1.te -o out/$1
+	./out/$*
+
+test:
+	tst/test.sh
+

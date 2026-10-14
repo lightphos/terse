@@ -29,7 +29,7 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 
 Keywords (reserved), aligned with `BNF.md`:
 
-`fn`, `val`, `var`, `fix`, `type`, `if`, `else`, `match`, `use`, `ret`, `true`, `false`, `rec`, `en`, `tr`, `self`, `pub`, `while`, `lp`, `brk`, `cnt`, `go`, `pr`
+`fn`, `val`, `var`, `fix`, `type`, `if`, `else`, `match`, `use`, `ret`, `true`, `false`, `rec`, `en`, `tr`, `self`, `pub`, `while`, `lp`, `brk`, `skip`, `go`, `pr`
 
 Additional names used by the runtime / std surface (not all are hard keywords in the lexer):  
 `None`, `Some`, `Ok`, `Err`, `get`, `post`, `put`, `delete`, `http`, `db`, `json`, `env`, `status`
@@ -209,7 +209,7 @@ if cond { then } else if other { ... } else { otherwise }
 ret
 ret expr
 brk
-cnt
+skip
 
 // for-each
 lp x:xs { body }
@@ -229,7 +229,7 @@ match expr {
 }
 ```
 
-`if` and `match` are expressions. Loops evaluate to `0` when they exit normally. `brk` / `cnt` are in the grammar; support is limited.
+`if` and `match` are expressions. Loops evaluate to `0` when they exit normally. `brk` / `skip` are in the grammar; support is limited.
 
 ### Match-style `if` (pattern discrimination)
 When the body uses `=>` arms, `if` acts like `match`:
@@ -449,7 +449,7 @@ python tersec.py check main.te
 - Full ownership / borrowing / borrow checking
 - Database support (optional / stubbed in lean builds)
 - HTTP middleware and framework-style request decoding
-- `brk` / `cnt` semantics
+- `brk` / `skip` semantics
 - Top-level `fix` declarations (literals)
 - `?` postfix semantics
 
