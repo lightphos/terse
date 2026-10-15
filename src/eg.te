@@ -16,7 +16,7 @@ fn sum(xs: [i64]) -> i64 {
 }
 
 fn classify(n: i64) -> str =
-  match n {
+  if n {
     0 => "zero"
     n if n < 0 => "negative"
     _ => "positive"

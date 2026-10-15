@@ -78,6 +78,7 @@ Syntax in this document tracks `BNF.md`. Section 12 identifies reference-compile
 - Enums: `en Name { Variant, Variant(T), ... }` (tag-only or with typed payloads)
 - Traits: `tr Name { fn method(...) -> T }`
 - Lists: `[T]`
+- Maps: `{K: V}` (v1: `str` keys, `i64` or `str` values)
 - Tuples: `(T1, T2, ...)` (grammar present; limited implementation)
 - Option / Result: planned (`Option[T]`, `Result[T, E]`)
 
@@ -229,7 +230,20 @@ match expr {
 }
 ```
 
-`if` and `match` are expressions. Loops evaluate to `0` when they exit normally. `brk` / `skip` are in the grammar; support is limited.
+`if` and `match` are expressions. Loops evaluate to `0` when they exit normally. `brk` exits the nearest `lp`/`while`; `skip` continues it (runs the C-style loop step when present).
+
+Ternary: `cond ? then : else`
+
+### Maps
+```
+var m: {str: i64} = {:}          // empty
+val n = {"a": 1, "b": 2}         // literal
+m["a"] = 3                       // put (updates m)
+pr(m["a"])                       // get (0 / "" if missing)
+pr(len(m))
+```
+Keys: `str`. Values: `i64` or `str` in v1.
+ (same types on both branches preferred).
 
 ### Match-style `if` (pattern discrimination)
 When the body uses `=>` arms, `if` acts like `match`:
@@ -427,6 +441,10 @@ python tersec.py check main.te
 - Higher-order functions and simple lambdas
 - `val` / `var` bindings and blocks
 - Top-level `fix` (immutable constants)
+- Ternary `cond ? then : else`
+- Maps `{K: V}` with `{:}`, literals, `m[k]`, `m[k]=v`, `len(m)`
+- Multi-file `use` / `pub fn`
+- Pipe `|>`
 - Basic type checking
 - Compilation to native binary via C
 - String literals, concatenation, length, indexing
@@ -449,9 +467,8 @@ python tersec.py check main.te
 - Full ownership / borrowing / borrow checking
 - Database support (optional / stubbed in lean builds)
 - HTTP middleware and framework-style request decoding
-- `brk` / `skip` semantics
 - Top-level `fix` declarations (literals)
-- `?` postfix semantics
+- Maps `{K:V}` (str keys; i64/str values)
 
 ## 13. Example Programs
 

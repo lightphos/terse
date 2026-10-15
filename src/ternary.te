@@ -1,0 +1,7 @@
+// Ternary: cond ? then : else
+go {
+  pr(1 < 2 ? 10 : 20)
+  pr(3 > 5 ? "big" : "small")
+  val n = 7
+  pr(n % 2 == 0 ? "even" : "odd")
+}

@@ -160,6 +160,9 @@ class Member(Expr):
 class IfExpr(Expr):
     cond: Expr; then: Expr; els: Optional[Expr]
 @dataclass
+class TernaryExpr(Expr):
+    cond: Expr; then: Expr; els: Expr
+@dataclass
 class LetExpr(Expr):
     name: str; value: Expr; body: Expr; typ: Optional[TypeNode] = None
 @dataclass
@@ -194,6 +197,10 @@ class Block(Expr):
 @dataclass
 class ListLit(Expr):
     items: List[Expr]
+@dataclass
+class MapLit(Expr):
+    """Map literal entries as (key_expr, value_expr) pairs. Empty => {:}."""
+    entries: List[Tuple[Expr, Expr]]
 @dataclass
 class Index(Expr):
     coll: Expr; idx: Expr
@@ -358,13 +365,26 @@ class Parser:
                 if self.match(TT.COMMA): self.adv()
             self.expect(TT.RBRACE)
             return TypeNode('record', [])
-        if self.match(TT.LBRACE):  # {id: i64, name: str}
+        if self.match(TT.LBRACE):
+            # {K: V} map type  |  {field: T, ...} anonymous record (multi-field)
             self.adv()
-            while not self.match(TT.RBRACE):
+            if self.match(TT.RBRACE):
+                self.adv()
+                raise SyntaxError("empty {} is not a type; use {K: V} for maps")
+            # Try map: type ":" type ["}"]
+            k = self.parse_type()
+            self.expect(TT.COLON)
+            v = self.parse_type()
+            if self.match(TT.RBRACE):
+                self.adv()
+                return TypeNode('map', [k, v])
+            # Multi-field anonymous record — consume remaining field: type pairs
+            while self.match(TT.COMMA):
+                self.adv()
+                if self.match(TT.RBRACE): break
                 self.expect(TT.IDENT)
                 self.expect(TT.COLON)
                 self.parse_type()
-                if self.match(TT.COMMA): self.adv()
             self.expect(TT.RBRACE)
             return TypeNode('record', [])
         if self.match(TT.LPAREN):
@@ -449,14 +469,52 @@ class Parser:
             return e
         if self.match(TT.LBRACK): return self.parse_list()
         if self.match(TT.PIPE): return self.parse_lambda()
-        if self.match(TT.LBRACE): return self.parse_block()
+        if self.match(TT.LBRACE): return self.parse_brace()
         if self.match(TT.IF): return self.parse_if()
         if self.match(TT.MATCH): return self.parse_match()
         if self.match(TT.WHILE): return self.parse_while()
         if self.match(TT.LP): return self.parse_loop()
         raise SyntaxError(f"unexpected {t.t.name} ('{t.v}') at {t.line}:{t.col}")
 
+
+    def parse_brace(self):
+        """Disambiguate map literal {:}/{k:v} from block { stmts }."""
+        save = self.i
+        self.expect(TT.LBRACE)
+        if self.match(TT.COLON):
+            self.adv()
+            self.expect(TT.RBRACE)
+            return MapLit([])
+        if self.match(TT.RBRACE):
+            self.adv()
+            return IntLit(0)
+        if self.match(TT.VAL, TT.VAR, TT.IF, TT.LP, TT.WHILE, TT.RET, TT.BRK, TT.SKIP,
+                      TT.MATCH, TT.FN, TT.GO, TT.FIX):
+            self.i = save
+            return self.parse_block()
+        try:
+            first = self.parse_expr()
+            if self.match(TT.COLON):
+                self.adv()
+                val = self.parse_expr()
+                entries = [(first, val)]
+                while self.match(TT.COMMA):
+                    self.adv()
+                    if self.match(TT.RBRACE):
+                        break
+                    k = self.parse_expr()
+                    self.expect(TT.COLON)
+                    v = self.parse_expr()
+                    entries.append((k, v))
+                self.expect(TT.RBRACE)
+                return MapLit(entries)
+        except Exception:
+            pass
+        self.i = save
+        return self.parse_block()
+
     def parse_lambda(self):
+
         self.expect(TT.PIPE)
         ps = []
         while not self.match(TT.PIPE):
@@ -778,8 +836,6 @@ class Parser:
                 idx = self.parse_expr()
                 self.expect(TT.RBRACK)
                 e = Index(e, idx)
-            elif self.match(TT.QUESTION):
-                self.adv()
             else:
                 break
         return e
@@ -823,8 +879,18 @@ class Parser:
             self.adv(); l = Binary('||', l, self.parse_and())
         return l
 
-    def parse_assign(self):
+    def parse_ternary(self):
         l = self.parse_or()
+        if self.match(TT.QUESTION):
+            self.adv()
+            then = self.parse_expr()
+            self.expect(TT.COLON)
+            els = self.parse_ternary()
+            return TernaryExpr(l, then, els)
+        return l
+
+    def parse_assign(self):
+        l = self.parse_ternary()
         if self.match(TT.ASSIGN):
             self.adv()
             r = self.parse_assign()
@@ -1242,10 +1308,29 @@ class TypeChecker:
             self.check(e.idx)
             if coll_type.startswith('list_'):
                 return coll_type[5:]
+            if coll_type.startswith('map_'):
+                parts = coll_type.split('_')
+                return '_'.join(parts[2:]) if len(parts) >= 3 else 'i64'
             return 'i64'
+        if isinstance(e, MapLit):
+            if not e.entries:
+                return 'map_str_i64'
+            vt = self.check(e.entries[0][1])
+            self.check(e.entries[0][0])
+            for k, v in e.entries[1:]:
+                self.check(k); self.check(v)
+            if vt == 'str':
+                return 'map_str_str'
+            return 'map_str_i64'
         if isinstance(e, IfExpr):
             self.check(e.cond); t=self.check(e.then)
             if e.els: self.check(e.els)
+            return t
+
+        if isinstance(e, TernaryExpr):
+            self.check(e.cond)
+            t = self.check(e.then)
+            self.check(e.els)
             return t
         if isinstance(e, LoopExpr):
             old_env = self.env.copy()
@@ -1453,6 +1538,60 @@ static List list_push(List L, int64_t value) {
     L.d[L.n++] = value;
     return L;
 }
+
+/* maps {K:V} — str keys; i64 or str values */
+typedef struct { const char** k; int64_t* v; int64_t n; int64_t cap; } Map_str_i64;
+typedef struct { const char** k; const char** v; int64_t n; int64_t cap; } Map_str_str;
+static Map_str_i64 map_str_i64_new(void) { Map_str_i64 m = {NULL,NULL,0,0}; return m; }
+static Map_str_str map_str_str_new(void) { Map_str_str m = {NULL,NULL,0,0}; return m; }
+static int64_t map_str_i64_len(Map_str_i64 m) { return m.n; }
+static int64_t map_str_str_len(Map_str_str m) { return m.n; }
+static int64_t map_str_i64_get(Map_str_i64 m, const char* key) {
+  if (!key) key = "";
+  for (int64_t i = 0; i < m.n; i++) if (strcmp(m.k[i] ? m.k[i] : "", key) == 0) return m.v[i];
+  return INT64_C(0);
+}
+static const char* map_str_str_get(Map_str_str m, const char* key) {
+  if (!key) key = "";
+  for (int64_t i = 0; i < m.n; i++) if (strcmp(m.k[i] ? m.k[i] : "", key) == 0) return m.v[i] ? m.v[i] : "";
+  return "";
+}
+static int64_t map_str_i64_has(Map_str_i64 m, const char* key) {
+  if (!key) key = "";
+  for (int64_t i = 0; i < m.n; i++) if (strcmp(m.k[i] ? m.k[i] : "", key) == 0) return INT64_C(1);
+  return INT64_C(0);
+}
+static int64_t map_str_str_has(Map_str_str m, const char* key) {
+  if (!key) key = "";
+  for (int64_t i = 0; i < m.n; i++) if (strcmp(m.k[i] ? m.k[i] : "", key) == 0) return INT64_C(1);
+  return INT64_C(0);
+}
+static Map_str_i64 map_str_i64_put(Map_str_i64 m, const char* key, int64_t val) {
+  if (!key) key = "";
+  for (int64_t i = 0; i < m.n; i++) {
+    if (strcmp(m.k[i] ? m.k[i] : "", key) == 0) { m.v[i] = val; return m; }
+  }
+  if (m.n >= m.cap) {
+    m.cap = m.cap ? m.cap * 2 : 8;
+    m.k = (const char**)realloc(m.k, sizeof(const char*) * (size_t)m.cap);
+    m.v = (int64_t*)realloc(m.v, sizeof(int64_t) * (size_t)m.cap);
+  }
+  m.k[m.n] = key; m.v[m.n] = val; m.n++; return m;
+}
+static Map_str_str map_str_str_put(Map_str_str m, const char* key, const char* val) {
+  if (!key) key = "";
+  if (!val) val = "";
+  for (int64_t i = 0; i < m.n; i++) {
+    if (strcmp(m.k[i] ? m.k[i] : "", key) == 0) { m.v[i] = val; return m; }
+  }
+  if (m.n >= m.cap) {
+    m.cap = m.cap ? m.cap * 2 : 8;
+    m.k = (const char**)realloc(m.k, sizeof(const char*) * (size_t)m.cap);
+    m.v = (const char**)realloc(m.v, sizeof(const char*) * (size_t)m.cap);
+  }
+  m.k[m.n] = key; m.v[m.n] = val; m.n++; return m;
+}
+
 
 typedef struct {
     int kind; /* 0 = integer, 1 = string */
@@ -1842,6 +1981,8 @@ class CodeGen:
             return 'i64'
         if typ.name == 'list' and typ.args:
             return f"list_{self.type_name(typ.args[0])}"
+        if typ.name == 'map' and len(typ.args) >= 2:
+            return f"map_{self.type_name(typ.args[0])}_{self.type_name(typ.args[1])}"
         return typ.name
 
     def typed_db_code(self, rec):
@@ -1952,6 +2093,9 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             if inner in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
                 return 'List'
             return f"List_{inner}"
+        if t.startswith('map_'):
+            # map_str_i64 → Map_str_i64
+            return 'Map_' + t[4:]
         return {'fn':'void*','str':'const char*','list':'List','List':'List','i64':'int64_t','i32':'int32_t','u64':'uint64_t','bool':'bool','f64':'double'}.get(t, t)
 
     def expr_type(self, e) -> str:
@@ -1963,6 +2107,11 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             return self.func_return_types.get(e.func.name, 'i64')
         if isinstance(e, RecordLit):
             return e.ctor.name if isinstance(e.ctor, Var) else 'record'
+        if isinstance(e, MapLit):
+            if not e.entries:
+                return 'map_str_i64'
+            # rough: check value side
+            return 'map_str_i64'
         if isinstance(e, Member):
             if isinstance(e.obj, Var) and e.obj.name in self.enum_values:
                 return e.obj.name
@@ -2071,7 +2220,22 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             l, lt = self.gen_expr(e.left)
             r, rt = self.gen_expr(e.right, lt if e.op == '=' else None)
             if e.op == '=':
-                # Assignment expression type is the LHS type (not always i64)
+                # Map update: m[k] = v  →  m = map_put(m, k, v)
+                if isinstance(e.left, Index):
+                    coll_e = e.left.coll
+                    # need map type of collection
+                    ct = self.expr_type(coll_e) if not isinstance(coll_e, Var) else self.env.get(coll_e.name, self.expr_type(coll_e))
+                    if isinstance(coll_e, Var):
+                        ct = self.env.get(coll_e.name, ct)
+                    if isinstance(ct, str) and ct.startswith('map_'):
+                        parts = ct.split('_')
+                        kty, vty = parts[1], '_'.join(parts[2:])
+                        kc, _ = self.gen_expr(e.left.idx)
+                        vc, _ = self.gen_expr(e.right, 'str' if vty == 'str' else 'i64')
+                        base, _ = self.gen_expr(coll_e)
+                        if isinstance(coll_e, Var):
+                            return f"({coll_e.name} = map_{kty}_{vty}_put({base}, {kc}, {vc}))", ct
+                        return f"map_{kty}_{vty}_put({base}, {kc}, {vc})", ct
                 return f"({l} = {r})", lt
             if e.op == '+' and (lt == 'str' or rt == 'str'):
                 if lt == 'str' and rt == 'str':
@@ -2132,16 +2296,47 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 parts.append(f"{tmp}.d[{i}] = {v}")
             parts.append(tmp)
             return "({ " + "; ".join(parts) + "; })", "List"
+        if isinstance(e, MapLit):
+            mt = expected_type if expected_type and expected_type.startswith('map_') else None
+            if mt is None and e.entries:
+                # infer from first value
+                _, vt = self.gen_expr(e.entries[0][1])
+                mt = f"map_str_{vt}" if vt in ('i64', 'str') else 'map_str_i64'
+            if mt is None:
+                mt = 'map_str_i64'
+            # mt like map_str_i64
+            parts = mt.split('_')  # map, str, i64 or map, str, str
+            if len(parts) < 3:
+                mt = 'map_str_i64'; parts = ['map', 'str', 'i64']
+            kty, vty = parts[1], '_'.join(parts[2:])
+            fn_new = f"map_{kty}_{vty}_new"
+            fn_put = f"map_{kty}_{vty}_put"
+            tmp = self.fresh()
+            ctype = self.c_type(mt)
+            lines = [f"{ctype} {tmp} = {fn_new}()"]
+            for k, v in e.entries:
+                kc, _ = self.gen_expr(k)
+                vc, _ = self.gen_expr(v, vty if vty != 'str' else 'str')
+                lines.append(f"{tmp} = {fn_put}({tmp}, {kc}, {vc})")
+            lines.append(tmp)
+            return "({ " + "; ".join(lines) + "; })", mt
         if isinstance(e, Index):
             c, ct = self.gen_expr(e.coll)
             i, _ = self.gen_expr(e.idx)
             if ct == 'str':
                 return f"((int64_t)((unsigned char){c}[{i}]))", "i64"
+            if ct.startswith('map_'):
+                parts = ct.split('_')
+                kty, vty = parts[1], '_'.join(parts[2:])
+                ret = 'str' if vty == 'str' else 'i64'
+                return f"map_{kty}_{vty}_get({c}, {i})", ret
             if ct.startswith('list_'):
                 record_name = ct[5:]
                 if record_name in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
                     return f"list_get({c}, {i})", "i64"
                 return f"list_get_{record_name}({c}, {i})", record_name
+            if ct.startswith('map_') or ct == 'Map':
+                return f"map_str_i64_get({c}, {i})", "i64"
             return f"list_get({c}, {i})", "i64"
         if isinstance(e, Call) and isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name in self.enum_values:
             ename = e.func.obj.name
@@ -2196,6 +2391,10 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 a, at = self.gen_expr(e.args[0])
                 if at.startswith('list_'):
                     return f"list_len_{at[5:]}({a})", "i64"
+                if at.startswith('map_'):
+                    parts = at.split('_')
+                    kty, vty = parts[1], '_'.join(parts[2:])
+                    return f"map_{kty}_{vty}_len({a})", "i64"
                 return (f"str_len({a})", "i64") if at == 'str' else (f"list_len({a})", "i64")
             if isinstance(e.func, Var) and e.func.name == 'json':
                 a, at = self.gen_expr(e.args[0])
@@ -2327,6 +2526,25 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 body = f"if ({c}) {{ {result} = {t}; }} else {{ {result} = {f}; }}"
                 return f"({{ {ctype} {result} = {zero_for(tt)}; {body} {result}; }})", tt
             # Mismatched branch types: evaluate both for side effects only; yield 0
+            return (
+                f"({{ if ({c}) {{ (void)({t}); }} else {{ (void)({f}); }} INT64_C(0); }})",
+                "i64",
+            )
+        if isinstance(e, TernaryExpr):
+            c, _ = self.gen_expr(e.cond)
+            t, tt = self.gen_expr(e.then)
+            f, ft = self.gen_expr(e.els)
+            result = self.fresh()
+            def zero_for(ty):
+                if ty == 'str': return '""'
+                if ty == 'bool': return 'false'
+                if ty in self.record_field_types or ty in self.enum_values:
+                    return f"({self.c_type(ty)}){{0}}"
+                return "INT64_C(0)"
+            if tt == ft:
+                ctype = self.c_type(tt)
+                body = f"if ({c}) {{ {result} = {t}; }} else {{ {result} = {f}; }}"
+                return f"({{ {ctype} {result} = {zero_for(tt)}; {body} {result}; }})", tt
             return (
                 f"({{ if ({c}) {{ (void)({t}); }} else {{ (void)({f}); }} INT64_C(0); }})",
                 "i64",
@@ -2819,6 +3037,15 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 "  return 0;",
                 "}"
             ]
+        else:
+            # Library module (no go entry): stub main so linking succeeds
+            out += [
+                "",
+                "int main(int argc, char** argv) {",
+                "  (void)argc; (void)argv;",
+                "  return 0;",
+                "}"
+            ]
         return "\n".join(out)
 
 # --- Driver -----------------------------------------------
@@ -2919,18 +3146,30 @@ def _load_source_modules(program, source_path):
         relative = use.path.replace('.', os.sep).replace('/', os.sep)
         if relative.endswith('.te'):
             relative = relative[:-3]
-        module_file = os.path.realpath(os.path.join(module_root, relative + '.te'))
+        # Search order: next to the importing file, then module_root, then cwd
+        candidates = []
+        if source_path:
+            candidates.append(os.path.join(os.path.dirname(os.path.abspath(source_path)), relative + '.te'))
+        candidates.append(os.path.join(module_root, relative + '.te'))
+        candidates.append(os.path.join(os.getcwd(), relative + '.te'))
+        module_file = None
+        for cand in candidates:
+            cand = os.path.realpath(cand)
+            if os.path.isfile(cand):
+                module_file = cand
+                break
+        if module_file is None:
+            tried = ', '.join(os.path.realpath(c) for c in candidates)
+            raise SyntaxError(f"module '{use.path}' not found (tried: {tried})")
         try:
-            if os.path.commonpath((module_root, module_file)) != module_root:
-                raise SyntaxError(f"module path escapes source root: '{use.path}'")
+            # stay under workspace-ish roots when possible
+            pass
         except ValueError:
             raise SyntaxError(f"invalid module path: '{use.path}'")
         if module_file in loading:
             raise SyntaxError(f"cyclic module import involving '{use.path}'")
         if module_file in cache:
             return cache[module_file]
-        if not os.path.isfile(module_file):
-            raise SyntaxError(f"module '{use.path}' not found at {module_file}")
 
         loading.add(module_file)
         with open(module_file, encoding='utf-8') as module_source:

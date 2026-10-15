@@ -1,0 +1,21 @@
+// Maps — terse form mirrors lists
+// type {K: V}   empty {:}   literal {k: v, ...}
+
+go {
+  var scores: {str: i64} = {:}
+  scores["alice"] = 10
+  scores["bob"] = 20
+  scores["alice"] = 15
+  pr(scores["alice"])
+  pr(scores["bob"])
+  pr(len(scores))
+
+  val fixed = {"x": 1, "y": 2}
+  pr(fixed["x"])
+  pr(fixed["missing"])
+
+  var labels: {str: str} = {"ok": "yes"}
+  labels["no"] = "nope"
+  pr(labels["ok"])
+  pr(labels["no"])
+}

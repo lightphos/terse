@@ -69,6 +69,7 @@
                   | "fn" "(" [ <type> { "," <type> } [ "," ] ] ")"
                       [ "->" <type> ]
                   | "[" <type> "]"
+                  | "{" <type> ":" <type> "}"
                   | "rec" "{" [ <field> { "," <field> } [ "," ] ] "}"
                   | "(" ")"
                   | "(" <type> "," <type> { "," <type> } [ "," ] ")"
@@ -123,6 +124,7 @@
                   | "(" <expr> ")"
                   | "(" <expr> "," <expr> { "," <expr> } [ "," ] ")"
                   | "[" [ <expr> { "," <expr> } [ "," ] ] "]"
+                  | <map-literal>
                   | <record-literal>
                   | <lambda-expr>
                   | <if-expr>
@@ -131,6 +133,9 @@
                   | <block-expr>
                   | <ret-expr>
                   | <jump-expr>
+
+<map-literal>   ::= "{:" "}"
+                  | "{" <expr> ":" <expr> { "," <expr> ":" <expr> } [ "," ] "}"
 
 <record-literal> ::= IDENT "{" [ IDENT ":" <expr>
                                   { "," IDENT ":" <expr> } [ "," ] ] "}"

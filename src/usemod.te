@@ -1,7 +1,7 @@
-// use usage.moduse
+use usage.mod
 
 
-// go {
-//     mod()
-//     mod2()
-// }
+go {
+    mod()
+    mod2()
+}

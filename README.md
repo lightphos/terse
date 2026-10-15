@@ -226,3 +226,14 @@ eg.te, en.te, constant.te, plus a few mini programs.
 
 6. Language surface is mostly frozen for a while
 Bootstrapping while still renaming keywords (const→fix, match→if) means rewriting tc.te every week.
+
+
+## Practical next milestone (2–3 weeks of focus)
+Goal: “Write a small CLI tool in Terse without fighting the compiler.”
+Concrete checklist:
+
+1. en + variant payloads + pattern if (host + examples: en.te, result.te)
+2. fix constants
+3. += and C-style lp
+4. Grow tc.te only for syntax it needs to compile itself (keep bootstrap green)
+5. One multi-file sample: use util + pub fn
