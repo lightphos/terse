@@ -1,0 +1,29 @@
+// Result / Option as data (convention, not special runtime)
+en Option {
+  Some(i64),
+  None
+}
+
+en Result {
+  Ok(i64),
+  Err(str)
+}
+
+fn unwrap(o: Option) -> i64 =
+  if o {
+    Option.Some(n) => n
+    Option.None => 0
+  }
+
+fn or_else(r: Result, fallback: i64) -> i64 =
+  if r {
+    Result.Ok(n) => n
+    Result.Err(msg) => fallback
+  }
+
+go {
+  pr(unwrap(Option.Some(9)))
+  pr(unwrap(Option.None))
+  pr(or_else(Result.Ok(3), -1))
+  pr(or_else(Result.Err("nope"), -1))
+}

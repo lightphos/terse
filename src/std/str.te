@@ -1,0 +1,19 @@
+// std.str — string helpers (implemented in host runtime; this module documents the API)
+// use std.str
+//   str.has(s, sub) -> bool
+//   str.starts(s, prefix) -> bool
+//   str.ends(s, suffix) -> bool
+//   str.trim(s) -> str
+//   str.parse(s) -> i64
+//   str.split(s, sep) -> [str]
+//   str.join(parts, sep) -> str
+//
+// Unqualified names also work when not shadowed: has, starts, ends, trim, parse, split, join
+
+pub fn has(s: str, sub: str) -> bool = has(s, sub)
+pub fn starts(s: str, prefix: str) -> bool = starts(s, prefix)
+pub fn ends(s: str, suffix: str) -> bool = ends(s, suffix)
+pub fn trim(s: str) -> str = trim(s)
+pub fn parse(s: str) -> i64 = parse(s)
+pub fn split(s: str, sep: str) -> [str] = split(s, sep)
+pub fn join(parts: [str], sep: str) -> str = join(parts, sep)

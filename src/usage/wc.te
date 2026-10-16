@@ -1,0 +1,21 @@
+// word-count style: io + str + maps
+use std.io
+use std.str
+
+go {
+  io.out("/tmp/terse_wc.txt", "one two one three two one")
+  val text = io.in("/tmp/terse_wc.txt")
+  val words = str.split(text, " ")
+  var counts: {str: i64} = {:}
+  lp w:words {
+    if has(counts, w) {
+      counts[w] = counts[w] + 1
+    } else {
+      counts[w] = 1
+    }
+  }
+  pr(counts["one"])
+  pr(counts["two"])
+  pr(counts["three"])
+  pr(len(counts))
+}

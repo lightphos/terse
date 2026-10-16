@@ -1,0 +1,9 @@
+use std.io
+use std.str
+go {
+  io.out("/tmp/terse_lines.txt", "alpha\nbeta\ngamma\nalphabet")
+  val lines = str.split(io.in("/tmp/terse_lines.txt"), "\n")
+  lp line: lines {
+    if str.has(line, "alp") { pr(line) }
+  }
+}

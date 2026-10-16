@@ -22,6 +22,7 @@ ran=0
 skipped=0
 failed=0
 fallback_count=0
+failed_files=()
 
 for source_path in "${files[@]}"; do
   relative_path=${source_path#"$root_dir/"}
@@ -45,6 +46,7 @@ for source_path in "${files[@]}"; do
   if ((compile_status != 0)); then
     printf 'FAIL build %s\n' "$relative_path" >&2
     failed=$((failed + 1))
+    failed_files+=("BUILD $relative_path")
     continue
   fi
   compiled=$((compiled + 1))
@@ -55,11 +57,17 @@ for source_path in "${files[@]}"; do
   else
     printf 'FAIL run %s\n' "$relative_path" >&2
     failed=$((failed + 1))
+    failed_files+=("RUN   $relative_path")
   fi
 done
 
 printf '\nSummary: %d compiled, %d ran, %d skipped, %d failures, %d fallbacks\n' \
   "$compiled" "$ran" "$skipped" "$failed" "$fallback_count"
+
 if ((failed > 0)); then
+  printf '\nFailed files:\n' >&2
+  for entry in "${failed_files[@]}"; do
+    printf '  %s\n' "$entry" >&2
+  done
   exit 1
 fi

@@ -320,13 +320,13 @@ pr(x)
 ### Basic I/O
 - `pr(value)` → stdout (ints, strings, lists, records); returns `0`
 
-### File I/O (`fs` module)
+### File I/O (`std.io`)
 Not keywords — library calls. Import is optional for the reference runtime
 (names resolve as builtins when the backend provides them).
 
 ```
-fs.read_text(path: str) -> str
-fs.write_text(path: str, text: str) -> i64   // bytes written
+io.in(path: str) -> str              // was fs.read_text
+io.out(path: str, text: str) -> i64 // was fs.write_text
 ```
 
 - Paths are native filesystem paths (string)

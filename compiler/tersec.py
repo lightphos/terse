@@ -1240,6 +1240,8 @@ class TypeChecker:
         if isinstance(e, StrLit): return 'str'
         if isinstance(e, ListLit):
             item_types = [self.check(it) for it in e.items]
+            if item_types and item_types[0] == 'str':
+                return 'list_str'
             if item_types and item_types[0] in self.recs:
                 return f'list_{item_types[0]}'
             return 'list'
@@ -1253,7 +1255,7 @@ class TypeChecker:
             if hasattr(self, 'fixes') and e.name in self.fixes: return self.fixes[e.name]
             if e.name in self.enums: return e.name
             if e.name in self.funcs or e.name in ('pr','len','json','env','str','push','substr','arg'): return 'fn'
-            if e.name in ('http','db','tst','fs','gcc'): return 'mod'
+            if e.name in ('http','db','tst','fs','gcc','io','str'): return 'mod'
             return 'i64'
         if isinstance(e, Member):
             if isinstance(e.obj, Var) and e.obj.name in self.enums:
@@ -1288,9 +1290,10 @@ class TypeChecker:
             if isinstance(e.func, Var) and e.func.name == 'push' and e.args:
                 return self.check(e.args[0])
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
-                    and e.func.obj.name == 'fs':
-                if e.func.field == 'read_text': return 'str'
-                if e.func.field == 'write_text': return 'i64'
+                    and e.func.obj.name in ('io', 'fs'):
+                # std.io: io.in / io.out  (fs.* kept as aliases)
+                if e.func.field in ('in', 'read_text'): return 'str'
+                if e.func.field in ('out', 'write_text'): return 'i64'
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'gcc' and e.func.field == 'compile':
                 return 'i64'
@@ -1348,9 +1351,17 @@ class TypeChecker:
             self.env = old_env
             return 'i64'
         if isinstance(e, ForInExpr):
-            self.check(e.iterable)
+            it = self.check(e.iterable)
+            if isinstance(it, str) and it.startswith('map_'):
+                et = 'str'  # iterate keys
+            elif it == 'list_str':
+                et = 'str'
+            elif isinstance(it, str) and it.startswith('list_'):
+                et = it[5:]
+            else:
+                et = 'i64'
             old = self.env.get(e.var)
-            self.env[e.var] = 'i64'
+            self.env[e.var] = et
             self.check(e.body)
             if old is not None: self.env[e.var] = old
             else: self.env.pop(e.var, None)
@@ -1593,6 +1604,7 @@ static Map_str_str map_str_str_put(Map_str_str m, const char* key, const char* v
 }
 
 
+
 typedef struct {
     int kind; /* 0 = integer, 1 = string */
     int64_t integer;
@@ -1689,6 +1701,7 @@ static char* str_concat(const char* a, const char* b) {
   return r;
 }
 static int64_t str_len(const char* s) { return (int64_t)strlen(s); }
+
 static char* str_slice(const char* s, int64_t start, int64_t length) {
     int64_t size = str_len(s);
     if (start < 0) start = 0;
@@ -1701,6 +1714,154 @@ static char* str_slice(const char* s, int64_t start, int64_t length) {
     result[length] = 0;
     return result;
 }
+
+/* --- [str] lists --- */
+typedef struct { const char **d; int64_t n; int64_t cap; } List_str;
+static List_str list_new_str(int64_t n) {
+  List_str L = {NULL, 0, n};
+  if (n > 0) { L.d = (const char**)calloc((size_t)n, sizeof(const char*)); L.n = n; }
+  return L;
+}
+static List_str list_push_str(List_str L, const char* v) {
+  if (L.n >= L.cap) {
+    L.cap = L.cap ? L.cap * 2 : 8;
+    L.d = (const char**)realloc(L.d, sizeof(const char*) * (size_t)L.cap);
+  }
+  L.d[L.n++] = v ? v : "";
+  return L;
+}
+static int64_t list_len_str(List_str L) { return L.n; }
+static const char* list_get_str(List_str L, int64_t i) {
+  if (i < 0 || i >= L.n) { fprintf(stderr, "index out of bounds\n"); exit(1); }
+  return L.d[i] ? L.d[i] : "";
+}
+
+static List_str map_str_i64_keys(Map_str_i64 m) {
+  List_str out = list_new_str(0);
+  for (int64_t i = 0; i < m.n; i++) out = list_push_str(out, m.k[i] ? m.k[i] : "");
+  return out;
+}
+static List_str map_str_str_keys(Map_str_str m) {
+  List_str out = list_new_str(0);
+  for (int64_t i = 0; i < m.n; i++) out = list_push_str(out, m.k[i] ? m.k[i] : "");
+  return out;
+}
+static List map_str_i64_values(Map_str_i64 m) {
+  List out = list_new(0);
+  for (int64_t i = 0; i < m.n; i++) out = list_push(out, m.v[i]);
+  return out;
+}
+
+/* --- std.str surface (terse names) --- */
+static int64_t str_has(const char* s, const char* sub) {
+  if (!s) s = ""; if (!sub) sub = "";
+  return strstr(s, sub) != NULL ? INT64_C(1) : INT64_C(0);
+}
+static int64_t str_starts(const char* s, const char* prefix) {
+  if (!s) s = ""; if (!prefix) prefix = "";
+  size_t n = strlen(prefix);
+  return strncmp(s, prefix, n) == 0 ? INT64_C(1) : INT64_C(0);
+}
+static int64_t str_ends(const char* s, const char* suffix) {
+  if (!s) s = ""; if (!suffix) suffix = "";
+  size_t ns = strlen(s), n = strlen(suffix);
+  if (n > ns) return INT64_C(0);
+  return strcmp(s + (ns - n), suffix) == 0 ? INT64_C(1) : INT64_C(0);
+}
+
+static char* str_up(const char* s) {
+  if (!s) s = "";
+  size_t n = strlen(s);
+  char* r = (char*)malloc(n + 1);
+  for (size_t i = 0; i < n; i++) {
+    unsigned char c = (unsigned char)s[i];
+    r[i] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : (char)c;
+  }
+  r[n] = 0;
+  return r;
+}
+static char* str_low(const char* s) {
+  if (!s) s = "";
+  size_t n = strlen(s);
+  char* r = (char*)malloc(n + 1);
+  for (size_t i = 0; i < n; i++) {
+    unsigned char c = (unsigned char)s[i];
+    r[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : (char)c;
+  }
+  r[n] = 0;
+  return r;
+}
+static char* str_trim(const char* s) {
+  if (!s) s = "";
+  while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
+  size_t n = strlen(s);
+  while (n > 0 && (s[n-1] == ' ' || s[n-1] == '\t' || s[n-1] == '\n' || s[n-1] == '\r')) n--;
+  char* r = (char*)malloc(n + 1);
+  memcpy(r, s, n); r[n] = 0;
+  return r;
+}
+static int64_t str_parse_i64(const char* s) {
+  if (!s) return INT64_C(0);
+  while (*s == ' ' || *s == '\t') s++;
+  int neg = 0;
+  if (*s == '-') { neg = 1; s++; }
+  else if (*s == '+') s++;
+  int64_t v = 0; int any = 0;
+  while (*s >= '0' && *s <= '9') {
+    any = 1;
+    v = v * 10 + (*s - '0');
+    s++;
+  }
+  if (!any) return INT64_C(0);
+  return neg ? -v : v;
+}
+static List_str str_split(const char* s, const char* sep) {
+  List_str out = list_new_str(0);
+  if (!s) s = "";
+  if (!sep || !sep[0]) {
+    /* empty sep → each character as its own string */
+    for (const char* p = s; *p; p++) {
+      char* one = (char*)malloc(2); one[0] = *p; one[1] = 0;
+      out = list_push_str(out, one);
+    }
+    return out;
+  }
+  size_t sepn = strlen(sep);
+  const char* start = s;
+  for (;;) {
+    const char* found = strstr(start, sep);
+    size_t len = found ? (size_t)(found - start) : strlen(start);
+    char* part = (char*)malloc(len + 1);
+    if (!part) { fprintf(stderr, "oom split\n"); exit(1); }
+    memcpy(part, start, len); part[len] = 0;
+    out = list_push_str(out, part);
+    if (!found) break;
+    start = found + sepn;
+  }
+  return out;
+}
+static char* str_join(List_str parts, const char* sep) {
+  if (!sep) sep = "";
+  size_t sepn = strlen(sep);
+  size_t total = 1;
+  for (int64_t i = 0; i < parts.n; i++) {
+    const char* pi = (parts.d && parts.d[i]) ? parts.d[i] : "";
+    total += strlen(pi);
+    if (i + 1 < parts.n) total += sepn;
+  }
+  char* r = (char*)malloc(total);
+  if (!r) { fprintf(stderr, "oom join\n"); exit(1); }
+  size_t off = 0;
+  for (int64_t i = 0; i < parts.n; i++) {
+    if (i && sepn) { memcpy(r + off, sep, sepn); off += sepn; }
+    const char* pi = (parts.d && parts.d[i]) ? parts.d[i] : "";
+    size_t li = strlen(pi);
+    memcpy(r + off, pi, li); off += li;
+  }
+  r[off] = 0;
+  return r;
+}
+
 
 static int _terse_did_print = 0;
 static void print_int(int64_t x) { _terse_did_print = 1; printf("%lld\n", (long long)x); }
@@ -1804,23 +1965,27 @@ static const char* terse_arg(int64_t index) {
 }
 
 static int64_t terse_gcc_compile(const char* source, const char* output) {
-    char* args[16];
+    /* -O0: large statement-expr C can crash Apple clang at -O2 */
+    char* args[24];
     int count = 0;
-    args[count++] = "gcc";
-    args[count++] = "-O2";
+    const char* cc = getenv("CC");
+    if (!cc || !cc[0]) cc = "gcc";
+    args[count++] = (char*)cc;
+    args[count++] = "-O0";
     args[count++] = "-std=c11";
-    args[count++] = "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value";
+    args[count++] = "-Wno-unused-function";
+    args[count++] = "-Wno-unused-parameter";
+    args[count++] = "-Wno-unused-value";
+    args[count++] = "-Wno-parentheses";
     args[count++] = (char*)source;
 #ifdef _WIN32
     args[count++] = "-lws2_32";
-#else
-    /* sqlite disabled */
 #endif
     args[count++] = "-o";
     args[count++] = (char*)output;
     args[count] = NULL;
 #ifdef _WIN32
-    return (int64_t)_spawnvp(_P_WAIT, "gcc", (const char* const*)args);
+    return (int64_t)_spawnvp(_P_WAIT, cc, (const char* const*)args);
 #else
     pid_t child = fork();
     if (child < 0) {
@@ -1828,13 +1993,13 @@ static int64_t terse_gcc_compile(const char* source, const char* output) {
         return 1;
     }
     if (child == 0) {
-        execvp("gcc", args);
-        perror("tc: exec gcc");
+        execvp(cc, args);
+        perror("tc: exec CC");
         _exit(127);
     }
     int status = 0;
     if (waitpid(child, &status, 0) < 0) {
-        perror("tc: wait for gcc");
+        perror("tc: wait for CC");
         return 1;
     }
     if (WIFEXITED(status)) return WEXITSTATUS(status);
@@ -1980,7 +2145,10 @@ class CodeGen:
         if typ is None:
             return 'i64'
         if typ.name == 'list' and typ.args:
-            return f"list_{self.type_name(typ.args[0])}"
+            inner = self.type_name(typ.args[0])
+            if inner == 'str':
+                return 'list_str'
+            return f"list_{inner}"
         if typ.name == 'map' and len(typ.args) >= 2:
             return f"map_{self.type_name(typ.args[0])}_{self.type_name(typ.args[1])}"
         return typ.name
@@ -2092,6 +2260,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             inner = t[5:]
             if inner in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
                 return 'List'
+            if inner == 'str':
+                return 'List_str'
             return f"List_{inner}"
         if t.startswith('map_'):
             # map_str_i64 → Map_str_i64
@@ -2099,6 +2269,22 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         return {'fn':'void*','str':'const char*','list':'List','List':'List','i64':'int64_t','i32':'int32_t','u64':'uint64_t','bool':'bool','f64':'double'}.get(t, t)
 
     def expr_type(self, e) -> str:
+        if isinstance(e, StrLit):
+            return 'str'
+        if isinstance(e, IntLit):
+            return 'i64'
+        if isinstance(e, BoolLit):
+            return 'bool'
+        if isinstance(e, ListLit):
+            if e.items:
+                return 'list_' + self.expr_type(e.items[0]) if self.expr_type(e.items[0]) != 'i64' else 'list'
+            return 'list'
+        if isinstance(e, Call) and isinstance(e.func, Var):
+            n = e.func.name
+            if n in ('has', 'starts', 'ends'): return 'bool'
+            if n in ('trim', 'join', 'substr'): return 'str'
+            if n == 'split': return 'list_str'
+            if n == 'parse': return 'i64'
         if isinstance(e, Var):
             return self.env.get(e.name, 'i64')
         if isinstance(e, Call) and isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name in self.enum_values:
@@ -2283,6 +2469,13 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     parts.append(f"{tmp}.d[{i}] = {value}")
                 parts.append(tmp)
                 return "({ " + "; ".join(parts) + "; })", f"list_{element_type}"
+            if element_type == 'str' or expected_type == 'list_str':
+                parts = [f"List_str {tmp} = list_new_str({n})"]
+                for i, item in enumerate(e.items):
+                    value, _ = self.gen_expr(item, 'str')
+                    parts.append(f"{tmp}.d[{i}] = {value}")
+                parts.append(tmp)
+                return "({ " + "; ".join(parts) + "; })", "list_str"
             if element_type in ('i64', 'int') or (expected_type == 'list_i64'):
                 parts = [f"List {tmp} = list_new({n})"]
                 for i, item in enumerate(e.items):
@@ -2334,6 +2527,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 record_name = ct[5:]
                 if record_name in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
                     return f"list_get({c}, {i})", "i64"
+                if record_name == 'str':
+                    return f"list_get_str({c}, {i})", "str"
                 return f"list_get_{record_name}({c}, {i})", record_name
             if ct.startswith('map_') or ct == 'Map':
                 return f"map_str_i64_get({c}, {i})", "i64"
@@ -2389,6 +2584,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 )
             if isinstance(e.func, Var) and e.func.name == 'len':
                 a, at = self.gen_expr(e.args[0])
+                if at == 'list_str':
+                    return f"list_len_str({a})", "i64"
                 if at.startswith('list_'):
                     return f"list_len_{at[5:]}({a})", "i64"
                 if at.startswith('map_'):
@@ -2413,12 +2610,87 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 start, _ = self.gen_expr(e.args[1])
                 length, _ = self.gen_expr(e.args[2])
                 return f"str_slice({text}, {start}, {length})", "str"
+            # std.str surface (also available unqualified)
+            if isinstance(e.func, Var) and e.func.name == 'has' and len(e.args) >= 2:
+                a, at = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                if at == 'str':
+                    return f"str_has({a}, {b})", "bool"
+                if isinstance(at, str) and at.startswith('map_'):
+                    parts = at.split('_')
+                    kty, vty = parts[1], '_'.join(parts[2:])
+                    return f"map_{kty}_{vty}_has({a}, {b})", "bool"
+            if isinstance(e.func, Var) and e.func.name == 'keys' and len(e.args) >= 1:
+                a, at = self.gen_expr(e.args[0])
+                if isinstance(at, str) and at.startswith('map_'):
+                    parts = at.split('_')
+                    kty, vty = parts[1], '_'.join(parts[2:])
+                    return f"map_{kty}_{vty}_keys({a})", "list_str"
+            if isinstance(e.func, Var) and e.func.name == 'values' and len(e.args) >= 1:
+                a, at = self.gen_expr(e.args[0])
+                if at == 'map_str_i64':
+                    return f"map_str_i64_values({a})", "List"
+            if isinstance(e.func, Var) and e.func.name == 'starts' and len(e.args) >= 2:
+                a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                return f"str_starts({a}, {b})", "bool"
+            if isinstance(e.func, Var) and e.func.name == 'ends' and len(e.args) >= 2:
+                a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                return f"str_ends({a}, {b})", "bool"
+            if isinstance(e.func, Var) and e.func.name == 'trim' and len(e.args) >= 1:
+                a, _ = self.gen_expr(e.args[0])
+                return f"str_trim({a})", "str"
+            if isinstance(e.func, Var) and e.func.name == 'up' and len(e.args) >= 1:
+                a, _ = self.gen_expr(e.args[0])
+                return f"str_up({a})", "str"
+            if isinstance(e.func, Var) and e.func.name == 'low' and len(e.args) >= 1:
+                a, _ = self.gen_expr(e.args[0])
+                return f"str_low({a})", "str"
+            if isinstance(e.func, Var) and e.func.name == 'parse' and len(e.args) >= 1:
+                a, at = self.gen_expr(e.args[0])
+                return f"str_parse_i64({a})", "i64"
+            if isinstance(e.func, Var) and e.func.name == 'split' and len(e.args) >= 2:
+                a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                return f"str_split({a}, {b})", "list_str"
+            if isinstance(e.func, Var) and e.func.name == 'join' and len(e.args) >= 2:
+                a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                return f"str_join({a}, {b})", "str"
+            # std.str.foo(...) method form when use std.str
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name == 'str':
+                meth = e.func.field
+                if meth == 'has' and len(e.args) >= 2:
+                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                    return f"str_has({a}, {b})", "bool"
+                if meth == 'starts' and len(e.args) >= 2:
+                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                    return f"str_starts({a}, {b})", "bool"
+                if meth == 'ends' and len(e.args) >= 2:
+                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                    return f"str_ends({a}, {b})", "bool"
+                if meth == 'trim' and len(e.args) >= 1:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"str_trim({a})", "str"
+                if meth == 'up' and len(e.args) >= 1:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"str_up({a})", "str"
+                if meth == 'low' and len(e.args) >= 1:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"str_low({a})", "str"
+                if meth == 'parse' and len(e.args) >= 1:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"str_parse_i64({a})", "i64"
+                if meth == 'split' and len(e.args) >= 2:
+                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                    return f"str_split({a}, {b})", "list_str"
+                if meth == 'join' and len(e.args) >= 2:
+                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                    return f"str_join({a}, {b})", "str"
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
-                    and e.func.obj.name == 'fs':
-                if e.func.field == 'read_text':
+                    and e.func.obj.name in ('io', 'fs'):
+                # std.io — io.in(path) / io.out(path, text)
+                # fs.read_text / fs.write_text remain as aliases
+                if e.func.field in ('in', 'read_text'):
                     path, _ = self.gen_expr(e.args[0])
                     return f"fs_read_text({path})", "str"
-                if e.func.field == 'write_text':
+                if e.func.field == 'out' or e.func.field == 'write_text':
                     path, _ = self.gen_expr(e.args[0])
                     text, _ = self.gen_expr(e.args[1])
                     return f"fs_write_text({path}, {text})", "i64"
@@ -2596,16 +2868,48 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             return (f"({{ {loop} INT64_C(0); }})", "i64")
         if isinstance(e, ForInExpr):
             coll, ct = self.gen_expr(e.iterable)
+            # Map for-in iterates keys (str)
+            if isinstance(ct, str) and ct.startswith('map_'):
+                parts = ct.split('_')
+                kty, vty = parts[1], '_'.join(parts[2:])
+                coll = f"map_{kty}_{vty}_keys({coll})"
+                ct = 'list_str'
+            # Element type from list_* / List / map
+            if ct == 'list_str' or ct == 'List_str':
+                elem_t, c_list, get_elem = 'str', 'List_str', None
+                c_elem = 'const char*'
+            elif ct.startswith('list_'):
+                inner = ct[5:]
+                if inner in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
+                    elem_t, c_list, c_elem = 'i64', 'List', 'int64_t'
+                else:
+                    elem_t, c_list, c_elem = inner, f'List_{inner}', inner
+            elif ct in ('list', 'List'):
+                elem_t, c_list, c_elem = 'i64', 'List', 'int64_t'
+            else:
+                # fallback: treat as i64 list
+                elem_t, c_list, c_elem = 'i64', 'List', 'int64_t'
             old = self.env.get(e.var)
-            self.env[e.var] = 'i64'
+            self.env[e.var] = elem_t
             body_stmts = self.gen_loop_body(e.body)
             if old is not None: self.env[e.var] = old
             else: self.env.pop(e.var, None)
             idx = self.fresh()
+            tmp = self.fresh()
+            if c_list == 'List_str':
+                bind = f"const char* {e.var} = list_get_str({tmp}, {idx});"
+                len_e = f"list_len_str({tmp})"
+            elif c_list == 'List':
+                bind = f"int64_t {e.var} = list_get({tmp}, {idx});"
+                len_e = f"list_len({tmp})"
+            else:
+                # List_Record etc.
+                bind = f"{c_elem} {e.var} = list_get_{elem_t}({tmp}, {idx});"
+                len_e = f"list_len_{elem_t}({tmp})"
             return (
-                f"({{ List __for_coll = {coll}; "
-                f"for (int64_t {idx} = 0; {idx} < __for_coll.n; {idx}++) {{ "
-                f"int64_t {e.var} = __for_coll.d[{idx}]; {body_stmts} }} "
+                f"({{ {c_list} {tmp} = {coll}; "
+                f"for (int64_t {idx} = 0; {idx} < {len_e}; {idx}++) {{ "
+                f"{bind} {body_stmts} }} "
                 f"INT64_C(0); }})",
                 "i64"
             )
@@ -3142,7 +3446,44 @@ def _load_source_modules(program, source_path):
 
     def load_module(use):
         if use.path.startswith('std.'):
-            return {'functions': [], 'exports': {}}
+            # Prefer on-disk std library if present (next to tersec / cwd / module root)
+            rel = use.path.replace('.', os.sep) + '.te'
+            std_candidates = [
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), rel),
+                os.path.join(os.getcwd(), rel),
+                os.path.join(module_root, rel),
+            ]
+            if source_path:
+                std_candidates.insert(0, os.path.join(os.path.dirname(os.path.abspath(source_path)), rel))
+            for cand in std_candidates:
+                if os.path.isfile(cand):
+                    # fall through to normal file load by rewriting path
+                    use = UseDecl(use.path, use.alias, use.symbol, use.glob)
+                    # load as file: temporarily clear std. short-circuit by using absolute path load
+                    module_file = os.path.realpath(cand)
+                    if module_file in cache:
+                        return cache[module_file]
+                    if module_file in loading:
+                        raise SyntaxError(f"cyclic module import involving '{use.path}'")
+                    loading.add(module_file)
+                    with open(module_file, encoding='utf-8') as module_source:
+                        child = Parser(Lexer(module_source.read()).tokenize()).parse_program()
+                    if child.recs or child.sigs or child.methods or child.toplevel is not None:
+                        raise SyntaxError(f"module '{use.path}' may contain function declarations only")
+                    public_functions = {f.name for f in child.funcs if f.public}
+                    own_functions = {f.name: f"__module_std_{use.path.replace('.', '_')}_{f.name}" for f in child.funcs}
+                    for f in child.funcs:
+                        f.name = own_functions[f.name]
+                    bundle = {
+                        'functions': list(child.funcs),
+                        'exports': {name: own_functions[name] for name in public_functions if name in own_functions},
+                        'builtin': False,
+                    }
+                    cache[module_file] = bundle
+                    loading.discard(module_file)
+                    return bundle
+            # Built-in std surface (no .te file): empty exports; calls handled in codegen
+            return {'functions': [], 'exports': {}, 'builtin': True}
         relative = use.path.replace('.', os.sep).replace('/', os.sep)
         if relative.endswith('.te'):
             relative = relative[:-3]
@@ -3233,10 +3574,10 @@ def _load_source_modules(program, source_path):
     for use in program.uses:
         if use.path.startswith('std.'):
             builtin = use.path.split('.')[-1]
-            if use.alias != builtin:
-                if use.alias in namespaces or use.alias in imported_symbols:
-                    raise SyntaxError(f"duplicate import name '{use.alias}'")
-                namespaces[use.alias] = {'__builtin_module__': builtin}
+            if use.alias in namespaces or use.alias in imported_symbols:
+                raise SyntaxError(f"duplicate import name '{use.alias}'")
+            # Always bind alias (e.g. use std.str → str.has / starts / ...)
+            namespaces[use.alias] = {'__builtin_module__': builtin}
             continue
         module = load_module(use)
         if use.glob:
@@ -3289,7 +3630,11 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None):
         if sys.platform == "win32" and os.path.splitext(out_bin)[1].lower() != ".exe":
             gcc_out = out_bin + ".exe"
 
-        cmd = ["gcc", "-O2", "-std=c11", "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value", c_file, "-o", gcc_out]
+        # -O0 avoids Apple clang optimizer crashes on large generated C
+        cc = os.environ.get("CC", "gcc")
+        cmd = [cc, "-O0", "-std=c11",
+               "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value",
+               "-Wno-parentheses", c_file, "-o", gcc_out]
         if sys.platform == "win32":
             cmd.append("-lws2_32")
         # sqlite/db support removed for now — no -lsqlite3

@@ -7,7 +7,7 @@
 //   rec (hardcoded Token/Param/Function/Node/ParseState in runtime),
 //   fn/go, var, if/else, lp, field access, record literals,
 //   lists push/len/index, strings +/len/substr/index,
-//   pr, fs.read_text, fs.write_text, env, gcc.compile
+//   pr, io.in, io.out, env, gcc.compile
 
 use std.fs
 
@@ -869,7 +869,11 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
         out = "terse_arg(" + emit_args(nodes, n.left, env, functions) + ")"
       } else if is_name(n.text, 114,101,97,100,95,116,101,120,116,0, 9) {
         out = "fs_read_text(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else if is_name(n.text, 105,110,0,0,0,0,0,0,0,0, 2) {
+        out = "fs_read_text(" + emit_args(nodes, n.left, env, functions) + ")"
       } else if is_name(n.text, 119,114,105,116,101,95,116,101,120,116, 10) {
+        out = "fs_write_text(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else if is_name(n.text, 111,117,116,0,0,0,0,0,0,0, 3) {
         out = "fs_write_text(" + emit_args(nodes, n.left, env, functions) + ")"
       } else if is_name(n.text, 99,111,109,112,105,108,101,0,0,0, 7) {
         out = "terse_gcc_compile(" + emit_args(nodes, n.left, env, functions) + ")"
@@ -903,7 +907,11 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
     } else if n.kind == 21 {
       if is_name(n.text, 114,101,97,100,95,116,101,120,116,0, 9) {
         out = "fs_read_text(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else if is_name(n.text, 105,110,0,0,0,0,0,0,0,0, 2) {
+        out = "fs_read_text(" + emit_args(nodes, n.left, env, functions) + ")"
       } else if is_name(n.text, 119,114,105,116,101,95,116,101,120,116, 10) {
+        out = "fs_write_text(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else if is_name(n.text, 111,117,116,0,0,0,0,0,0,0, 3) {
         out = "fs_write_text(" + emit_args(nodes, n.left, env, functions) + ")"
       } else if is_name(n.text, 99,111,109,112,105,108,101,0,0,0, 7) {
         out = "terse_gcc_compile(" + emit_args(nodes, n.left, env, functions) + ")"
@@ -1061,8 +1069,11 @@ fn runtime_c() -> str {
   "static List_i64 list_push_i64(List_i64 L,int64_t v){if(L.n>=L.cap){L.cap=L.cap?L.cap*2:8;L.d=realloc(L.d,L.cap*sizeof(int64_t));}L.d[L.n++]=v;return L;}\n" +
   "static char* str_concat(const char* a,const char* b){size_t na=a?strlen(a):0,nb=b?strlen(b):0;char* r=malloc(na+nb+1);if(a)memcpy(r,a,na);if(b)memcpy(r+na,b,nb);r[na+nb]=0;return r;}\n" +
   "static char* str_from_i64(int64_t x){char* b=malloc(32);snprintf(b,32,\"%lld\",(long long)x);return b;}\n" +
-  "static int64_t terse_pr(int64_t x){did_print=1;printf(\"%lld\\n\",(long long)x);return 0;}\n" +
+  "static char* str_concat_si(const char* a,int64_t b){return str_concat(a,str_from_i64(b));}\n" +
+  "static char* str_concat_is(int64_t a,const char* b){return str_concat(str_from_i64(a),b);}\n" +
+  "static int64_t terse_pr_i64(int64_t x){did_print=1;printf(\"%lld\\n\",(long long)x);return 0;}\n" +
   "static int64_t terse_pr_str(const char* s){did_print=1;printf(\"%s\\n\",s?s:\"\");return 0;}\n" +
+  "#define terse_pr(x) _Generic((x), const char*: terse_pr_str, char*: terse_pr_str, default: terse_pr_i64)(x)\n" +
   "static int64_t terse_len_str(const char* s){return s?(int64_t)strlen(s):0;}\n" +
   "static char* terse_substr(const char* s,int64_t start,int64_t len){if(!s)s=\"\";size_t n=strlen(s);if(start<0)start=0;if(start>(int64_t)n)start=n;if(len<0)len=0;if(start+len>(int64_t)n)len=n-start;char* r=malloc(len+1);memcpy(r,s+start,len);r[len]=0;return r;}\n" +
   "static int64_t terse_str_len(const char* s){return s?(int64_t)strlen(s):0;}\n" +
@@ -1072,7 +1083,7 @@ fn runtime_c() -> str {
   "#define terse_len(x) _Generic((x), const char*: terse_str_len, char*: terse_str_len, List_Token: list_len_Token, List_Node: list_len_Node, List_Param: list_len_Param, List_Function: list_len_Function, List_Binding: list_len_Binding, List_i64: list_len_i64, default: list_len_i64)(x)\n" +
   "#define terse_at(c,i) _Generic((c), const char*: terse_str_at, char*: terse_str_at, List_Token: list_get_Token, List_Node: list_get_Node, List_Param: list_get_Param, List_Function: list_get_Function, List_Binding: list_get_Binding, List_i64: list_get_i64, default: list_get_i64)(c,i)\n" +
   "static int64_t terse_iadd(int64_t a,int64_t b){return a+b;}\n" +
-  "#define terse_plus(a,b) _Generic((a), const char*: str_concat, char*: str_concat, default: terse_iadd)(a,b)\n" +
+  "#define terse_plus(a,b) _Generic((a), const char*: _Generic((b), const char*: str_concat, char*: str_concat, default: str_concat_si), char*: _Generic((b), const char*: str_concat, char*: str_concat, default: str_concat_si), default: _Generic((b), const char*: str_concat_is, char*: str_concat_is, default: terse_iadd))(a,b)\n" +
   "#define terse_push(L,v) _Generic((v), Token: list_push_Token, Node: list_push_Node, Param: list_push_Param, Function: list_push_Function, Binding: list_push_Binding, int64_t: list_push_i64, default: list_push_i64)(L,v)\n" +
   "static int terse_argc = 0;\n" +
   "static char** terse_argv = NULL;\n" +
@@ -1080,7 +1091,7 @@ fn runtime_c() -> str {
   "static const char* terse_env(const char* k){const char* v=getenv(k);return v?v:\"\";}\n" +
   "static char* fs_read_text(const char* path){FILE* f=fopen(path,\"rb\");if(!f){fprintf(stderr,\"read fail %s\\n\",path);exit(1);}fseek(f,0,SEEK_END);long n=ftell(f);fseek(f,0,SEEK_SET);char* b=malloc(n+1);fread(b,1,n,f);b[n]=0;fclose(f);return b;}\n" +
   "static int64_t fs_write_text(const char* path,const char* text){FILE* f=fopen(path,\"wb\");if(!f){fprintf(stderr,\"write fail %s\\n\",path);exit(1);}size_t n=text?strlen(text):0;fwrite(text,1,n,f);fclose(f);return (int64_t)n;}\n" +
-  "static int64_t terse_gcc_compile(const char* src,const char* out){char cmd[4096];snprintf(cmd,sizeof(cmd),\"gcc -O2 -std=c11 -Wno-unused-function -Wno-unused-parameter -Wno-unused-value %s -o %s\",src,out);return (int64_t)system(cmd);}\n"
+  "static int64_t terse_gcc_compile(const char* src,const char* out){char cmd[4096];const char* cc=getenv(\"CC\");if(!cc||!cc[0])cc=\"gcc\";snprintf(cmd,sizeof(cmd),\"%s -O0 -std=c11 -Wno-unused-function -Wno-unused-parameter -Wno-unused-value -Wno-parentheses %s -o %s\",cc,src,out);return (int64_t)system(cmd);}\n"
 }
 
 fn runtime() -> str {
@@ -1089,7 +1100,7 @@ fn runtime() -> str {
 
 
 fn compile_file(source_path: str, output_path: str) -> i64 {
-  var source: str = fs.read_text(source_path)
+  var source: str = io.in(source_path)
   var tokens: [Token] = scan(source)
   var empty_nodes: [Node] = []
   var empty_fns: [Function] = []
@@ -1132,7 +1143,7 @@ fn compile_file(source_path: str, output_path: str) -> i64 {
       "int main(int argc, char** argv){\n  terse_argc = argc;\n  terse_argv = argv;\n  int64_t result = " + expression + ";\n" +
       "  if(!(did_print && result==0)) printf(\"%lld\\n\",(long long)result);\n  return (int)result;\n}\n"
     var c_path: str = output_path + ".c"
-    fs.write_text(c_path, c_source)
+    io.out(c_path, c_source)
     result = gcc.compile(c_path, output_path)
   }
   result
