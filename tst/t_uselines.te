@@ -1,0 +1,8 @@
+use std.tst
+use std.str
+use usage.lines
+
+fn t_lines() {
+  val lines = str.join(lineCount(),",")
+  tst.eq(lines, "alpha,alphabet") 
+}

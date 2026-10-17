@@ -48,3 +48,7 @@ go {
   pr("sum_list = " + sum_list())
   pr("sum_skip = " + sum_skip())
 }
+// EXPECT: sum_while = 10
+// EXPECT: sum_for = 45
+// EXPECT: sum_list = 15
+// EXPECT: sum_skip = 4

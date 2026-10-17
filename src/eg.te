@@ -1,4 +1,3 @@
-use io.pr
 
 rec Point {
   x: i64,

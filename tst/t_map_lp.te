@@ -1,0 +1,14 @@
+use std.tst
+
+fn t_map_lp() {
+  var m: {str: i64} = {:}
+  m["b"] = 2
+  m["a"] = 1
+  m["a"] = 3
+  var count = 0
+  lp k:m {
+    count = count + 1
+  }
+  tst.eq(count, 2)
+  tst.eq(len(keys(m)), 2)
+}

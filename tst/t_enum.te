@@ -1,0 +1,8 @@
+use std.tst
+use enum
+
+fn t_name_green() { tst.eq(name(Colour.Green), "green") }
+fn t_unwrap_some() { tst.eq(unwrap(Option.Some(42)), 42) }
+fn t_unwrap_none() { tst.eq(unwrap(Option.None), 0) }
+fn t_describe_ok() { tst.eq(describe(Result.Ok(7)), "ok") }
+fn t_describe_err() { tst.eq(describe(Result.Err("boom")), "boom") }

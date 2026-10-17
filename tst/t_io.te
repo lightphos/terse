@@ -1,0 +1,8 @@
+use std.tst
+use io
+
+fn t_io_write_read() {
+  io.out("/tmp/terse_test_io.txt", "hello io")
+  val content = io.in("/tmp/terse_test_io.txt")
+  tst.eq(content, "hello io")
+}

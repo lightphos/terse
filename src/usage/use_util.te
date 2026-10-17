@@ -1,6 +1,0 @@
-use util
-
-go {
-  pr(util.double(21))
-  pr(util.add(10, 32))
-}

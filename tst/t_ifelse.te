@@ -1,0 +1,8 @@
+use std.tst
+use ifelse
+
+fn t_ifelse() {
+  val a = abs(0 - 42)
+  val b = abs(17)
+  tst.eq(59, a + b)
+}

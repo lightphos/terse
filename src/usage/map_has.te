@@ -1,8 +1,0 @@
-// map has() overload — same name as str.has
-go {
-  var m: {str: i64} = {:}
-  m["a"] = 1
-  pr(has(m, "a"))
-  pr(has(m, "z"))
-  pr(has("hello", "ell"))
-}

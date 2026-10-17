@@ -1,9 +1,19 @@
 use std.io
 use std.str
-go {
+
+fn lineCount() -> [str] {
   io.out("/tmp/terse_lines.txt", "alpha\nbeta\ngamma\nalphabet")
-  val lines = str.split(io.in("/tmp/terse_lines.txt"), "\n")
+  val read = io.in("/tmp/terse_lines.txt")
+  val lines = str.split(read, "\n")
+  var act: [str] = []
   lp line: lines {
-    if str.has(line, "alp") { pr(line) }
+    if str.has(line, "alp") {
+      act = act + [line]   // if list push/concat supported
+    }
   }
+  ret act
+}
+
+go {
+  pr(str.join(lineCount(), ","))
 }

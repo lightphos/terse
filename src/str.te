@@ -1,1 +1,47 @@
-// todo string code
+use std.str
+
+ fn chkHas() -> bool {
+   ret str.has("terse", "ers")
+ } 
+
+fn chkStarts() -> bool {
+  ret str.starts("terse", "te")
+}
+
+fn chkEnds() -> bool {
+  ret str.ends("terse", "se")
+}
+fn chkTrim() -> str {
+  ret str.trim("  [pad  ")
+}
+fn chkParse() -> int {
+  ret str.parse("99")
+}
+fn chkSplit() -> int {
+  val bits = str.split("x,y,z", ",")
+  ret len(bits)
+}
+fn chkJoin() -> str {
+  val bits = str.split("x,y,z", ",")
+  ret str.join(bits, ":")
+}
+fn chkUp()  -> str { 
+  ret str.up("Hello")
+}   // "HELLO"
+
+fn chkLow() -> str {
+  ret str.low("Hello")
+}  // "hello"   
+
+
+go {
+  pr(chkHas())
+  pr(chkStarts())
+  pr(chkEnds())
+  pr(chkTrim())
+  pr(chkParse())
+  pr(chkSplit())
+  pr(chkJoin( ))
+  pr(chkUp())   // "HELLO"
+  pr(chkLow())  // "hello"
+}

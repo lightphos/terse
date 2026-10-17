@@ -1,0 +1,15 @@
+// Auto-run: no go required; all zero-arg fns execute
+use std.tst
+use bool
+
+fn t_identity_true() {
+  tst.eq(bool.identity(true), 1)
+}
+
+fn t_identity_false() {
+  tst.eq(bool.identity(false), 0)
+}
+
+fn t_go_true_branch() {
+  tst.eq(bool.identity(true) && !bool.identity(false), 1)
+}

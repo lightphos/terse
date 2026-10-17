@@ -1,0 +1,16 @@
+// std.str — string helpers (host runtime)
+//
+// use std.str
+//
+//   str.has(s, sub) -> bool
+//   str.starts(s, prefix) -> bool
+//   str.ends(s, suffix) -> bool
+//   str.trim(s) -> str
+//   str.up(s) -> str              // ASCII upper
+//   str.low(s) -> str             // ASCII lower
+//   str.parse(s) -> i64
+//   str.split(s, sep) -> [str]
+//   str.join(parts, sep) -> str
+//
+// Free names: has, starts, ends, trim, up, low, parse, split, join
+// Maps: keys(m) -> [str], values(m) for {str:i64}, lp k: m { } iterates keys

@@ -1,0 +1,3 @@
+use std.tst
+
+fn t_hi() { tst.eq("hi!", "hi!") }

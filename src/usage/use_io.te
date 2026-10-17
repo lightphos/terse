@@ -1,6 +1,0 @@
-use std.io
-
-go {
-  io.out("/tmp/terse_out.txt", "from std.io")
-  pr(io.in("/tmp/terse_out.txt"))
-}

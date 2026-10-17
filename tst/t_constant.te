@@ -1,0 +1,4 @@
+use std.tst
+use constant
+
+fn t_constant_show() { tst.eq(constant.show(), "Greetings from Terse! 42") }

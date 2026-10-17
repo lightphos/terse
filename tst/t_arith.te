@@ -1,0 +1,11 @@
+use std.tst
+use arith
+
+fn t_add() {
+  tst.eq(arith.add(), 42)
+}
+
+fn t_mult() {
+  // non-pub mult visible because this file is under tst/
+  tst.eq(30, arith.mult(5, 6))
+}

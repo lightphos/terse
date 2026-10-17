@@ -1,14 +1,9 @@
 
-pub fn chk(exp, act) -> i64 {
-    if (exp == act) {
-        ret 0
-    }
+// pub fn chk(exp, act) -> i64 {
+//     if (exp == act) {
+//         ret 0
+//     }
 
-    pr("expected: " + exp + ", actual: " + act)
-    ret 1
-}
-
-go {
-    pr(chk(42, 42))
-    pr(chk(30, 31))
-}
+//     pr("expected: " + exp + ", actual: " + act)
+//     ret 1
+// }

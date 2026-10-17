@@ -1,0 +1,10 @@
+use std.tst
+use usage.util
+
+fn t_util_double() { 
+    tst.eq(double(21), 42) 
+}
+
+fn t_util_add() { 
+    tst.eq(add(10, 32), 42) 
+}

@@ -1,0 +1,10 @@
+use std.io
+
+fn uio() -> str {
+  io.out("/tmp/terse_out.txt", "from std.io")
+  ret io.in("/tmp/terse_out.txt")
+}
+
+go {
+  pr(uio())
+}

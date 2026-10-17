@@ -1,0 +1,6 @@
+use std.tst
+use fib
+
+fn t_fib_basic() { tst.eq(fib.fib(7, 0, 1), 13) }
+fn t_fib_zero() { tst.eq(fib.fib(0, 0, 1), 0) }
+fn t_fib_one() { tst.eq(fib.fib(1, 0, 1), 1) }

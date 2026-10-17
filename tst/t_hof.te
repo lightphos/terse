@@ -1,0 +1,5 @@
+use std.tst
+
+fn double(n: i64) -> i64 = n * 2
+
+fn t_double() { tst.eq(double(5), 10) }

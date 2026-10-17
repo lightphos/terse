@@ -1,0 +1,18 @@
+use std.tst
+use loops
+
+fn t_sum_while() {
+  tst.eq(sum_while(), 10)
+}
+
+fn t_sum_for() {
+  tst.eq(sum_for(), 45)
+}
+
+fn t_sum_list() {
+  tst.eq(sum_list(), 15)
+}
+
+fn t_sum_skip() {
+  tst.eq(sum_skip(), 4)
+}

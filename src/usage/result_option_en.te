@@ -15,7 +15,7 @@ fn unwrap(o: Option) -> i64 =
     Option.None => 0
   }
 
-fn or_else(r: Result, fallback: i64) -> i64 =
+fn orElse(r: Result, fallback: i64) -> i64 =
   if r {
     Result.Ok(n) => n
     Result.Err(msg) => fallback
@@ -24,6 +24,6 @@ fn or_else(r: Result, fallback: i64) -> i64 =
 go {
   pr(unwrap(Option.Some(9)))
   pr(unwrap(Option.None))
-  pr(or_else(Result.Ok(3), -1))
-  pr(or_else(Result.Err("nope"), -1))
+  pr(orElse(Result.Ok(3), -1))
+  pr(orElse(Result.Err("nope"), -1))
 }

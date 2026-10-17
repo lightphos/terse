@@ -1,0 +1,7 @@
+use std.tst
+use fact
+
+fn t_fact0() { tst.eq(fact.fact(0), 1) }
+fn t_fact1() { tst.eq(fact.fact(1), 1) }
+fn t_fact5() { tst.eq(fact.fact(5), 120) }
+fn t_fact10() { tst.eq(fact.fact(10), 3628800) }

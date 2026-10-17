@@ -1,23 +1,27 @@
 # Terse
 
-A succinct language that compiles to native binaries, with structures, interfaces, first-class higher-order functions, and support for REST APIs and databases.
+A (very) succinct language that compiles to native binaries, with structures, interfaces, first-class higher-order functions, supporting libraries and builtin in test runner.
 
 ## Quick Start
 
 > Requires python3
 
-### CLI Run
+### Run and Test
 ```bash
 # Build program in example directory to a binary
-make terse.hello dir=src
-./out/hello          # prints hello world
+make run.eg dir=src
+
+make tst.t_eg
+
+make tst (all)
 ```
+
 ### VS Code Support
 ```bash
 make vscode-terse
 make vconde-install
 ```
-In vscode ide, reload window:
+In VS Code, reload window:
 
 ```
 Ctrl+Shift+P
@@ -39,13 +43,22 @@ Run:
 ```
 Ctrl+Shift+P
 Terse: Run
+
+or F5
 ```
 
 ## Language Spec
 
-See [docs/SPEC.md](docs/SPEC.md) for the full language specification.
+See [docs/bnf.md](docs/bnf.md) and [docs/SPEC.md](docs/SPEC.md) for the full language specification.
 
-## Compiler Status (0.1beta)
+## Compiler Status (0.1)
+
+- Hello world built in print out
+- Basic arithmetic
+- If else
+
+
+## Compiler Status (0.2)
 
 The reference compiler (`compiler/tersec.py`) implements:
 
@@ -56,25 +69,22 @@ The reference compiler (`compiler/tersec.py`) implements:
 - Named functions + recursion
 - **Higher-order functions**: pass functions as values, simple lambdas (`|x| x*2`)
 - Function pointers under the hood (no environment capture yet)
-- Text file reads and writes through `std.fs`
-- Growable lists of records for AST-style node storage
+- Text file reads and writes through `std.io`
 
 Not yet implemented (but specified):
 
 - Full closures with captures
-- Strings beyond basic support
 - Records / structs / pattern matching
-- SQLite database runtime: `db.connect`, `db.exec`, `db.query`, and `db.query_one`
 - Generics, ownership system, selective imports, and visibility modifiers
 
 ## Examples
 
 | File | Description | Output |
 |------|-------------|--------|
-| `src/hello.te` | Basic arithmetic | 42 |
+| `src/hi.te` | Hi there | 0 |
 | `src/fact.te` | Recursion | 3628800 |
 | `src/hof.te` | Higher-order + lambda | 149 |
-| `src/iflet.te` | if + let | 59 |
+| `src/if.te` | if + else | 59 |
 
 ## Architecture
 
@@ -102,21 +112,10 @@ multiple named `i64` functions with arbitrary parameters, recursion, and
 native frontend first, and reports when it falls back:
 
 ```sh
-# Build the stage-one tc executable explicitly (optional; ./tc does this as needed).
-make tcc
-
-# Compile and run a source file through tc.
-./tc compiler/tc_smoke.te
-out/tc_smoke
-./tc compiler/tc_smoke.te -o out/tc-smoke
-
-# Run the Terse-language regression suite.
-make tc-test
+# Build the bootstrap.
+make bootstrap
 ```
 
-`compiler/t_tc.te` contains language-level regression cases and currently runs
-through `tersec.py`. `make tc-test` also checks that the multi-function smoke test,
-`src/hello.te`, and `src/fact.te` compile through the native frontend.
 
 ## TODO: Native Compiler Parity
 
@@ -130,8 +129,8 @@ through `tersec.py`. `make tc-test` also checks that the multi-function smoke te
   unit, decoded string escapes, block comments, assignment, composition,
   partial-application `_`, and postfix member/call/index/record/list forms.
 - [ ] Add the documented statement and control forms: general block sequencing,
-  `let`/`let mut`, assignment, `ret`, both `lp` loop forms, and `match` with
-  patterns and guards; account for `break`/`continue` if they are part of the
+  `val`/`var`, assignment, `ret`, both `lp` loop forms, and `if match` with
+  patterns and guards; account for `brk`/`skip` if they are part of the
   supported language contract.
 - [ ] Implement the type forms and checking promised by the docs: primitive and
   function types, lists, records, tuples, `Option`/`Result`, annotations and
@@ -141,22 +140,6 @@ through `tersec.py`. `make tc-test` also checks that the multi-function smoke te
   `fs`, JSON, and environment builtins/runtime. Move HTTP and DB APIs according
   to the extraction plan below, keeping limited HTTP features distinct from
   documented future middleware and request-decoding support.
-- [ ] Reconcile `SPEC.md`, `bnf.md`, and `tersec.py` before declaring feature
-  parity. They differ on tuples, `Option`/`Result`, `match`, `break`/`continue`,
-  records, and database support; the spec calls DB planned while the reference
-  compiler contains DB runtime code. Mark each as implemented, limited, or
-  planned, then make the grammar reflect the agreed contract.
-- [ ] Resolve every existing compiler test through `tc`, comparing output, exit
-  status, and errors with `tersec.py`. Update tests that expect recursive
-  functions to fall back, and keep native-path checks separate from `t_tc.te`
-  tests that currently run on the reference compiler.
-- [ ] Bootstrap `tc.te` with the native compiler itself across successive
-  stages; verify each stage passes the same parity suite.
-
-**Replacement gate:** make `tc` the default only when all supported
-`tersec.py` behavior and diagnostics pass through the native frontend, the full
-regression suite requires no fallback, and a clean native bootstrap succeeds.
-Until then, keep `tersec.py` as the fallback and parity oracle.
 
 ## TODO: HTTP and DB Library Extraction
 
@@ -186,54 +169,16 @@ Migration TODOs for current consumers:
 - [ ] HTTP integration tests in `compiler/test_compiler.py` currently validate
   compiler-backed route handling; move/add coverage for the library API.
 
+
+## TODO
+
+- tc -> terse compiler
+- tp -> package manager
+- tb -> bld and test
+
+> Now you can't get more `terse` than that!
+
+
 ## License
 
 MIT (for this reference implementation)
-
-## 0.1beta features
-
-- Strings: `"hi"`, `"a" + "b"`, `len(s)`, `s[i]`
-- Lists: `[1, 2, 3]`, `len(xs)`, `xs[i]`, `pr(xs)`
-- `pr(x)` for ints, strings, lists
-- See `src/io.te`
-
-## BOOTSTRAP
-
-Start self-hosting when most are true:
-
-1. tc.te is written in current syntax
-val/var, rec, en, match-style if, no let.
-2. Feature parity for “compiler-shaped” code
-  - Enough to implement a compiler:
-records, lists, strings
-- functions + recursion
-- if (boolean + match-style)
-- enums with data (useful for tokens/AST)
-- file I/O (fs.read_text / write_text)
-- string building / concat
-
-3. tersec.py can build tc.te cleanly
-Stage‑0 stays Python until stage‑1 is solid.
-4. Round-trip test passes
-```text
-tersec.py  build tc.te     →  tc1
-tc1        build tc.te     →  tc2
-tc2        build tc.te     →  tc3
-diff tc2 tc3   (or same output on a fixed suite)
-```
-5. You have a fixed test suite
-eg.te, en.te, constant.te, plus a few mini programs.
-
-6. Language surface is mostly frozen for a while
-Bootstrapping while still renaming keywords (const→fix, match→if) means rewriting tc.te every week.
-
-
-## Practical next milestone (2–3 weeks of focus)
-Goal: “Write a small CLI tool in Terse without fighting the compiler.”
-Concrete checklist:
-
-1. en + variant payloads + pattern if (host + examples: en.te, result.te)
-2. fix constants
-3. += and C-style lp
-4. Grow tc.te only for syntax it needs to compile itself (keep bootstrap green)
-5. One multi-file sample: use util + pub fn

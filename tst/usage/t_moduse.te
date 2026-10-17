@@ -1,6 +1,0 @@
-use std.tst
-use usage/moduse
-
-
-
-go { moduse.mod() }

@@ -33,6 +33,10 @@
       {
         "command": "terse.run",
         "title": "Terse: Run"
+      },
+      {
+        "command": "terse.test",
+        "title": "Terse: Test All"
       }
     ],
     "keybindings": [
@@ -44,6 +48,11 @@
       {
         "command": "terse.run",
         "key": "f5",
+        "when": "editorTextFocus && resourceExtname == .te"
+      },
+      {
+        "command": "terse.test",
+        "key": "ctrl+alt+t",
         "when": "editorTextFocus && resourceExtname == .te"
       }
     ],

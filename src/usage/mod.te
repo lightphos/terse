@@ -1,12 +1,12 @@
 
-fn _say(message: str) -> i64 {
-    pr(message)
+fn _say(message: str) -> str {
+    ret message
 }
 
-pub fn mod() -> i64 {
+pub fn mod() -> str {
     _say("from mod")
 }
 
-pub fn mod2() -> i64 {
+pub fn mod2() -> str {
     _say("from mod2")
 }

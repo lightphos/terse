@@ -1,4 +1,4 @@
-.PHONY: terse vscode-terse install-vscode-terse compile tcc tcc1 bootstrap test clean help
+.PHONY: terse vscode-terse install-vscode-terse compile tcc tcc1 bootstrap test clean help tst
 
 # On macOS, `gcc` is usually Apple clang. Override: make CC=gcc-14
 export CC ?= clang
@@ -15,6 +15,7 @@ TC       := $(OUT)/tc
 
 # App sources
 dir ?= src
+tdir ?= tst
 
 help:
 	@echo "Targets:"
@@ -22,8 +23,9 @@ help:
 	@echo "  make tcc1        - stage0 compiles tc.te -> out/tc-stage1"
 	@echo "  make bootstrap   - stage1 compiles tc.te -> out/tc"
 	@echo "  make terse.NAME  - compile src/NAME.te with out/tc and run it"
-	@echo "  make compile.NAME - compile src/NAME.te with host tersec and run"
-	@echo "  make test        - tst/test.sh"
+	@echo "  make run.NAME    - compile and run src/NAME.te with host tersec and run"
+	@echo "  make tst.NAME    - tst/t_NAME.te"
+	@echo "  make tst         - run all tst t_*.te file"
 	@echo "  make clean"
 	@echo "CC=$(CC)  (export CC=... to change C compiler used by tc stages)"
 
@@ -55,6 +57,11 @@ run.%:
 	$(PYTHON) $(TERSEC) build $(dir)/$*.te -o $(OUT)/$*
 	$(OUT)/$*
 
+tst.%:
+	@mkdir -p $(OUT)
+	$(PYTHON) $(TERSEC) build $(tdir)/$*.te -o $(OUT)/$*
+	$(OUT)/$*
+
 # --- VS Code extension / tests ------------------------------------------
 
 vscode-terse:
@@ -65,6 +72,12 @@ install-vscode-terse:
 
 test:
 	tst/test.sh
+
+tst:
+	@for f in tst/t_*.te; do \
+		base=$$(basename $$f .te); \
+		$(MAKE) tst.$$base; \
+	done
 
 clean:
 	rm -rf $(OUT)

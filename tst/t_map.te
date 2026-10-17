@@ -1,0 +1,23 @@
+use std.tst
+
+fn t_map_basic() {
+  var scores: {str: i64} = {:}
+  scores["alice"] = 10
+  scores["bob"] = 20
+  scores["alice"] = 15
+  tst.eq(scores["alice"], 15)
+  tst.eq(scores["bob"], 20)
+  tst.eq(len(scores), 2)
+}
+
+fn t_map_literal() {
+  val fixed = {"x": 1, "y": 2}
+  tst.eq(fixed["x"], 1)
+}
+
+fn t_map_str() {
+  var labels: {str: str} = {"ok": "yes"}
+  labels["no"] = "nope"
+  tst.eq(labels["ok"], "yes")
+  tst.eq(labels["no"], "nope")
+}

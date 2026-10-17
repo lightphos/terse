@@ -1,0 +1,23 @@
+use std.tst
+use trait
+
+fn t_point_add() {
+  val p = Point { x: 3, y: 2 }
+  tst.eq(p.add(), 5)
+}
+
+fn t_point_cord() {
+  val p = Point { x: 3, y: 2 }
+  tst.eq(p.cord(), 5)
+}
+
+fn t_point_str() {
+  val p = Point { x: 3, y: 2 }
+  tst.eq(p.str(), "Point { x: 3, y: 2 }")
+}
+
+fn t_origin() {
+  val p = origin()          // or point.origin()
+  tst.eq(p.x, 0)
+  tst.eq(p.y, 0)
+}

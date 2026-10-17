@@ -1,0 +1,8 @@
+use std.tst
+
+fn t_map_has() {
+  var m: {str: i64} = {:}
+  m["a"] = 1
+  tst.eq(has(m, "a"), true)
+  tst.eq(has(m, "z"), false)
+}

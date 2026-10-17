@@ -1,0 +1,10 @@
+use std.tst
+use usage.wc
+
+fn t_wc() {
+  val wcf = wc("one two one three two one")
+  tst.eq(wcf["one"], 3)
+  tst.eq(wcf["two"], 2)
+  tst.eq(wcf["three"], 1)
+  tst.eq(len(wcf), 3)
+}

@@ -1,0 +1,6 @@
+use std.tst
+use stdio
+
+fn t_io_write_read() {
+  tst.eq(uio(), "from std.io")
+}

@@ -19,3 +19,10 @@ go {
   pr(labels["ok"])
   pr(labels["no"])
 }
+// EXPECT: 15
+// EXPECT: 20
+// EXPECT: 2
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: yes
+// EXPECT: nope

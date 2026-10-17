@@ -152,7 +152,10 @@ class Unary(Expr):
     op: str; expr: Expr
 @dataclass
 class Call(Expr):
-    func: Expr; args: List[Expr]
+    func: Expr
+    args: List[Expr]
+    line: int = 0
+    col: int = 0
 @dataclass
 class Member(Expr):
     obj: Expr; field: str
@@ -221,6 +224,7 @@ class FnDecl:
 class RecDecl:
     name: str
     fields: List[Tuple[str, TypeNode]]
+    public: bool = False
 @dataclass
 class TraitDecl:
     name: str
@@ -253,6 +257,7 @@ class EnumVariantDecl:
 class EnumDecl:
     name: str
     variants: List[EnumVariantDecl]  # was List[str]
+    public: bool = True  # en is public by default (exportable via use)
 
 @dataclass
 class FixDecl:
@@ -820,13 +825,14 @@ class Parser:
                 else:
                     break
             elif self.match(TT.LPAREN):
+                call_tok = self.cur()
                 self.adv()
                 args = []
                 while not self.match(TT.RPAREN):
                     args.append(self.parse_expr())
                     if self.match(TT.COMMA): self.adv()
                 self.expect(TT.RPAREN)
-                e = Call(e, args)
+                e = Call(e, args, line=call_tok.line, col=call_tok.col)
                 # http.serve(port) { routes }
                 if self.is_http_serve_call(e) and self.match(TT.LBRACE):
                     routes = self.parse_routes()
@@ -925,6 +931,10 @@ class Parser:
             segments = [self.expect(TT.IDENT).v]
             separators = []
             while self.match(TT.DOT, TT.SLASH):
+                # allow use arith.{a, b} — dot before brace is optional sugar
+                if self.i + 1 < len(self.toks) and self.toks[self.i + 1].t == TT.LBRACE:
+                    self.adv()  # consume '.'
+                    break
                 separators.append(self.adv().v)
                 segments.append(self.expect(TT.IDENT).v)
             if self.match(TT.LBRACE):
@@ -1109,14 +1119,24 @@ class Parser:
                 sigs.append(self.parse_trait())
             elif self.match(TT.PUB):
                 self.adv()
-                if not self.match(TT.FN):
-                    raise SyntaxError("expected fn after pub")
-                decl = self.parse_fn()
-                decl.public = True
-                if isinstance(decl, MethodDecl):
-                    methods.append(decl)
+                if self.match(TT.FN):
+                    decl = self.parse_fn()
+                    decl.public = True
+                    if isinstance(decl, MethodDecl):
+                        methods.append(decl)
+                    else:
+                        fs.append(decl)
+                elif self.match(TT.REC) or (self.match(TT.IDENT) and self.cur().v in ('rec', 'struct')):
+                    decl = self.parse_rec()
+                    decl.public = True
+                    recs.append(decl)
+                elif self.match(TT.IDENT) and self.i + 1 < len(self.toks) and self.toks[self.i + 1].t == TT.LBRACE:
+                    # pub Point { ... } sugar
+                    decl = self.parse_rec()
+                    decl.public = True
+                    recs.append(decl)
                 else:
-                    fs.append(decl)
+                    raise SyntaxError("expected fn or rec after pub")
             elif self.match(TT.FN):
                 decl = self.parse_fn()
                 if isinstance(decl, MethodDecl):
@@ -1273,8 +1293,13 @@ class TypeChecker:
                     return 'i64'
             return 'i64'
         if isinstance(e, Binary):
-            self.check(e.left); self.check(e.right)
-            return 'str' if e.op == '+' else ('bool' if e.op in '==!=<=>=<>&&||' else 'i64')
+            lt = self.check(e.left); rt = self.check(e.right)
+            if e.op == '+':
+                if lt == 'list_str' or rt == 'list_str':
+                    return 'list_str'
+                if lt == 'str' or rt == 'str':
+                    return 'str'
+            return 'bool' if e.op in '==!=<=>=<>&&||' else 'i64'
         if isinstance(e, Unary): return self.check(e.expr)
         if isinstance(e, RetExpr):
             if e.value is not None:
@@ -1736,6 +1761,13 @@ static const char* list_get_str(List_str L, int64_t i) {
   return L.d[i] ? L.d[i] : "";
 }
 
+static List_str list_concat_str(List_str a, List_str b) {
+  List_str out = list_new_str(0);
+  for (int64_t i = 0; i < a.n; i++) out = list_push_str(out, a.d[i] ? a.d[i] : "");
+  for (int64_t i = 0; i < b.n; i++) out = list_push_str(out, b.d[i] ? b.d[i] : "");
+  return out;
+}
+
 static List_str map_str_i64_keys(Map_str_i64 m) {
   List_str out = list_new_str(0);
   for (int64_t i = 0; i < m.n; i++) out = list_push_str(out, m.k[i] ? m.k[i] : "");
@@ -1879,31 +1911,51 @@ static void print_i64(int64_t x) { _terse_did_print = 1; printf("%lld\n", (long 
 static void print_bool(bool v) { _terse_did_print = 1; printf(v ? "true\n" : "false\n"); }
 static void print_str(const char* s) { _terse_did_print = 1; printf("%s\n", s); }
 
-/* -- std.tst assertion helpers (abort on first failure) -- */
-static int64_t tst_eq_i64(int64_t got, int64_t expected) {
+/* -- std.tst assertion helpers (continue on failure; count via _tst_failures) -- */
+static int64_t _tst_failures = 0;
+static int64_t _tst_checks = 0;
+static int64_t tst_eq_i64(int64_t got, int64_t expected, const char* file, int64_t line) {
+  _tst_checks++;
   if (got != expected) {
-    fprintf(stderr, "tst.check.equals failed: expected %lld, got %lld\n",
-            (long long)expected, (long long)got);
-    exit(1);
+    _tst_failures++;
+    fprintf(stderr, "FAIL %s:%lld: expected %lld, got %lld\n",
+            file ? file : "?", (long long)line, (long long)expected, (long long)got);
+    return INT64_C(1);
   }
-  return 0;
+  return INT64_C(0);
 }
-static int64_t tst_eq_bool(bool got, bool expected) {
+static int64_t tst_eq_bool(bool got, bool expected, const char* file, int64_t line) {
+  _tst_checks++;
   if (got != expected) {
-    fprintf(stderr, "tst.check.equals failed: expected %s, got %s\n",
+    _tst_failures++;
+    fprintf(stderr, "FAIL %s:%lld: expected %s, got %s\n",
+            file ? file : "?", (long long)line,
             expected ? "true" : "false", got ? "true" : "false");
-    exit(1);
+    return INT64_C(1);
   }
-  return 0;
+  return INT64_C(0);
 }
-static int64_t tst_eq_str(const char* got, const char* expected) {
+static int64_t tst_eq_str(const char* got, const char* expected, const char* file, int64_t line) {
+  _tst_checks++;
   const char* g = got ? got : "";
   const char* e = expected ? expected : "";
   if (strcmp(g, e) != 0) {
-    fprintf(stderr, "tst.check.equals failed: expected \"%s\", got \"%s\"\n", e, g);
-    exit(1);
+    _tst_failures++;
+    fprintf(stderr, "FAIL %s:%lld: expected \"%s\", got \"%s\"\n",
+            file ? file : "?", (long long)line, e, g);
+    return INT64_C(1);
   }
-  return 0;
+  return INT64_C(0);
+}
+static int64_t tst_report(void) {
+  _terse_did_print = 1; /* avoid printing failure count on stdout */
+  if (_tst_failures == 0) {
+    fprintf(stderr, "PASS %lld check(s)\n", (long long)_tst_checks);
+  } else {
+    fprintf(stderr, "FAILED %lld of %lld check(s)\n",
+            (long long)_tst_failures, (long long)_tst_checks);
+  }
+  return _tst_failures;
 }
 
 static char* json_int(int64_t x) {
@@ -2103,7 +2155,7 @@ static void http_serve_run(int64_t port, route_fn handler) {
 '''
 
 class CodeGen:
-    def __init__(self):
+    def __init__(self, source_path=None):
         self.lines = []
         self.indent = 0
         self.lam_n = 0
@@ -2111,6 +2163,7 @@ class CodeGen:
         self.known = {}
         self.tmp = 0
         self.env = {}
+        self.source_path = source_path or "?"
         self.route_handlers = []  # generated C funcs for routes
         self.record_field_types = {}
         self.method_names = {}
@@ -2124,6 +2177,34 @@ class CodeGen:
 
     def emit(self, s=""):
         self.lines.append("  " * self.indent + s)
+
+    def zero_value(self, ty):
+        """C rvalue matching ty — used after return inside GNU statement exprs."""
+        if ty == 'str':
+            return '""'
+        if ty == 'bool':
+            return 'false'
+        if ty in ('list_str', 'List_str'):
+            return '(List_str){NULL,0,0}'
+        if ty in ('List', 'list', 'list_i64'):
+            return '(List){NULL,0,0}'
+        if isinstance(ty, str) and ty.startswith('list_'):
+            return f'(List_{ty[5:]}){{NULL,0,0}}'
+        if ty == 'map_str_i64':
+            return '(Map_str_i64){NULL,NULL,0,0}'
+        if ty == 'map_str_str':
+            return '(Map_str_str){NULL,NULL,0,0}'
+        if isinstance(ty, str) and ty.startswith('map_'):
+            cname = 'Map_' + '_'.join(ty.split('_')[1:])
+            return f'({cname}){{NULL,NULL,0,0}}'
+        if ty in getattr(self, 'record_field_types', {}) or ty in getattr(self, 'enum_values', {}):
+            return f'({self.c_type(ty)}){{0}}'
+        return 'INT64_C(0)'
+
+    def tst_where(self, e=None):
+        path = self.source_path.replace("\\", "/").replace('"', "")
+        line = (getattr(e, "line", 0) or 0) if e is not None else 0
+        return f'"{path}", INT64_C({line})'
 
     def fresh(self):
         self.tmp += 1
@@ -2423,6 +2504,21 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                             return f"({coll_e.name} = map_{kty}_{vty}_put({base}, {kc}, {vc}))", ct
                         return f"map_{kty}_{vty}_put({base}, {kc}, {vc})", ct
                 return f"({l} = {r})", lt
+            if e.op == '+':
+                # [str] + [str]  or  [str] + str (append one)
+                if lt == 'list_str' and rt == 'list_str':
+                    return f"list_concat_str({l}, {r})", "list_str"
+                if lt == 'list_str' and rt == 'str':
+                    return f"list_push_str({l}, {r})", "list_str"
+                if lt == 'List' and rt == 'List':
+                    # i64 lists: push elements of r onto copy of l
+                    tmp = self.fresh()
+                    return (
+                        f"({{ List {tmp} = {l}; "
+                        f"for (int64_t _i = 0; _i < ({r}).n; _i++) "
+                        f"{tmp} = list_push({tmp}, ({r}).d[_i]); {tmp}; }})",
+                        "List",
+                    )
             if e.op == '+' and (lt == 'str' or rt == 'str'):
                 if lt == 'str' and rt == 'str':
                     return f"str_concat({l}, {r})", "str"
@@ -2450,7 +2546,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         if isinstance(e, RetExpr):
             if e.value is not None:
                 v, vt = self.gen_expr(e.value)
-                return f"({{ return {v}; INT64_C(0); }})", vt
+                return f"({{ return {v}; {self.zero_value(vt)}; }})", vt
             return "({ return INT64_C(0); INT64_C(0); })", "i64"
         if isinstance(e, ListLit):
             n = len(e.items)
@@ -2726,14 +2822,31 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     sql, _ = self.gen_expr(e.args[0])
                     argc_args = self.db_args(e.args[1:])
                     return f"db_exec({sql}, {argc_args})", "i64"
-            # tst.check.equals(got, expected) — builtin test assertion.
+            # std.tst — assertions (abort on mismatch)
+            #   tst.eq(got, expected)  |  tst.chk(expected, actual)  |  tst.check.equals(got, expected)
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name == 'tst':
+                if e.func.field == 'report':
+                    return "tst_report()", "i64"
+                if e.func.field in ('eq', 'equals') and len(e.args) >= 2:
+                    got, got_t = self.gen_expr(e.args[0])
+                    exp, _ = self.gen_expr(e.args[1])
+                    helper = {'i64': 'tst_eq_i64', 'bool': 'tst_eq_bool', 'str': 'tst_eq_str'}.get(got_t, 'tst_eq_i64')
+                    where = self.tst_where(e)
+                    return f"({helper}({got}, {exp}, {where}), INT64_C(0))", "i64"
+                if e.func.field == 'chk' and len(e.args) >= 2:
+                    exp, _ = self.gen_expr(e.args[0])
+                    got, got_t = self.gen_expr(e.args[1])
+                    helper = {'i64': 'tst_eq_i64', 'bool': 'tst_eq_bool', 'str': 'tst_eq_str'}.get(got_t, 'tst_eq_i64')
+                    where = self.tst_where(e)
+                    return f"({helper}({got}, {exp}, {where}), INT64_C(0))", "i64"
             if isinstance(e.func, Member) and isinstance(e.func.obj, Member) \
                     and isinstance(e.func.obj.obj, Var) and e.func.obj.obj.name == 'tst' \
                     and e.func.obj.field == 'check' and e.func.field == 'equals':
                 got, got_t = self.gen_expr(e.args[0])
                 exp, _ = self.gen_expr(e.args[1])
                 helper = {'i64': 'tst_eq_i64', 'bool': 'tst_eq_bool', 'str': 'tst_eq_str'}.get(got_t, 'tst_eq_i64')
-                return f"({helper}({got}, {exp}), INT64_C(0))", "i64"
+                where = self.tst_where(e)
+                return f"({helper}({got}, {exp}, {where}), INT64_C(0))", "i64"
             if isinstance(e.func, Member):
                 # Built-in: .len() method on str and List
                 if e.func.field == 'len':
@@ -3039,7 +3152,14 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             return self.gen_http_serve(e)
         if isinstance(e, Block):
             if not e.stmts: return "INT64_C(0)", "i64"
-            return self.gen_expr(e.stmts[-1])
+            if len(e.stmts) == 1:
+                return self.gen_expr(e.stmts[0])
+            parts = []
+            for st in e.stmts[:-1]:
+                code, _ = self.gen_expr(st)
+                parts.append(f"(void)({code})")
+            last, lt = self.gen_expr(e.stmts[-1])
+            return "({ " + "; ".join(parts) + "; " + last + "; })", lt
         return "INT64_C(0)", "i64"
 
     def gen_http_serve(self, e: HttpServe) -> Tuple[str, str]:
@@ -3335,10 +3455,10 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 "  terse_argc = argc;",
                 "  terse_argv = argv;",
                 f"  int64_t result = {self.known[entry_name]}();",
-                "  /* skip trailing 0 when pr already produced output */",
-                "  if (!(_terse_did_print && result == 0))",
+                "  /* skip numeric result when pr/tst already produced output */",
+                "  if (!_terse_did_print)",
                 "    printf(\"%lld\\n\", (long long)result);",
-                "  return 0;",
+                "  return (int)result;",
                 "}"
             ]
         else:
@@ -3439,6 +3559,58 @@ def _source_module_root(source_path):
     return os.path.dirname(os.path.abspath(source_path)) if source_path else os.getcwd()
 
 
+def _is_test_source(source_path):
+    """tst/**/t_*.te files are unit tests (auto-run all fns if no go)."""
+    if not source_path:
+        return False
+    path = os.path.abspath(source_path).replace("\\", "/")
+    base = os.path.basename(path)
+    if not (base.startswith('t_') and base.endswith('.te')):
+        return False
+    # under a tst directory at any depth: .../tst/t_foo.te or .../tst/usage/t_mod.te
+    parts = path.split('/')
+    return 'tst' in parts
+
+
+def _project_roots(source_path):
+    """Sibling dirs: src/, tst/, std/ under project root."""
+    roots = []
+    if source_path:
+        d = os.path.dirname(os.path.abspath(source_path))
+        # if under tst/ or src/, project root is parent
+        if os.path.basename(d) in ('tst', 'src', 'std', 'usage'):
+            roots.append(os.path.dirname(d))
+        roots.append(d)
+        parent = os.path.dirname(d)
+        if parent:
+            roots.append(parent)
+    roots.append(os.getcwd())
+    # unique preserve order
+    seen = set()
+    out = []
+    for r in roots:
+        r = os.path.realpath(r)
+        if r not in seen:
+            seen.add(r)
+            out.append(r)
+    return out
+
+
+def _auto_test_toplevel(program):
+    """Call every zero-arg local test fn; continue after failures; report at end."""
+    stmts = []
+    for f in program.funcs:
+        if f.params:
+            continue
+        if f.name.startswith('__module_'):
+            continue
+        stmts.append(Call(Var(f.name), []))
+    # tst.report() -> failure count (exit status)
+    stmts.append(Call(Member(Var('tst'), 'report'), []))
+    return Block(stmts)
+
+
+
 def _load_source_modules(program, source_path):
     module_root = os.path.realpath(_source_module_root(source_path))
     cache = {}
@@ -3468,29 +3640,64 @@ def _load_source_modules(program, source_path):
                     loading.add(module_file)
                     with open(module_file, encoding='utf-8') as module_source:
                         child = Parser(Lexer(module_source.read()).tokenize()).parse_program()
-                    if child.recs or child.sigs or child.methods or child.toplevel is not None:
-                        raise SyntaxError(f"module '{use.path}' may contain function declarations only")
-                    public_functions = {f.name for f in child.funcs if f.public}
+                    # rec/methods/traits allowed; filtered on export
+                    public_functions = ({f.name for f in child.funcs} if _is_test_source(source_path)
+                        else {f.name for f in child.funcs if f.public})
                     own_functions = {f.name: f"__module_std_{use.path.replace('.', '_')}_{f.name}" for f in child.funcs}
                     for f in child.funcs:
                         f.name = own_functions[f.name]
+                    export_recs = list(child.recs) if _is_test_source(source_path) else [r for r in child.recs if getattr(r, 'public', False)]
+                    export_methods = list(child.methods) if _is_test_source(source_path) else [
+                        m for m in child.methods if m.public or m.receiver in {r.name for r in export_recs}
+                    ]
+                    export_enums = list(child.enums) if _is_test_source(source_path) else [
+                        e for e in child.enums if getattr(e, 'public', True)
+                    ]
                     bundle = {
                         'functions': list(child.funcs),
                         'exports': {name: own_functions[name] for name in public_functions if name in own_functions},
+                        'fixes': list(getattr(child, 'fixes', []) or []),
+                        'recs': export_recs,
+                        'methods': export_methods,
+                        'sigs': list(child.sigs),
+                        'enums': export_enums,
                         'builtin': False,
                     }
                     cache[module_file] = bundle
                     loading.discard(module_file)
                     return bundle
             # Built-in std surface (no .te file): empty exports; calls handled in codegen
-            return {'functions': [], 'exports': {}, 'builtin': True}
+            return {'functions': [], 'exports': {}, 'fixes': [], 'recs': [], 'methods': [], 'sigs': [], 'enums': [], 'builtin': True}
         relative = use.path.replace('.', os.sep).replace('/', os.sep)
         if relative.endswith('.te'):
             relative = relative[:-3]
         # Search order: next to the importing file, then module_root, then cwd
         candidates = []
         if source_path:
-            candidates.append(os.path.join(os.path.dirname(os.path.abspath(source_path)), relative + '.te'))
+            src_dir = os.path.dirname(os.path.abspath(source_path))
+            # same directory as importer
+            candidates.append(os.path.join(src_dir, relative + '.te'))
+            # Parallel layout: tst/usage/t_mod.te → src/usage/mod.te
+            # Replace /tst/ with /src/ in the importer directory, keep subpath
+            norm = src_dir.replace("\\", "/")
+            if "/tst/" in norm or norm.endswith("/tst"):
+                parallel_dir = norm.replace("/tst/", "/src/").replace("/tst", "/src")
+                candidates.append(os.path.join(parallel_dir, relative + ".te"))
+                # also src/<same relative under tst>
+                # e.g. tst/usage → src/usage already handled by parallel_dir
+            # preferred library roots: sibling src/ then project root
+            for root in _project_roots(source_path):
+                candidates.append(os.path.join(root, 'src', relative + '.te'))
+                # if test lives in tst/<sub>/, also try src/<sub>/<module>
+                if "/tst/" in norm:
+                    sub = norm.split("/tst/", 1)[-1]  # e.g. "usage" or "usage/nested"
+                    if sub and sub != norm:
+                        candidates.append(os.path.join(root, 'src', sub, relative + '.te'))
+            for root in _project_roots(source_path):
+                candidates.append(os.path.join(root, relative + '.te'))
+            parent = os.path.dirname(src_dir)
+            if parent:
+                candidates.append(os.path.join(parent, relative + '.te'))
         candidates.append(os.path.join(module_root, relative + '.te'))
         candidates.append(os.path.join(os.getcwd(), relative + '.te'))
         module_file = None
@@ -3515,8 +3722,7 @@ def _load_source_modules(program, source_path):
         loading.add(module_file)
         with open(module_file, encoding='utf-8') as module_source:
             child = Parser(Lexer(module_source.read()).tokenize()).parse_program()
-        if child.recs or child.sigs or child.methods or child.toplevel is not None:
-            raise SyntaxError(f"module '{use.path}' may contain function declarations only")
+        # rec/methods/traits allowed; filtered on export
 
         functions_by_name = {}
         child_namespaces = {}
@@ -3547,7 +3753,11 @@ def _load_source_modules(program, source_path):
                 functions_by_name[function.name] = function
 
         prefix = re.sub(r'\W', '_', os.path.relpath(module_file, module_root)[:-3])
-        public_functions = {function.name for function in child.funcs if function.public}
+        # From tst/t_*.te, allow non-pub symbols of the module under test
+        if _is_test_source(source_path):
+            public_functions = {function.name for function in child.funcs}
+        else:
+            public_functions = {function.name for function in child.funcs if function.public}
         own_functions = {function.name: f"__module_{prefix}_{function.name}"
                          for function in child.funcs}
         local_functions = dict(child_symbols)
@@ -3560,9 +3770,34 @@ def _load_source_modules(program, source_path):
             function.name = own_functions[function.name]
             functions_by_name[function.name] = function
 
+        if _is_test_source(source_path):
+            export_recs = list(child.recs)
+            export_methods = list(child.methods)
+            export_sigs = list(child.sigs)
+        else:
+            export_recs = [r for r in child.recs if r.public]
+            # methods on exported types, or explicitly public methods
+            rec_names = {r.name for r in export_recs}
+            export_methods = [
+                m for m in child.methods
+                if m.public or m.receiver in rec_names
+            ]
+            export_sigs = list(child.sigs)  # traits are type-level; export all for now
+        # Rewrite method bodies with local module function map
+        for m in export_methods:
+            m.body = _rewrite_module_expr(m.body, local_functions, child_namespaces)
+        if _is_test_source(source_path):
+            export_enums = list(child.enums)
+        else:
+            export_enums = [e for e in child.enums if getattr(e, 'public', True)]
         bundle = {
             'functions': list(functions_by_name.values()),
             'exports': {name: own_functions[name] for name in public_functions},
+            'fixes': list(child.fixes),
+            'recs': export_recs,
+            'methods': export_methods,
+            'sigs': export_sigs,
+            'enums': export_enums,
         }
         cache[module_file] = bundle
         loading.remove(module_file)
@@ -3571,6 +3806,11 @@ def _load_source_modules(program, source_path):
     namespaces = {}
     imported_symbols = {}
     imported_functions = {}
+    imported_fixes = []
+    imported_recs = []
+    imported_methods = []
+    imported_sigs = []
+    imported_enums = []
     for use in program.uses:
         if use.path.startswith('std.'):
             builtin = use.path.split('.')[-1]
@@ -3595,8 +3835,24 @@ def _load_source_modules(program, source_path):
             if use.alias in namespaces or use.alias in imported_symbols:
                 raise SyntaxError(f"duplicate import name '{use.alias}'")
             namespaces[use.alias] = module['exports']
+            # In tst/**/t_*.te: unqualified calls (use mod → mod())
+            # Function names win over module alias when they share a name
+            if _is_test_source(source_path):
+                for name, qualified in module['exports'].items():
+                    if name not in imported_symbols:
+                        imported_symbols[name] = qualified
         for function in module['functions']:
             imported_functions[function.name] = function
+        for fx in module.get('fixes') or []:
+            imported_fixes.append(fx)
+        for rec in module.get('recs') or []:
+            imported_recs.append(rec)
+        for m in module.get('methods') or []:
+            imported_methods.append(m)
+        for sg in module.get('sigs') or []:
+            imported_sigs.append(sg)
+        for en in module.get('enums') or []:
+            imported_enums.append(en)
 
     for function in program.funcs:
         function.body = _rewrite_module_expr(function.body, imported_symbols, namespaces)
@@ -3605,6 +3861,34 @@ def _load_source_modules(program, source_path):
     if program.toplevel is not None:
         program.toplevel = _rewrite_module_expr(program.toplevel, imported_symbols, namespaces)
     program.funcs.extend(imported_functions.values())
+    # Module fix constants become available to the importer (and module fn bodies)
+    existing = {f.name for f in program.fixes}
+    for fx in imported_fixes:
+        if fx.name not in existing:
+            program.fixes.append(fx)
+            existing.add(fx.name)
+    existing_recs = {r.name for r in program.recs}
+    for rec in imported_recs:
+        if rec.name not in existing_recs:
+            program.recs.append(rec)
+            existing_recs.add(rec.name)
+    # methods: avoid exact duplicates (receiver, name)
+    existing_methods = {(m.receiver, m.name) for m in program.methods}
+    for m in imported_methods:
+        key = (m.receiver, m.name)
+        if key not in existing_methods:
+            program.methods.append(m)
+            existing_methods.add(key)
+    existing_sigs = {sg.name for sg in program.sigs}
+    for sg in imported_sigs:
+        if sg.name not in existing_sigs:
+            program.sigs.append(sg)
+            existing_sigs.add(sg.name)
+    existing_enums = {e.name for e in program.enums}
+    for en in imported_enums:
+        if en.name not in existing_enums:
+            program.enums.append(en)
+            existing_enums.add(en.name)
     return program
 
 
@@ -3614,12 +3898,14 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None):
         if verbose:
             print("tokens:", [(t.t.name, t.v) for t in toks[:50]])
         prog = _load_source_modules(Parser(toks).parse_program(), source_path)
+        if prog.toplevel is None and _is_test_source(source_path):
+            prog.toplevel = _auto_test_toplevel(prog)
         if verbose:
             print("funcs:", [f.name for f in prog.funcs])
         errs = TypeChecker().check_program(prog)
         for e in errs:
             print(f"type warning: {e}", file=sys.stderr)
-        c_code = CodeGen().generate(prog)
+        c_code = CodeGen(source_path).generate(prog)
         c_file = out_bin + ".c"
         with open(c_file, "w", encoding="utf-8") as f:
             f.write(c_code)
@@ -3679,6 +3965,10 @@ def main():
     if args.command == "check":
         try:
             prog = _load_source_modules(Parser(Lexer(src).tokenize()).parse_program(), args.source)
+
+            if prog.toplevel is None and _is_test_source(args.source):
+
+                prog.toplevel = _auto_test_toplevel(prog)
             errs = TypeChecker().check_program(prog)
             if errs:
                 for e in errs: print(e)

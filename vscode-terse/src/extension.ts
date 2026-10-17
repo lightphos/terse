@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { execFile } from 'child_process';
+import { spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -20,19 +20,32 @@ function buildTerse(sourcePath: string, outPath: string, cwd: string): Promise<s
   return new Promise((resolve, reject) => {
     const python = process.platform === 'win32' ? 'python' : 'python3';
     const args = ['compiler/tersec.py', 'build', sourcePath, '-o', outPath];
-    const child = execFile(python, args, { cwd }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error(stderr || stdout || error.message));
-        return;
-      }
-      resolve(stdout.trim());
-    });
+    const child = spawn(python, args, { cwd });
+
+    let stdout = '';
+    let stderr = '';
 
     child.stdout?.on('data', (data) => {
-      outputChannel.append(data.toString());
+      const text = data.toString();
+      stdout += text;
+      outputChannel.append(text);
     });
     child.stderr?.on('data', (data) => {
-      outputChannel.append(data.toString());
+      const text = data.toString();
+      stderr += text;
+      outputChannel.append(text);
+    });
+
+    child.on('error', (error) => {
+      reject(new Error(stderr || stdout || error.message));
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+      } else {
+        reject(new Error(stderr || stdout || `Process exited with code ${code}`));
+      }
     });
   });
 }
@@ -41,12 +54,32 @@ function runOutput(exePath: string, cwd: string): Promise<string> {
   vscode.window.showInformationMessage(`Running ${path.basename(exePath)} in ${cwd}`);
 
   return new Promise((resolve, reject) => {
-    execFile(exePath, { cwd }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error(stderr || stdout || error.message));
-        return;
+    const child = spawn(exePath, [], { cwd });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout?.on('data', (data) => {
+      const text = data.toString();
+      stdout += text;
+      outputChannel.append(text);
+    });
+    child.stderr?.on('data', (data) => {
+        const text = data.toString();
+        stderr += text;
+        outputChannel.append(text);
+      });
+
+    child.on('error', (error) => {
+      reject(new Error(stderr || stdout || error.message));
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(stderr || stdout || `Process exited with code ${code}`));
       }
-      resolve(stdout);
     });
   });
 }
@@ -131,9 +164,45 @@ async function runCommand() {
   }
 }
 
+async function testCommand() {
+  const workspace = vscode.workspace.workspaceFolders?.[0];
+  if (!workspace) {
+    vscode.window.showErrorMessage('Open the Terse workspace folder first');
+    return;
+  }
+
+  const cwd = workspace.uri.fsPath;
+  outputChannel.clear();
+  outputChannel.show(true);
+  outputChannel.appendLine('Running all tests in tst/...');
+
+  await new Promise<void>((resolve) => {
+    const child = spawn('make', ['tst'], { cwd, shell: true });
+
+    child.stdout?.on('data', (data) => {
+      outputChannel.append(data.toString());
+    });
+    child.stderr?.on('data', (data) => {
+      outputChannel.append(data.toString());
+    });
+
+    child.on('error', (error) => {
+      outputChannel.appendLine(`Error: ${error.message}`);
+      resolve();
+    });
+
+    child.on('close', () => {
+      resolve();
+    });
+  });
+
+  outputChannel.appendLine('Done.');
+}
+
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.commands.registerCommand('terse.compile', compileCommand));
   context.subscriptions.push(vscode.commands.registerCommand('terse.run', runCommand));
+  context.subscriptions.push(vscode.commands.registerCommand('terse.test', testCommand));
 }
 
 export function deactivate() {}

@@ -1,6 +1,6 @@
-// use std.tst
-use usage/mod
+use std.tst
+use mod
 
-
-
-go { mod() }
+fn t_mod() {
+     tst.eq("from mod", mod()) 
+}

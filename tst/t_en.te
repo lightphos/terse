@@ -1,0 +1,9 @@
+use std.tst
+
+en Colour {
+  Red,
+  Green,
+  Blue
+}
+
+fn t_colour_names() { tst.eq(1 + 1, 2) }

@@ -1,3 +1,4 @@
 fn identity(flag: bool) -> bool = flag
 
 go if identity(true) && !identity(false) { 42 } else { 0 }
+// EXPECT: 42

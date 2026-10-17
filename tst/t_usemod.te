@@ -1,0 +1,5 @@
+use std.tst
+use usage.mod
+
+fn t_mod() { tst.eq(mod(), "from mod") }
+fn t_mod2() { tst.eq(mod2(), "from mod2") }

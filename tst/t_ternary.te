@@ -1,0 +1,8 @@
+use std.tst
+
+fn t_ternary_true() { tst.eq(1 < 2 ? 10 : 20, 10) }
+fn t_ternary_false() { tst.eq(3 > 5 ? "big" : "small", "small") }
+fn t_ternary_even_odd() {
+  val n = 7
+  tst.eq(n % 2 == 0 ? "even" : "odd", "odd")
+}

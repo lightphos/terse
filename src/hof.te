@@ -5,10 +5,17 @@ fn double(n: i64) -> i64 = n * 2
 
 fn add(a: i64, b: i64) -> i64 = a + b
 
-go {
+fn useDouble(v: i64) -> i64 {
   val d = double
-  val r1 = apply(d, 21) // 42
-  // lambda
-  val r2 = apply(|x| x + 100, 7) // 107
+  ret apply(d, v)
+}
+
+fn useAdd(a: i64) -> i64 {
+  ret apply(|x| x + 100, a)
+}
+
+go {
+  val r1 = useDouble(5) // 10
+  val r2 = useAdd(7) // 107
   r1 + r2 // 149
 }

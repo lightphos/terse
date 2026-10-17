@@ -1,7 +1,7 @@
 // A structure automatically satisfies a trait when it has methods with matching
 // signatures. 
 
-Point { x: i64, y: i64 }
+pub Point { x: i64, y: i64 }
 
 fn Point.show() -> i64 { pr(self.x + " " + self.y) }
 fn Point.add() -> i64 { self.x + self.y }
@@ -19,6 +19,11 @@ tr Printable {
 tr Coordinate {
   fn cord() -> i64
 }
+
+pub fn origin() -> Point {
+  ret Point { x: 0, y: 0 }
+}
+
 
 fn print(p: Printable) {
   pr("poly " + p.str())

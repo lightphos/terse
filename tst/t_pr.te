@@ -1,0 +1,16 @@
+use std.tst
+
+fn t_print_number() { tst.eq(40 + 2, 42) }
+fn t_print_string() { tst.eq("hel" + "lo", "hello") }
+fn t_print_list_len() {
+  val xs = [10, 20, 30, 40]
+  tst.eq(len(xs), 4)
+}
+fn t_print_list_index() {
+  val xs = [10, 20, 30, 40]
+  tst.eq(xs[2], 30)
+}
+fn t_print_string_len() {
+  val s = "hel" + "lo"
+  tst.eq(len(s), 5)
+}
