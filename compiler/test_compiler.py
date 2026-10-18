@@ -295,7 +295,7 @@ class TestErrors(unittest.TestCase):
     def test_unknown_name(self):
         _, code, log = compile_src("go { pr(not_defined) }")
         self.assertNotEqual(code, 0)
-        self.assertIn("unknown", log.lower())
+        self.assertIn("undeclared identifier", log.lower())
 
 
 class TestFix(unittest.TestCase):
