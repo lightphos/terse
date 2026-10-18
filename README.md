@@ -49,7 +49,7 @@ or F5
 
 ## Language Spec
 
-See [docs/bnf.md](docs/bnf.md) and [docs/SPEC.md](docs/SPEC.md) for the full language specification.
+See [spec/bnf.md](spec/BNF.md) and [spec/SPEC.md](spec/SPEC.md) for the full language specification.
 
 ## Compiler Status (0.1)
 
