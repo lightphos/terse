@@ -49,11 +49,11 @@ or F5
 
 ## Language Spec
 
-See [spec/bnf.md](spec/BNF.md) and [spec/SPEC.md](spec/SPEC.md) for the full language specification.
+See [spec/TERSE_BNF.md](spec/TERSE_BNF.md) and [spec/SPEC.md](spec/SPEC.md) for the full language specification.
 
 ## Compiler Status (0.1)
 
-- Hello world built in print out
+- Built in print out
 - Basic arithmetic
 - If else
 
@@ -81,10 +81,10 @@ Not yet implemented (but specified):
 
 | File | Description | Output |
 |------|-------------|--------|
-| `src/hi.te` | Hi there | 0 |
+| `src/arith.te` | add + mult | 42, 30 |
 | `src/fact.te` | Recursion | 3628800 |
 | `src/hof.te` | Higher-order + lambda | 149 |
-| `src/if.te` | if + else | 59 |
+| `src/ifelse.te` | if + else | 59 |
 
 ## Architecture
 
