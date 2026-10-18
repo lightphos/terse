@@ -1,0 +1,32 @@
+use std.tst
+use lists_width
+
+fn t_sum_i32() {
+  tst.eq(sum_i32([1, 2, 3]), 6)
+}
+
+fn t_sum_i64() {
+  tst.eq(sum_i64([10, 20, 12]), 42)
+}
+
+fn t_push_len() {
+  tst.eq(push_demo(), 3)
+}
+
+fn t_f64_sum() {
+  // compare via integer scale to avoid float eq helpers
+  val s = sum_f64([1.5, 2.5])
+  tst.eq(s == 4.0, true)
+}
+
+fn t_index_i32() {
+  val xs: [i32] = [7, 8, 9]
+  tst.eq(xs[1], 8)
+  tst.eq(len(xs), 3)
+}
+
+fn t_char_list() {
+  val cs: [char] = [65, 66]
+  tst.eq(cs[0], 65)
+  tst.eq(len(cs), 2)
+}

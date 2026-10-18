@@ -1,3 +1,0 @@
-use std.tst
-
-fn t_env_fallback() { tst.eq(1 + 1, 2) }

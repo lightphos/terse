@@ -1,0 +1,21 @@
+
+fn num() {
+  val x: i32 = 3
+  val y: long = 4
+  ret x + y
+} 
+
+fn char() {
+  val c: char = 65
+  ret c
+}
+
+fn dbl() {
+  val d: double = 1.5
+  ret d
+}
+
+fn flt() {
+  val f: float = 1.5
+  ret f
+}

@@ -136,6 +136,9 @@ class Expr: pass
 class IntLit(Expr):
     value: int
 @dataclass
+class FloatLit(Expr):
+    value: float
+@dataclass
 class BoolLit(Expr):
     value: bool
 @dataclass
@@ -442,7 +445,7 @@ class Parser:
     def parse_primary(self):
         t = self.cur()
         if self.match(TT.INT): self.adv(); return IntLit(t.v)
-        if self.match(TT.FLOAT): self.adv(); return IntLit(int(t.v))  # f64 limited
+        if self.match(TT.FLOAT): self.adv(); return FloatLit(float(t.v))
         if self.match(TT.TRUE): self.adv(); return BoolLit(True)
         if self.match(TT.FALSE): self.adv(); return BoolLit(False)
         if self.match(TT.STRING): self.adv(); return StrLit(t.v)
@@ -1191,8 +1194,64 @@ class Parser:
         return Program(fs, recs, enums, sigs, methods, toplevel, uses, fixes)
 
 # --- Type check (light) -----------------------------------
+# Canonical numeric / alias map (host)
+TYPE_ALIASES = {
+    'char': 'i8', 'i8': 'i8',
+    'short': 'i16', 'i16': 'i16',
+    'int': 'i32', 'i32': 'i32',
+    'long': 'i64', 'i64': 'i64',
+    'u8': 'u8',
+    'u16': 'u16',
+    'u32': 'u32',
+    'u64': 'u64',
+    'float': 'f32', 'f32': 'f32',
+    'double': 'f64', 'f64': 'f64',
+    'bool': 'bool',
+    'str': 'str',
+}
+PRIM_LIST_ELEMS = ('i8','i16','i32','i64','u8','u16','u32','u64','f32','f64','bool')
+INTEGER_TYPES = {'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32', 'u64'}
+FLOAT_TYPES = {'f32', 'f64'}
+NUMERIC_TYPES = INTEGER_TYPES | FLOAT_TYPES
+
+def normalize_type(name: str) -> str:
+    if not name:
+        return 'i64'
+    return TYPE_ALIASES.get(name, name)
+
+def types_compatible(a: str, b: str) -> bool:
+    a, b = normalize_type(a), normalize_type(b)
+    if a == b:
+        return True
+    # integers freely mix for now (promoted to wider at codegen)
+    if a in INTEGER_TYPES and b in INTEGER_TYPES:
+        return True
+    if a in FLOAT_TYPES and b in FLOAT_TYPES:
+        return True
+    # int <-> float allowed with note (compatible for assignments)
+    if a in NUMERIC_TYPES and b in NUMERIC_TYPES:
+        return True
+    if a in ('list', 'List') and (b in ('list', 'List') or b.startswith('list_')):
+        return True
+    if b in ('list', 'List') and (a in ('list', 'List') or a.startswith('list_')):
+        return True
+    return False
+
+def promote_numeric(a: str, b: str) -> str:
+    a, b = normalize_type(a), normalize_type(b)
+    if a in FLOAT_TYPES or b in FLOAT_TYPES:
+        if a == 'f64' or b == 'f64' or a == 'double' or b == 'double':
+            return 'f64'
+        return 'f32' if a == 'f32' or b == 'f32' else 'f64'
+    rank = ['i8', 'u8', 'i16', 'u16', 'i32', 'u32', 'i64', 'u64']
+    try:
+        return rank[max(rank.index(a) if a in rank else 6, rank.index(b) if b in rank else 6)]
+    except ValueError:
+        return 'i64'
+
 class TypeChecker:
     def __init__(self):
+
         self.funcs = {}
         self.env = {}
         self.errors = []
@@ -1266,16 +1325,19 @@ class TypeChecker:
             self.check(prog.toplevel)
         return self.errors
     def check(self, e):
-        if isinstance(e, (IntLit,)): return 'i64'
+        if isinstance(e, IntLit): return 'i64'
+        if isinstance(e, FloatLit): return 'f64'
         if isinstance(e, BoolLit): return 'bool'
         if isinstance(e, StrLit): return 'str'
         if isinstance(e, ListLit):
-            item_types = [self.check(it) for it in e.items]
-            if item_types and item_types[0] == 'str':
+            item_types = [normalize_type(self.check(it)) for it in e.items]
+            if not item_types:
+                return 'list_i64'
+            if item_types[0] == 'str':
                 return 'list_str'
-            if item_types and item_types[0] in self.recs:
+            if item_types[0] in self.recs:
                 return f'list_{item_types[0]}'
-            return 'list'
+            return f'list_{item_types[0]}'
         if isinstance(e, RecordLit):
             for _, v in e.fields: self.check(v)
             if isinstance(e.ctor, Var) and e.ctor.name in self.recs:
@@ -1310,12 +1372,36 @@ class TypeChecker:
             return 'i64'
         if isinstance(e, Binary):
             lt = self.check(e.left); rt = self.check(e.right)
+            lt, rt = normalize_type(lt), normalize_type(rt)
+            if e.op == '=':
+                if lt == 'str' and rt != 'str' and rt not in INTEGER_TYPES and rt not in FLOAT_TYPES:
+                    self.errors.append(f"type mismatch: cannot assign '{rt}' to 'str'")
+                elif rt == 'str' and lt != 'str' and lt in NUMERIC_TYPES:
+                    self.errors.append(f"type mismatch: cannot assign 'str' to '{lt}'")
+                elif lt in NUMERIC_TYPES and rt not in NUMERIC_TYPES and rt != 'str':
+                    if not types_compatible(lt, rt):
+                        self.errors.append(f"type mismatch: cannot assign '{rt}' to '{lt}'")
+                elif not types_compatible(lt, rt) and lt != 'i64':
+                    # allow unknown/default i64 targets loosely
+                    if lt not in ('list', 'List') and not str(lt).startswith('list'):
+                        self.errors.append(f"type mismatch: cannot assign '{rt}' to '{lt}'")
+                return lt
             if e.op == '+':
                 if lt == 'list_str' or rt == 'list_str':
                     return 'list_str'
                 if lt == 'str' or rt == 'str':
                     return 'str'
-            return 'bool' if e.op in '==!=<=>=<>&&||' else 'i64'
+                if str(lt).startswith('list') or str(rt).startswith('list'):
+                    return lt if str(lt).startswith('list') else rt
+                if lt in NUMERIC_TYPES and rt in NUMERIC_TYPES:
+                    return promote_numeric(lt, rt)
+            if e.op in ('==', '!=', '<', '>', '<=', '>=', '&&', '||'):
+                if e.op in ('==', '!=', '<', '>', '<=', '>=') and (lt == 'str') != (rt == 'str'):
+                    self.errors.append(f"type mismatch: cannot compare '{lt}' and '{rt}'")
+                return 'bool'
+            if lt in NUMERIC_TYPES and rt in NUMERIC_TYPES:
+                return promote_numeric(lt, rt)
+            return 'i64'
         if isinstance(e, Unary): return self.check(e.expr)
         if isinstance(e, RetExpr):
             if e.value is not None:
@@ -1353,6 +1439,17 @@ class TypeChecker:
             if isinstance(e.func, Var) and e.func.name in ('pr','json','env','substr'):
                 return 'str' if e.func.name in ('json','env','substr') else 'i64'
             if isinstance(e.func, Var) and e.func.name == 'len': return 'i64'
+            if isinstance(e.func, Var) and e.func.name in self.funcs:
+                ats, ret = self.funcs[e.func.name]
+                for i, a in enumerate(e.args):
+                    if i < len(ats):
+                        got = normalize_type(self.check(a))
+                        exp = normalize_type(ats[i])
+                        if exp == 'str' and got != 'str' and got not in INTEGER_TYPES:
+                            self.errors.append(f"type mismatch: arg {i+1} of '{e.func.name}' expected '{exp}', got '{got}'")
+                        elif got == 'str' and exp in NUMERIC_TYPES:
+                            self.errors.append(f"type mismatch: arg {i+1} of '{e.func.name}' expected '{exp}', got 'str'")
+                return normalize_type(ret)
             return 'i64'
         if isinstance(e, Index):
             coll_type = self.check(e.coll)
@@ -1417,7 +1514,24 @@ class TypeChecker:
             else: self.env.pop(e.var, None)
             return 'i64'
         if isinstance(e, LetExpr):
-            t = e.typ.name if e.typ else self.check(e.value)
+            vt = normalize_type(self.check(e.value))
+            if e.typ is not None:
+                if e.typ.name in ('list',) and e.typ.args:
+                    inner = normalize_type(e.typ.args[0].name)
+                    t = 'list_str' if inner == 'str' else f'list_{inner}'
+                elif e.typ.name in ('map',) and e.typ.args:
+                    t = f"map_{normalize_type(e.typ.args[0].name)}_{normalize_type(e.typ.args[1].name)}"
+                else:
+                    t = normalize_type(e.typ.name)
+                if t == 'str' and vt != 'str':
+                    self.errors.append(f"type mismatch: '{e.name}' declared 'str' but value is '{vt}'")
+                elif vt == 'str' and t in NUMERIC_TYPES:
+                    self.errors.append(f"type mismatch: '{e.name}' declared '{t}' but value is 'str'")
+                elif t in NUMERIC_TYPES and vt not in NUMERIC_TYPES and vt != 'str' and not str(vt).startswith('list'):
+                    if not types_compatible(t, vt):
+                        self.errors.append(f"type mismatch: '{e.name}' declared '{t}' but value is '{vt}'")
+            else:
+                t = vt
             old = self.env.get(e.name)
             self.env[e.name] = t
             r = self.check(e.body)
@@ -1583,28 +1697,51 @@ typedef struct sqlite3_stmt sqlite3_stmt;
   static void sock_fini(void) {}
 #endif
 
-typedef struct { int64_t *d; int64_t n; } List;
+/* Width-accurate typed lists */
+#define TERSE_DEF_LIST(TAG, CTYPE) \
+typedef struct { CTYPE *d; int64_t n; int64_t cap; } List_##TAG; \
+static List_##TAG list_new_##TAG(int64_t n) { \
+  List_##TAG L = {NULL, 0, n}; \
+  if (n > 0) L.d = (CTYPE*)calloc((size_t)n, sizeof(CTYPE)); \
+  if (n > 0) L.n = n; \
+  return L; \
+} \
+static CTYPE list_get_##TAG(List_##TAG L, int64_t i) { \
+  if (i < 0 || i >= L.n) { fprintf(stderr, "index out of bounds\n"); exit(1); } \
+  return L.d[i]; \
+} \
+static int64_t list_len_##TAG(List_##TAG L) { return L.n; } \
+static List_##TAG list_push_##TAG(List_##TAG L, CTYPE value) { \
+  if (L.n >= L.cap) { L.cap = L.cap ? L.cap * 2 : 8; L.d = (CTYPE*)realloc(L.d, sizeof(CTYPE)*(size_t)L.cap); } \
+  L.d[L.n++] = value; \
+  return L; \
+} \
+static List_##TAG list_concat_##TAG(List_##TAG a, List_##TAG b) { \
+  List_##TAG out = list_new_##TAG(0); \
+  for (int64_t i = 0; i < a.n; i++) out = list_push_##TAG(out, a.d[i]); \
+  for (int64_t i = 0; i < b.n; i++) out = list_push_##TAG(out, b.d[i]); \
+  return out; \
+}
 
-static List list_new(int64_t n) {
-  List L; L.n = n; L.d = (int64_t*)malloc(sizeof(int64_t) * (n > 0 ? n : 1));
-  return L;
-}
-static int64_t list_get(List L, int64_t i) {
-  if (i < 0 || i >= L.n) { fprintf(stderr, "index out of bounds\n"); exit(1); }
-  return L.d[i];
-}
-static int64_t list_len(List L) { return L.n; }
-static List list_push(List L, int64_t value) {
-    L.d = (int64_t*)realloc(L.d, sizeof(int64_t) * (size_t)(L.n + 1));
-    L.d[L.n++] = value;
-    return L;
-}
-static List list_concat(List a, List b) {
-    List out = list_new(0);
-    for (int64_t i = 0; i < a.n; i++) out = list_push(out, a.d[i]);
-    for (int64_t i = 0; i < b.n; i++) out = list_push(out, b.d[i]);
-    return out;
-}
+TERSE_DEF_LIST(i8, int8_t)
+TERSE_DEF_LIST(i16, int16_t)
+TERSE_DEF_LIST(i32, int32_t)
+TERSE_DEF_LIST(i64, int64_t)
+TERSE_DEF_LIST(u8, uint8_t)
+TERSE_DEF_LIST(u16, uint16_t)
+TERSE_DEF_LIST(u32, uint32_t)
+TERSE_DEF_LIST(u64, uint64_t)
+TERSE_DEF_LIST(f32, float)
+TERSE_DEF_LIST(f64, double)
+TERSE_DEF_LIST(bool, bool)
+
+/* Backward-compatible aliases: untyped List == List_i64 */
+typedef List_i64 List;
+static List list_new(int64_t n) { return list_new_i64(n); }
+static int64_t list_get(List L, int64_t i) { return list_get_i64(L, i); }
+static int64_t list_len(List L) { return list_len_i64(L); }
+static List list_push(List L, int64_t value) { return list_push_i64(L, value); }
+static List list_concat(List a, List b) { return list_concat_i64(a, b); }
 
 /* maps {K:V} — str keys; i64 or str values */
 typedef struct { const char** k; int64_t* v; int64_t n; int64_t cap; } Map_str_i64;
@@ -1941,6 +2078,7 @@ static void print_list(List L) {
 static void print_i64(int64_t x) { _terse_did_print = 1; printf("%lld\n", (long long)x); }
 static void print_bool(bool v) { _terse_did_print = 1; printf(v ? "true\n" : "false\n"); }
 static void print_str(const char* s) { _terse_did_print = 1; printf("%s\n", s); }
+static void print_f64(double x) { _terse_did_print = 1; printf("%g\n", x); }
 
 /* -- std.tst assertion helpers (continue on failure; count via _tst_failures) -- */
 static int64_t _tst_failures = 0;
@@ -2250,7 +2388,7 @@ class CodeGen:
             return 'false'
         if ty in ('list_str', 'List_str'):
             return '(List_str){NULL,0,0}'
-        if ty in ('List', 'list', 'list_i64'):
+        if ty in ('List', 'list', 'list_i64') or (isinstance(ty, str) and ty.startswith('list_') and ty[5:] in PRIM_LIST_ELEMS):
             return '(List){NULL,0,0}'
         if isinstance(ty, str) and ty.startswith('list_'):
             return f'(List_{ty[5:]}){{NULL,0,0}}'
@@ -2296,7 +2434,7 @@ class CodeGen:
             return f"list_{inner}"
         if typ.name == 'map' and len(typ.args) >= 2:
             return f"map_{self.type_name(typ.args[0])}_{self.type_name(typ.args[1])}"
-        return typ.name
+        return normalize_type(typ.name)
 
     def typed_db_code(self, rec):
         name = rec.name
@@ -2402,28 +2540,72 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
 
     def c_type(self, t):
         if t.startswith('list_'):
-            inner = t[5:]
-            if inner in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
-                return 'List'
+            inner = normalize_type(t[5:])
             if inner == 'str':
                 return 'List_str'
+            if inner in PRIM_LIST_ELEMS:
+                return f'List_{inner}'
             return f"List_{inner}"
         if t.startswith('map_'):
             # map_str_i64 → Map_str_i64
             return 'Map_' + t[4:]
-        return {'fn':'void*','str':'const char*','list':'List','List':'List','i64':'int64_t','i32':'int32_t','u64':'uint64_t','bool':'bool','f64':'double'}.get(t, t)
+        t = normalize_type(t)
+        return {
+            'fn': 'void*',
+            'str': 'const char*',
+            'list': 'List_i64', 'List': 'List_i64', 'list_i64': 'List_i64',
+            'i8': 'int8_t', 'char': 'int8_t',
+            'i16': 'int16_t', 'short': 'int16_t',
+            'i32': 'int32_t', 'int': 'int32_t',
+            'i64': 'int64_t', 'long': 'int64_t',
+            'u8': 'uint8_t',
+            'u16': 'uint16_t',
+            'u32': 'uint32_t',
+            'u64': 'uint64_t',
+            'bool': 'bool',
+            'f32': 'float', 'float': 'float',
+            'f64': 'double', 'double': 'double',
+        }.get(t, t)
+
+
+    def list_tag(self, t):
+        """Return element tag for list_* or List_* type, or None."""
+        if not t:
+            return 'i64'
+        t = str(t)
+        if t in ('list', 'List', 'list_i64', 'List_i64'):
+            return 'i64'
+        if t in ('list_str', 'List_str'):
+            return 'str'
+        if t.startswith('list_'):
+            return normalize_type(t[5:])
+        if t.startswith('List_'):
+            return normalize_type(t[5:])
+        return None
+
+    def list_ops(self, list_ty):
+        """(c_type, new, get, len, push, concat) for a list_* / List_* type."""
+        tag = self.list_tag(list_ty) or 'i64'
+        if tag == 'str':
+            return ('List_str', 'list_new_str', 'list_get_str', 'list_len_str', 'list_push_str', 'list_concat_str')
+        if tag in PRIM_LIST_ELEMS:
+            return (f'List_{tag}', f'list_new_{tag}', f'list_get_{tag}', f'list_len_{tag}', f'list_push_{tag}', f'list_concat_{tag}')
+        return (f'List_{tag}', f'list_new_{tag}', f'list_get_{tag}', f'list_len_{tag}', f'list_push_{tag}', f'list_concat_{tag}')
 
     def expr_type(self, e) -> str:
         if isinstance(e, StrLit):
             return 'str'
         if isinstance(e, IntLit):
             return 'i64'
+        if isinstance(e, FloatLit):
+            return 'f64'
         if isinstance(e, BoolLit):
             return 'bool'
         if isinstance(e, ListLit):
             if e.items:
-                return 'list_' + self.expr_type(e.items[0]) if self.expr_type(e.items[0]) != 'i64' else 'list'
-            return 'list'
+                et = normalize_type(self.expr_type(e.items[0]))
+                return 'list_str' if et == 'str' else f'list_{et}'
+            return 'list_i64'
         if isinstance(e, Call) and isinstance(e.func, Var):
             n = e.func.name
             if n in ('has', 'starts', 'ends'): return 'bool'
@@ -2505,6 +2687,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
     def gen_expr(self, e, expected_type=None) -> Tuple[str, str]:
         if isinstance(e, IntLit):
             return f"INT64_C({e.value})", "i64"
+        if isinstance(e, FloatLit):
+            return f"((double){e.value})", "f64"
         if isinstance(e, BoolLit):
             return ("true" if e.value else "false"), "bool"
         if isinstance(e, StrLit):
@@ -2549,14 +2733,19 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             # List .size / .len
             if btype in ('List', 'list') or (isinstance(btype, str) and btype.startswith('list_')):
                 if e.field in ('size', 'len'):
-                    if btype.startswith('list_') and btype[5:] not in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
-                        return f"list_len_{btype[5:]}({base})", "i64"
-                    return f"list_len({base})", "i64"
+                    _, _, _, lenf, _, _ = self.list_ops(btype if str(btype).startswith('list') else 'list_i64')
+                    return f"{lenf}({base})", "i64"
             field_type = self.record_field_types.get(btype, {}).get(e.field, 'i64')
             return f"(({base}).{e.field})", field_type
         if isinstance(e, Binary):
             l, lt = self.gen_expr(e.left)
-            r, rt = self.gen_expr(e.right, lt if e.op == '=' else None)
+            # when concatenating onto a typed list, type the RHS list literal accordingly
+            exp_r = None
+            if e.op == '=':
+                exp_r = lt
+            elif e.op == '+' and self.list_tag(lt) is not None:
+                exp_r = lt if str(lt).startswith('list') or str(lt).startswith('List') else f'list_{self.list_tag(lt)}'
+            r, rt = self.gen_expr(e.right, exp_r)
             if e.op == '=':
                 # Map update: m[k] = v  →  m = map_put(m, k, v)
                 if isinstance(e.left, Index):
@@ -2576,15 +2765,21 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                         return f"map_{kty}_{vty}_put({base}, {kc}, {vc})", ct
                 return f"({l} = {r})", lt
             if e.op == '+':
-                # [str] + [str]  or  [str] + str (append one)
-                if lt == 'list_str' and rt == 'list_str':
-                    return f"list_concat_str({l}, {r})", "list_str"
-                if lt == 'list_str' and rt == 'str':
-                    return f"list_push_str({l}, {r})", "list_str"
-                if lt in ('List', 'list', 'list_i64') and rt in ('List', 'list', 'list_i64'):
-                    return f"list_concat({l}, {r})", "List"
-                if lt in ('List', 'list', 'list_i64') and rt == 'i64':
-                    return f"list_push({l}, {r})", "List"
+                # typed list concat / push (width-accurate)
+                ltag = self.list_tag(lt)
+                rtag = self.list_tag(rt)
+                if ltag is not None and rtag is not None and ltag == rtag:
+                    _, _, _, _, _, conf = self.list_ops(lt)
+                    out_ty = 'list_str' if ltag == 'str' else f'list_{ltag}'
+                    return f"{conf}({l}, {r})", out_ty
+                if ltag is not None and (rtag is None) and (
+                    normalize_type(rt) == ltag
+                    or (ltag in PRIM_LIST_ELEMS and normalize_type(rt) in PRIM_LIST_ELEMS and ltag != 'str')
+                ):
+                    _, _, _, _, push, _ = self.list_ops(lt)
+                    out_ty = 'list_str' if ltag == 'str' else f'list_{ltag}'
+                    cast = f"({self.c_type(ltag)})({r})" if normalize_type(rt) != ltag else r
+                    return f"{push}({l}, {cast})", out_ty
             if e.op == '+' and (lt == 'str' or rt == 'str'):
                 if lt == 'str' and rt == 'str':
                     return f"str_concat({l}, {r})", "str"
@@ -2618,39 +2813,22 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             n = len(e.items)
             tmp = self.fresh()
             element_type = None
-            if expected_type and expected_type.startswith('list_'):
-                element_type = expected_type[5:]
+            if expected_type and str(expected_type).startswith('list_'):
+                element_type = normalize_type(str(expected_type)[5:])
+            elif expected_type in ('list', 'List'):
+                element_type = 'i64'
             elif e.items:
-                element_type = self.expr_type(e.items[0])
-            if element_type and element_type not in ('i64', 'int', 'bool', 'str', 'f64') and (
-                element_type in self.record_field_types or expected_type
-            ):
-                parts = [f"List_{element_type} {tmp} = list_new_{element_type}({n})"]
-                for i, item in enumerate(e.items):
-                    value, value_type = self.gen_expr(item, element_type)
-                    parts.append(f"{tmp}.d[{i}] = {value}")
-                parts.append(tmp)
-                return "({ " + "; ".join(parts) + "; })", f"list_{element_type}"
-            if element_type == 'str' or expected_type == 'list_str':
-                parts = [f"List_str {tmp} = list_new_str({n})"]
-                for i, item in enumerate(e.items):
-                    value, _ = self.gen_expr(item, 'str')
-                    parts.append(f"{tmp}.d[{i}] = {value}")
-                parts.append(tmp)
-                return "({ " + "; ".join(parts) + "; })", "list_str"
-            if element_type in ('i64', 'int') or (expected_type == 'list_i64'):
-                parts = [f"List {tmp} = list_new({n})"]
-                for i, item in enumerate(e.items):
-                    value, _ = self.gen_expr(item)
-                    parts.append(f"{tmp}.d[{i}] = {value}")
-                parts.append(tmp)
-                return "({ " + "; ".join(parts) + "; })", "List"
-            parts = [f"List {tmp} = list_new({n})"]
-            for i, it in enumerate(e.items):
-                v, _ = self.gen_expr(it)
-                parts.append(f"{tmp}.d[{i}] = {v}")
+                element_type = normalize_type(self.expr_type(e.items[0]))
+            else:
+                element_type = 'i64'
+            list_ty = 'list_str' if element_type == 'str' else f'list_{element_type}'
+            ct, newf, getf, lenf, pushf, conf = self.list_ops(list_ty)
+            parts = [f"{ct} {tmp} = {newf}({n})"]
+            for i, item in enumerate(e.items):
+                value, _ = self.gen_expr(item, element_type)
+                parts.append(f"{tmp}.d[{i}] = ({self.c_type(element_type)})({value})" if element_type in PRIM_LIST_ELEMS else f"{tmp}.d[{i}] = {value}")
             parts.append(tmp)
-            return "({ " + "; ".join(parts) + "; })", "List"
+            return "({ " + "; ".join(parts) + "; })", list_ty
         if isinstance(e, MapLit):
             mt = expected_type if expected_type and expected_type.startswith('map_') else None
             if mt is None and e.entries:
@@ -2685,13 +2863,11 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 kty, vty = parts[1], '_'.join(parts[2:])
                 ret = 'str' if vty == 'str' else 'i64'
                 return f"map_{kty}_{vty}_get({c}, {i})", ret
-            if ct.startswith('list_'):
-                record_name = ct[5:]
-                if record_name in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
-                    return f"list_get({c}, {i})", "i64"
-                if record_name == 'str':
-                    return f"list_get_str({c}, {i})", "str"
-                return f"list_get_{record_name}({c}, {i})", record_name
+            if ct in ('list', 'List') or (isinstance(ct, str) and (ct.startswith('list_') or ct.startswith('List_'))):
+                tag = self.list_tag(ct) or 'i64'
+                _, _, getf, _, _, _ = self.list_ops(ct if isinstance(ct, str) and ct.startswith('list') else f'list_{tag}')
+                ret = 'str' if tag == 'str' else tag
+                return f"{getf}({c}, {i})", ret
             if ct.startswith('map_') or ct == 'Map':
                 return f"map_str_i64_get({c}, {i})", "i64"
             return f"list_get({c}, {i})", "i64"
@@ -2718,15 +2894,18 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 return f"list_push({collection}, {value})", 'list'
             if isinstance(e.func, Var) and e.func.name == 'pr':
                 a, at = self.gen_expr(e.args[0])
+                at = normalize_type(at)
                 if at == 'str':
                     return f"(print_str({a}), INT64_C(0))", "i64"
-                if at in ('list', 'List'):
+                if at in ('list', 'List') or str(at).startswith('list'):
                     return f"(print_list({a}), INT64_C(0))", "i64"
                 if at == 'bool':
                     return f"(print_bool({a}), INT64_C(0))", "i64"
+                if at in ('f32', 'f64'):
+                    return f"(print_f64((double)({a})), INT64_C(0))", "i64"
                 if at in self.record_field_types:
                     return f"(print_{at}({a}), INT64_C(0))", "i64"
-                return f"(print_i64({a}), INT64_C(0))", "i64"
+                return f"(print_i64((int64_t)({a})), INT64_C(0))", "i64"
             if isinstance(e.func, Var) and e.func.name == 'map':
                 coll, ct = self.gen_expr(e.args[0])
                 fn_e = e.args[1]
@@ -2948,7 +3127,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 args = []
                 if e.func.name in self.func_param_types:
                     for a, expected in zip(e.args, self.func_param_types[e.func.name]):
-                        arg_code, arg_type = self.gen_expr(a)
+                        arg_code, arg_type = self.gen_expr(a, expected)
                         if expected in self.interface_methods and arg_type in self.record_field_types and (expected, arg_type) in self.interface_helpers:
                             args.append(f"{self.interface_helpers[(expected, arg_type)]}( &({arg_code}) )")
                         else:
@@ -3062,21 +3241,13 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 kty, vty = parts[1], '_'.join(parts[2:])
                 coll = f"map_{kty}_{vty}_keys({coll})"
                 ct = 'list_str'
-            # Element type from list_* / List / map
-            if ct == 'list_str' or ct == 'List_str':
-                elem_t, c_list, get_elem = 'str', 'List_str', None
-                c_elem = 'const char*'
-            elif ct.startswith('list_'):
-                inner = ct[5:]
-                if inner in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
-                    elem_t, c_list, c_elem = 'i64', 'List', 'int64_t'
-                else:
-                    elem_t, c_list, c_elem = inner, f'List_{inner}', inner
-            elif ct in ('list', 'List'):
-                elem_t, c_list, c_elem = 'i64', 'List', 'int64_t'
-            else:
-                # fallback: treat as i64 list
-                elem_t, c_list, c_elem = 'i64', 'List', 'int64_t'
+            # Element type from list_* / List
+            list_ty = ct if (isinstance(ct, str) and (ct.startswith('list_') or ct in ('list', 'List'))) else 'list_i64'
+            if list_ty in ('list', 'List'):
+                list_ty = 'list_i64'
+            elem_t = self.list_tag(list_ty) or 'i64'
+            c_list, newf, getf, lenf, pushf, conf = self.list_ops(list_ty)
+            c_elem = self.c_type(elem_t)
             old = self.env.get(e.var)
             self.env[e.var] = elem_t
             body_stmts = self.gen_loop_body(e.body)
@@ -3084,16 +3255,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             else: self.env.pop(e.var, None)
             idx = self.fresh()
             tmp = self.fresh()
-            if c_list == 'List_str':
-                bind = f"const char* {e.var} = list_get_str({tmp}, {idx});"
-                len_e = f"list_len_str({tmp})"
-            elif c_list == 'List':
-                bind = f"int64_t {e.var} = list_get({tmp}, {idx});"
-                len_e = f"list_len({tmp})"
-            else:
-                # List_Record etc.
-                bind = f"{c_elem} {e.var} = list_get_{elem_t}({tmp}, {idx});"
-                len_e = f"list_len_{elem_t}({tmp})"
+            bind = f"{c_elem} {e.var} = {getf}({tmp}, {idx});"
+            len_e = f"{lenf}({tmp})"
             return (
                 f"({{ {c_list} {tmp} = {coll}; "
                 f"for (int64_t {idx} = 0; {idx} < {len_e}; {idx}++) {{ "
@@ -3991,9 +4154,9 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None):
             print("funcs:", [f.name for f in prog.funcs])
         errs = TypeChecker().check_program(prog)
         # Unknown names / clear mistakes are hard errors; keep going only if none
-        fatal = [e for e in errs if e.startswith('unknown ')]
+        fatal = [e for e in errs if e.startswith('unknown ') or e.startswith('type mismatch')]
         for e in errs:
-            kind = "error" if e.startswith('unknown ') else "warning"
+            kind = "error" if (e.startswith('unknown ') or e.startswith('type mismatch')) else "warning"
             print(f"type {kind}: {e}", file=sys.stderr)
         if fatal:
             return 1

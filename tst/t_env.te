@@ -1,0 +1,6 @@
+use std.tst
+use env
+
+fn t_env() { 
+    tst.eq(write_read_env(), "some env") 
+}

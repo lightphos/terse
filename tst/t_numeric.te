@@ -1,0 +1,9 @@
+use std.tst
+use numeric
+
+fn t_numerics() {
+  tst.eq(num(), 7)
+  tst.eq(char(), 65)
+  tst.eq(dbl(), 1.5)
+  tst.eq(flt(), 1.5)
+}

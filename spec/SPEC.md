@@ -65,7 +65,15 @@ Lambda: `|params| body`
 ## 3. Types
 
 ### Primitives
-`i64`, `bool`, `str` (primary). `i32`, `u64`, `f64`, `()` exist in grammar with limited support.
+Primary: `i64`, `bool`, `str`.
+
+Integers (aliases in parentheses):  
+`i8` (`char`), `i16` (`short`), `i32` (`int`), `i64` (`long`),  
+`u8`, `u16`, `u32`, `u64`
+
+Floats: `f32` (`float`), `f64` (`double`) — float literals are `f64`.
+
+Integer types mix freely; int↔float promotes toward float. `str` does not mix with numbers (type error).
 
 ### Composite
 | Form | Example | Notes |
@@ -260,6 +268,7 @@ The host compiler (`tersec.py`) reports problems before or instead of opaque C e
 |---------|---------|
 | `type error: unknown name 'X'` | Identifier not in scope (locals, `fix`, enums, imports) |
 | `type error: unknown function 'X'` | Call to an undefined function |
+| `type error: type mismatch: ...` | Assign/arg/compare with incompatible types (e.g. `str` vs `i32`) |
 | `error: N error(s) — compile aborted` | Summary after one or more hard errors |
 
 Hard errors of the form `unknown …` stop the pipeline **before** gcc/clang, so you should not see `undeclared identifier` from the C compiler for simple name mistakes.

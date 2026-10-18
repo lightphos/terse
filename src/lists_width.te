@@ -1,0 +1,39 @@
+// Width-accurate lists: [i32], [i64], [f64], [char], ...
+
+pub fn sum_i32(xs: [i32]) -> i32 {
+  var s: i32 = 0
+  lp x: xs {
+    s = s + x
+  }
+  ret s
+}
+
+pub fn sum_i64(xs: [i64]) -> i64 {
+  var s: i64 = 0
+  lp x: xs {
+    s = s + x
+  }
+  ret s
+}
+
+pub fn sum_f64(xs: [f64]) -> f64 {
+  var s: f64 = 0.0
+  lp x: xs {
+    s = s + x
+  }
+  ret s
+}
+
+pub fn push_demo() -> i64 {
+  var a: [i32] = []
+  a = a + 10
+  a = a + [20, 30]
+  ret len(a)
+}
+
+go {
+  pr(sum_i32([1, 2, 3]))
+  pr(sum_i64([10, 20]))
+  pr(sum_f64([1.5, 2.5]))
+  pr(push_demo())
+}
