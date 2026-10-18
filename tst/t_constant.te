@@ -1,4 +1,8 @@
 use std.tst
 use constant
 
-fn t_constant_show() { tst.eq(constant.show(), "Greetings from Terse! 42") }
+fn t_constant_show() {
+    tst.eq(show(), "Greetings from Terse! 42") 
+    tst.eq(PUBLIC_HI, "hi") 
+}
+

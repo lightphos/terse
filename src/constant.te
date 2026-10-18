@@ -1,10 +1,8 @@
-fix GREETING: str = "Greetings from Terse!"
-fix ANSWER: i64 = 42
+// src/constant.te
+fix GREETING: str = "Greetings from Terse!"   // file-local
+fix ANSWER: i64 = 42                          // file-local
+pub fix PUBLIC_HI: str = "hi"                   // exported
 
-fn show() -> str {
-  ret GREETING + " " + ANSWER
-}
-
-go {
-  pr(show())
+pub fn show() -> str {
+  ret GREETING + " " + ANSWER   // OK inside module
 }

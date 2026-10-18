@@ -6,6 +6,7 @@ export CC ?= clang
 # Host Python compiler and sources (adjust if your layout differs)
 PYTHON   ?= python3
 TERSEC   ?= compiler/tersec.py
+TERSEC_TEST   ?= compiler/test_compiler.py
 TC_SRC   ?= compiler/tc.te
 OUT      ?= out
 
@@ -28,6 +29,10 @@ help:
 	@echo "  make tst         - run all tst t_*.te file"
 	@echo "  make clean"
 	@echo "CC=$(CC)  (export CC=... to change C compiler used by tc stages)"
+
+verify:
+	$(PYTHON) $(TERSEC_TEST)
+
 
 # --- Bootstrap ----------------------------------------------------------
 # Generated C is large; host/tc use -O0 so Apple clang does not abort at -O2.

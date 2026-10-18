@@ -1,0 +1,7 @@
+use std.tst
+use arith
+
+fn t_ok() { tst.eq(add(), 42) }
+fn t_bad1() { tst.ne(add(), 0) }
+fn t_bad2() { tst.ne(99, add()) }
+fn t_ok2() { tst.eq(1, 1) }

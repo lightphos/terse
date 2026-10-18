@@ -1,0 +1,3 @@
+go {
+  pr(no_such_function())
+}

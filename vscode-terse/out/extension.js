@@ -137,8 +137,7 @@ async function runCommand() {
         outputChannel.appendLine(`Compiling ${path.basename(document.fileName)} -> ${outPath}`);
         await buildTerse(sourcePath, outFsPath, workspace.uri.fsPath);
         outputChannel.appendLine(`Running ${outPath}`);
-        const result = await runOutput(outFsPath, workspace.uri.fsPath);
-        outputChannel.appendLine(result);
+        await runOutput(outFsPath, workspace.uri.fsPath);
         vscode.window.showInformationMessage(`Ran ${outPath}`);
     }
     catch (err) {
@@ -155,22 +154,35 @@ async function testCommand() {
     outputChannel.clear();
     outputChannel.show(true);
     outputChannel.appendLine('Running all tests in tst/...');
-    await new Promise((resolve) => {
-        const child = (0, child_process_1.spawn)('make', ['tst'], { cwd, shell: true });
-        child.stdout?.on('data', (data) => {
-            outputChannel.append(data.toString());
-        });
-        child.stderr?.on('data', (data) => {
-            outputChannel.append(data.toString());
-        });
-        child.on('error', (error) => {
-            outputChannel.appendLine(`Error: ${error.message}`);
-            resolve();
-        });
-        child.on('close', () => {
-            resolve();
-        });
-    });
+    const tstDir = path.join(cwd, 'tst');
+    const files = fs.readdirSync(tstDir)
+        .filter(f => f.startsWith('t_') && f.endsWith('.te'))
+        .sort();
+    for (const file of files) {
+        const base = path.basename(file, '.te');
+        const outPath = path.join(cwd, 'out', base);
+        const python = process.platform === 'win32' ? 'python' : 'python3';
+        // outputChannel.appendLine(`=== ${base} ===`);
+        try {
+            await new Promise((resolve, reject) => {
+                const child = (0, child_process_1.spawn)(python, ['compiler/tersec.py', 'build', `tst/${file}`, '-o', outPath], { cwd });
+                child.stdout?.on('data', (data) => { outputChannel.append(data.toString()); });
+                child.stderr?.on('data', (data) => { outputChannel.append(data.toString()); });
+                child.on('error', (err) => reject(err));
+                child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`exit code ${code}`)));
+            });
+            await new Promise((resolve, reject) => {
+                const child = (0, child_process_1.spawn)(outPath, [], { cwd });
+                child.stdout?.on('data', (data) => { outputChannel.append(data.toString()); });
+                child.stderr?.on('data', (data) => { outputChannel.append(data.toString()); });
+                child.on('error', (err) => reject(err));
+                child.on('close', (code) => code === 0 ? resolve() : reject(new Error(`exit code ${code}`)));
+            });
+        }
+        catch (err) {
+            outputChannel.appendLine(`FAIL ${base}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
     outputChannel.appendLine('Done.');
 }
 function activate(context) {

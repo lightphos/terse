@@ -1135,8 +1135,19 @@ class Parser:
                     decl = self.parse_rec()
                     decl.public = True
                     recs.append(decl)
+                elif self.match(TT.FIX):
+                    self.adv()
+                    name = self.expect(TT.IDENT).v
+                    typ = None
+                    if self.match(TT.COLON):
+                        self.adv()
+                        typ = self.parse_type()
+                    self.expect(TT.ASSIGN)
+                    val = self.parse_expr()
+                    fixes.append(FixDecl(name, val, typ, public=True))
+                    if self.match(TT.SEMI): self.adv()
                 else:
-                    raise SyntaxError("expected fn or rec after pub")
+                    raise SyntaxError("expected fn, rec, or fix after pub")
             elif self.match(TT.FN):
                 decl = self.parse_fn()
                 if isinstance(decl, MethodDecl):
@@ -1310,6 +1321,13 @@ class TypeChecker:
                 self.check(a)
             return e.func.obj.name
         if isinstance(e, Call):
+            # Resolve callee before checking args for better messages
+            if isinstance(e.func, Var):
+                n = e.func.name
+                builtins = {'pr','len','json','env','str','push','substr','arg','keys','values',
+                            'has','up','low','trim','split','join','parse','starts','ends','map'}
+                if n not in self.funcs and n not in builtins and n not in self.env:
+                    self.errors.append(f"unknown function '{n}'")
             self.check(e.func)
             for a in e.args: self.check(a)
             if isinstance(e.func, Var) and e.func.name == 'push' and e.args:
@@ -1573,6 +1591,12 @@ static List list_push(List L, int64_t value) {
     L.d = (int64_t*)realloc(L.d, sizeof(int64_t) * (size_t)(L.n + 1));
     L.d[L.n++] = value;
     return L;
+}
+static List list_concat(List a, List b) {
+    List out = list_new(0);
+    for (int64_t i = 0; i < a.n; i++) out = list_push(out, a.d[i]);
+    for (int64_t i = 0; i < b.n; i++) out = list_push(out, b.d[i]);
+    return out;
 }
 
 /* maps {K:V} — str keys; i64 or str values */
@@ -1943,6 +1967,39 @@ static int64_t tst_eq_str(const char* got, const char* expected, const char* fil
     _tst_failures++;
     fprintf(stderr, "FAIL %s:%lld: expected \"%s\", got \"%s\"\n",
             file ? file : "?", (long long)line, e, g);
+    return INT64_C(1);
+  }
+  return INT64_C(0);
+}
+static int64_t tst_ne_i64(int64_t got, int64_t unexpected, const char* file, int64_t line) {
+  _tst_checks++;
+  if (got == unexpected) {
+    _tst_failures++;
+    fprintf(stderr, "FAIL %s:%lld: expected not %lld, got %lld\n",
+            file ? file : "?", (long long)line, (long long)unexpected, (long long)got);
+    return INT64_C(1);
+  }
+  return INT64_C(0);
+}
+static int64_t tst_ne_bool(bool got, bool unexpected, const char* file, int64_t line) {
+  _tst_checks++;
+  if (got == unexpected) {
+    _tst_failures++;
+    fprintf(stderr, "FAIL %s:%lld: expected not %s, got %s\n",
+            file ? file : "?", (long long)line,
+            unexpected ? "true" : "false", got ? "true" : "false");
+    return INT64_C(1);
+  }
+  return INT64_C(0);
+}
+static int64_t tst_ne_str(const char* got, const char* unexpected, const char* file, int64_t line) {
+  _tst_checks++;
+  const char* g = got ? got : "";
+  const char* u = unexpected ? unexpected : "";
+  if (strcmp(g, u) == 0) {
+    _tst_failures++;
+    fprintf(stderr, "FAIL %s:%lld: expected not \"%s\", got \"%s\"\n",
+            file ? file : "?", (long long)line, u, g);
     return INT64_C(1);
   }
   return INT64_C(0);
@@ -2457,7 +2514,14 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         if isinstance(e, Var):
             if e.name in self.known:
                 return f"(void*){self.known[e.name]}", "fn"
-            # top-level const or local
+            if e.name in self.env:
+                return e.name, self.env[e.name]
+            # top-level fix constant
+            for c in getattr(self, 'const_decls', []) or []:
+                if c.name == e.name:
+                    tn = self.env.get(c.name, 'i64')
+                    return e.name, tn
+            # Last resort — still emit (legacy); prefer typechecker fatal above
             return e.name, self.env.get(e.name, "i64")
         if isinstance(e, Member):
             # Enum variant: Colour.Green (tag-only) or base for Option.Some(...)
@@ -2510,15 +2574,10 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     return f"list_concat_str({l}, {r})", "list_str"
                 if lt == 'list_str' and rt == 'str':
                     return f"list_push_str({l}, {r})", "list_str"
-                if lt == 'List' and rt == 'List':
-                    # i64 lists: push elements of r onto copy of l
-                    tmp = self.fresh()
-                    return (
-                        f"({{ List {tmp} = {l}; "
-                        f"for (int64_t _i = 0; _i < ({r}).n; _i++) "
-                        f"{tmp} = list_push({tmp}, ({r}).d[_i]); {tmp}; }})",
-                        "List",
-                    )
+                if lt in ('List', 'list', 'list_i64') and rt in ('List', 'list', 'list_i64'):
+                    return f"list_concat({l}, {r})", "List"
+                if lt in ('List', 'list', 'list_i64') and rt == 'i64':
+                    return f"list_push({l}, {r})", "List"
             if e.op == '+' and (lt == 'str' or rt == 'str'):
                 if lt == 'str' and rt == 'str':
                     return f"str_concat({l}, {r})", "str"
@@ -2682,7 +2741,10 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 a, at = self.gen_expr(e.args[0])
                 if at == 'list_str':
                     return f"list_len_str({a})", "i64"
+                if at in ('list', 'List', 'list_i64'):
+                    return f"list_len({a})", "i64"
                 if at.startswith('list_'):
+                    # list_str already handled; list_RecordName etc.
                     return f"list_len_{at[5:]}({a})", "i64"
                 if at.startswith('map_'):
                     parts = at.split('_')
@@ -2831,6 +2893,12 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     got, got_t = self.gen_expr(e.args[0])
                     exp, _ = self.gen_expr(e.args[1])
                     helper = {'i64': 'tst_eq_i64', 'bool': 'tst_eq_bool', 'str': 'tst_eq_str'}.get(got_t, 'tst_eq_i64')
+                    where = self.tst_where(e)
+                    return f"({helper}({got}, {exp}, {where}), INT64_C(0))", "i64"
+                if e.func.field in ('ne', 'not_equals') and len(e.args) >= 2:
+                    got, got_t = self.gen_expr(e.args[0])
+                    exp, _ = self.gen_expr(e.args[1])
+                    helper = {'i64': 'tst_ne_i64', 'bool': 'tst_ne_bool', 'str': 'tst_ne_str'}.get(got_t, 'tst_ne_i64')
                     where = self.tst_where(e)
                     return f"({helper}({got}, {exp}, {where}), INT64_C(0))", "i64"
                 if e.func.field == 'chk' and len(e.args) >= 2:
@@ -3475,6 +3543,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
 # --- Driver -----------------------------------------------
 def _rewrite_module_expr(e, local_functions, imported_modules):
     if isinstance(e, Var):
+        if e.name in local_functions:
+            return Var(local_functions[e.name])
         return e
     if isinstance(e, Member):
         if isinstance(e.obj, Var) and e.obj.name in imported_modules:
@@ -3765,6 +3835,16 @@ def _load_source_modules(program, source_path):
             duplicate = sorted(set(local_functions).intersection(own_functions))[0]
             raise SyntaxError(f"module '{use.path}' redeclares imported name '{duplicate}'")
         local_functions.update(own_functions)
+        # fix: private by default — rename file-local constants so they are not importable
+        processed_fixes = []
+        for fx in child.fixes:
+            if fx.public:
+                processed_fixes.append(fx)
+            else:
+                internal = f"__module_{prefix}_fix_{fx.name}"
+                local_functions[fx.name] = internal
+                processed_fixes.append(FixDecl(internal, fx.value, fx.typ, public=False))
+        child.fixes = processed_fixes
         for function in child.funcs:
             function.body = _rewrite_module_expr(function.body, local_functions, child_namespaces)
             function.name = own_functions[function.name]
@@ -3903,8 +3983,13 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None):
         if verbose:
             print("funcs:", [f.name for f in prog.funcs])
         errs = TypeChecker().check_program(prog)
+        # Unknown names / clear mistakes are hard errors; keep going only if none
+        fatal = [e for e in errs if e.startswith('unknown ')]
         for e in errs:
-            print(f"type warning: {e}", file=sys.stderr)
+            kind = "error" if e.startswith('unknown ') else "warning"
+            print(f"type {kind}: {e}", file=sys.stderr)
+        if fatal:
+            return 1
         c_code = CodeGen(source_path).generate(prog)
         c_file = out_bin + ".c"
         with open(c_file, "w", encoding="utf-8") as f:

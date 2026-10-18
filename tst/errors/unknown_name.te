@@ -1,0 +1,3 @@
+go {
+  pr(not_defined_var)
+}

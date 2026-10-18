@@ -1,0 +1,7 @@
+use std.tst
+use arith
+
+// Must fail: add() is 42, not 0
+fn t_wrong_sum() {
+  tst.ne(add(), 0)
+}

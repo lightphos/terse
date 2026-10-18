@@ -1,0 +1,27 @@
+use std.tst
+
+fn t_str_concat() {
+  var xs: [str] = []
+  xs = xs + ["a"]
+  xs = xs + "b"
+  tst.eq(len(xs), 2)
+  tst.eq(xs[0], "a")
+  tst.eq(xs[1], "b")
+}
+
+fn t_i64_push() {
+  var xs: [i64] = []
+  xs = xs + 10
+  xs = xs + [20, 30]
+  tst.eq(len(xs), 3)
+  tst.eq(xs[0], 10)
+  tst.eq(xs[2], 30)
+}
+
+fn t_i64_concat() {
+  val a = [1, 2]
+  val b = [3]
+  val c = a + b
+  tst.eq(len(c), 3)
+  tst.eq(c[1], 2)
+}

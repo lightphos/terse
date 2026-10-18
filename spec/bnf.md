@@ -1,5 +1,5 @@
 (* ============================================================
-   Terse 0.2 — complete grammar
+   Terse 0.3 — grammar (aligned with SPEC.md / tersec.py host)
    ============================================================ *)
 
 
@@ -23,8 +23,13 @@
 
 <use-item>      ::= <path> [ "as" IDENT ]
                   | <path> "." "{" <use-item> { "," <use-item> } "}"
+                  | <path> "." "*"
 
 <path>          ::= IDENT { "." IDENT }
+
+(* Visibility: optional "pub" before fn / rec / tr / fix.
+   Enums (en) are public by default — no pub required to export.
+   fix without pub is file-local (not imported by use). *)
 
 <vis>           ::= "pub"
 
@@ -35,9 +40,12 @@
 
 <record-decl>   ::= [<vis>] "rec" IDENT [ <type-params> ]
                     "{" [ <field> { "," <field> } [ "," ] ] "}"
+                  | [<vis>] IDENT "{" [ <field> { "," <field> } [ "," ] ] "}"
+                    (* bare "Point { ... }" sugar for rec *)
 
 <enum-decl>     ::= [<vis>] "en" IDENT [ <type-params> ]
                     "{" [ <enum-variant> { "," <enum-variant> } [ "," ] ] "}"
+                    (* default public for module export *)
 
 <enum-variant>  ::= IDENT [ "(" [ <type> { "," <type> } [ "," ] ] ")" ]
 
@@ -51,9 +59,10 @@
 
 <go-decl>       ::= "go" <fn-body>
 
-<fix-decl>    ::= [<vis>] "fix" IDENT [ ":" <type> ] "=" <expr>
+<fix-decl>      ::= [<vis>] "fix" IDENT [ ":" <type> ] "=" <expr>
+                    (* private/file-local by default; pub fix is exportable *)
 
-<fn-name>       ::= IDENT [ "." IDENT ]
+<fn-name>       ::= IDENT [ "." IDENT ]   (* Point.method *)
 
 <params>        ::= "(" [ <param> { "," <param> } [ "," ] ] ")"
 
@@ -84,6 +93,11 @@
 (* Expressions *)
 
 <expr>          ::= <pipe-expr>
+                  | <ternary-expr>
+
+(* Ternary is parsed with ? : at the same level as other expr forms in the host *)
+
+<ternary-expr>  ::= <pipe-expr> "?" <expr> ":" <expr>
 
 <pipe-expr>     ::= <or-expr> { "|>" <or-expr> }
 
@@ -93,14 +107,10 @@
 
 <cmp-expr>      ::= <add-expr> { <cmp-op> <add-expr> }
 
-<cmp-op>        ::= "=="
-                  | "!="
-                  | "<"
-                  | ">"
-                  | "<="
-                  | ">="
+<cmp-op>        ::= "==" | "!=" | "<" | ">" | "<=" | ">="
 
 <add-expr>      ::= <mul-expr> { ( "+" | "-" ) <mul-expr> }
+                    (* + also: str concat, list concat/push *)
 
 <mul-expr>      ::= <unary-expr> { ( "*" | "/" | "%" ) <unary-expr> }
 
@@ -151,8 +161,8 @@
                   | "if" <expr> "{" { <match-arm> } "}"
                     [ "else" <block-expr> ]
 
-(* Match-style if is used when the body contains => arms.
-   Catch-all: "_ => expr" inside the arms, or a trailing else block. *)
+(* Match-style if when body contains => arms.
+   Catch-all: "_ => expr" or trailing else block. *)
 
 <match-expr>    ::= "match" <expr> "{" { <match-arm> } "}"
 
@@ -203,9 +213,13 @@
 
 <assign-stmt>   ::= <postfix-expr> <assign-op> <expr>
 
-<assign-op>     ::= "="
-                  | "+="
-                  | "-="
-                  | "*="
-                  | "/="
-                  | "%="
+<assign-op>     ::= "=" | "+=" | "-=" | "*=" | "/=" | "%="
+
+
+(* ------------------------------------------------------------
+   Notes (host semantics — see SPEC.md)
+   - std.str / std.io / std.tst are library surfaces, not grammar productions
+   - tst.eq / tst.ne are std.tst calls
+   - Test layout: tst/**/t_*.te auto-runs zero-arg fns
+   - Module search: parallel tst/usage ↔ src/usage
+   ------------------------------------------------------------ *)
