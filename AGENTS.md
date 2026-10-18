@@ -7,6 +7,7 @@ Reference compiler for the **Terse** language, implemented in Python at `compile
 - Build + run an example: `make terse.<name> dir=src` → `out/<name>`; also `./run.sh <name>` (build+run) or `./cmp.sh <name>` (build only)
 - Direct CLI: `python3 compiler/tersec.py {build|run|check} FILE [-o OUT] [--keep-c] [-v]`. `check` only parses + typechecks and prints `OK`.
 - Tests: `bash compiler/run_tests.sh` (a **shell** script — do not invoke with `python3`). Equivalent to `python3 -m unittest compiler.test_compiler -v`.
+- Git hooks: A `pre-commit` hook in `.git/hooks/` (or via `git config core.hooksPath scripts/`) runs `bash compiler/run_tests.sh` before every commit and aborts the commit if tests fail. See the `scripts/pre-commit` or `.git/hooks/pre-commit` file for details.
 - Language spec: `spec/SPEC.md`, grammar: `spec/bnf.md` (the README's `docs/SPEC.md` link is stale; `docs/` does not exist).
 
 ## Gotchas
