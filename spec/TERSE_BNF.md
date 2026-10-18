@@ -1,5 +1,6 @@
 (* ============================================================
-   Terse 0.3 — grammar (aligned with SPEC.md / tersec.py host)
+   terse_bnf — Terse 0.3 grammar (canonical; replaces BNF.md)
+   Aligned with SPEC.md and tersec.py host
    ============================================================ *)
 
 
@@ -218,8 +219,27 @@
 
 (* ------------------------------------------------------------
    Notes (host semantics — see SPEC.md)
-   - std.str / std.io / std.tst are library surfaces, not grammar productions
-   - tst.eq / tst.ne are std.tst calls
-   - Test layout: tst/**/t_*.te auto-runs zero-arg fns
-   - Module search: parallel tst/usage ↔ src/usage
+
+   Visibility
+   - pub fn / pub rec / pub tr / pub fix — exported via use
+   - en is public by default (optional pub still accepted)
+   - plain fix is file-local (renamed when imported as a module)
+
+   Libraries (not grammar productions)
+   - std.str: has starts ends trim up low parse split join
+   - std.io:  in out
+   - std.tst: eq ne chk report
+
+   Tests
+   - tst/**/t_*.te auto-runs zero-arg fns (no go required)
+   - tst/expect_fail — assert failures must exit non-zero
+   - tst/expect_error — must fail to compile with a clear error
+
+   Modules
+   - Search: same dir, parallel tst→src, project src/, root
+   - Tests may call non-pub symbols of the module under test
+
+   Diagnostics (host)
+   - unknown name / unknown function → hard error (abort before gcc)
+   - C-style lp i = 0 binds i in the type checker
    ------------------------------------------------------------ *)

@@ -5,7 +5,7 @@ pub fn wc(text: str) -> {str:i64} {
   var counts: {str:i64} = {:}
   lp w:words {
     if has(counts, w) {
-      counts[w] = counts[w] + 1
+      counts[w] += 1
     } else {
       counts[w] = 1
     }

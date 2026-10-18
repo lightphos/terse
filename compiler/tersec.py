@@ -1285,8 +1285,13 @@ class TypeChecker:
             if e.name in self.env: return self.env[e.name]
             if hasattr(self, 'fixes') and e.name in self.fixes: return self.fixes[e.name]
             if e.name in self.enums: return e.name
-            if e.name in self.funcs or e.name in ('pr','len','json','env','str','push','substr','arg'): return 'fn'
-            if e.name in ('http','db','tst','fs','gcc','io','str'): return 'mod'
+            if e.name in self.funcs or e.name in ('pr','len','json','env','str','push','substr','arg','keys','values','has','up','low','trim','split','join','parse','starts','ends','map'):
+                return 'fn'
+            if e.name in ('http','db','tst','fs','gcc','io','str'):
+                return 'mod'
+            if e.name in getattr(self, 'recs', {}):
+                return e.name
+            self.errors.append(f"unknown name '{e.name}'")
             return 'i64'
         if isinstance(e, Member):
             if isinstance(e.obj, Var) and e.obj.name in self.enums:
@@ -1383,8 +1388,10 @@ class TypeChecker:
             if e.init is not None:
                 if isinstance(e.init, LetExpr):
                     t = e.init.typ.name if e.init.typ else self.check(e.init.value)
-                    old = self.env.get(e.init.name)
                     self.env[e.init.name] = t
+                elif isinstance(e.init, Binary) and e.init.op == '=' and isinstance(e.init.left, Var):
+                    self.env[e.init.left.name] = 'i64'
+                    self.check(e.init.right)
                 else:
                     self.check(e.init)
             self.check(e.cond)

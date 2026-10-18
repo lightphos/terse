@@ -2,7 +2,7 @@
 
 **Terse** is a succinct, statically typed language that compiles to native binaries. It emphasizes compact syntax, modules, and a small standard surface for I/O and tests.
 
-This document is the **language contract** aligned with `BNF.md` and the **Python reference compiler** (`tersec.py`). The native self-hosting compiler (`tc.te`) is an experimental subset and is **not** the conformance reference.
+This document is the **language contract** aligned with `terse_bnf.md` and the **Python reference compiler** (`tersec.py`). The native self-hosting compiler (`tc.te`) is an experimental subset and is **not** the conformance reference.
 
 **Status labels:** **Implemented** (host), **Limited**, **Planned**.
 
@@ -249,7 +249,40 @@ bash test.sh
 
 ---
 
-## 10. Compilation
+
+## 10. Diagnostics
+
+The host compiler (`tersec.py`) reports problems before or instead of opaque C errors whenever possible.
+
+### Hard errors (compile aborted)
+
+| Message | Meaning |
+|---------|---------|
+| `type error: unknown name 'X'` | Identifier not in scope (locals, `fix`, enums, imports) |
+| `type error: unknown function 'X'` | Call to an undefined function |
+| `error: N error(s) — compile aborted` | Summary after one or more hard errors |
+
+Hard errors of the form `unknown …` stop the pipeline **before** gcc/clang, so you should not see `undeclared identifier` from the C compiler for simple name mistakes.
+
+### Warnings
+
+Other type-checker findings may be printed as `type warning: …` without aborting (limited coverage in 0.3).
+
+### Source locations
+
+When the AST carries line/column (e.g. calls), messages may include `at line:col`. Coverage is best-effort and still expanding.
+
+### Loops
+
+C-style `lp i = 0; cond; step { … }` introduces `i` into the type-checker environment for the loop body and step, so `i` is not reported as unknown inside the loop.
+
+### Tests
+
+`tst.eq` / `tst.ne` failures print `FAIL file:line: …` on stderr, continue the suite, and set a non-zero process exit code equal to the failure count. See §9.
+
+---
+
+## 11. Compilation
 
 ```sh
 python3 tersec.py build main.te -o app
@@ -262,7 +295,7 @@ python3 tersec.py run main.te
 
 ---
 
-## 11. Compiler Status (0.3 host)
+## 12. Compiler Status (0.3 host)
 
 ### Implemented
 - Arithmetic, comparisons, `val`/`var`, blocks, `ret`, ternary  
@@ -275,13 +308,13 @@ python3 tersec.py run main.te
 - Modules: `use`, `pub`, parallel `tst`↔`src`  
 - `std.str`, `std.io`, `std.tst` (`eq` / `ne`)  
 - `go` entry; `pr`; string/int concat  
-- Unit-test runner layout and clear unknown-name errors  
+- Unit-test runner layout; hard errors for unknown names/functions  
 
 ### Limited
 - Higher-order / closures with capture  
 - Full generics, tuples  
 - HTTP beyond minimal serve  
-- Type errors beyond unknown names  
+- Full structural type errors (beyond unknown names)
 
 ### Planned / not host-complete
 - Ownership/borrowing  
@@ -291,6 +324,6 @@ python3 tersec.py run main.te
 
 ---
 
-## 12. Examples
+## 13. Examples
 
 See `eg.te`, `src/`, `usage/`, and `tst/` alongside the compiler.
