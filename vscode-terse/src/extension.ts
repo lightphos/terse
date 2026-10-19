@@ -182,7 +182,8 @@ async function testCommand() {
 
   for (const file of files) {
     const base = path.basename(file, '.te');
-    const outPath = path.join(cwd, 'out', base);
+    const executableName = base + (process.platform === 'win32' ? '.exe' : '');
+    const outPath = path.join(cwd, 'out', executableName);
     const python = process.platform === 'win32' ? 'python' : 'python3';
 
     // outputChannel.appendLine(`=== ${base} ===`);

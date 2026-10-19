@@ -229,6 +229,9 @@ Continues after failure; process exit code is the failure count.
 ### Other builtins
 `pr`, `len`, `env`, `arg`, `json` (limited), `map` (list), minimal `http.serve` (limited).
 
+`env("NAME")` reads a process environment variable (empty string if unset).
+`env("NAME") = "value"` sets it and evaluates to the assigned string.
+
 SQL/`db` is **disabled** in lean builds.
 
 ---

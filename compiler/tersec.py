@@ -1371,6 +1371,11 @@ class TypeChecker:
                     return 'i64'
             return 'i64'
         if isinstance(e, Binary):
+            if e.op == '=' and isinstance(e.left, Call) and isinstance(e.left.func, Var) and e.left.func.name == 'env':
+                if len(e.left.args) == 1:
+                    self.check(e.left.args[0])
+                    self.check(e.right)
+                    return 'str'
             lt = self.check(e.left); rt = self.check(e.right)
             lt, rt = normalize_type(lt), normalize_type(rt)
             if e.op == '=':
@@ -1595,6 +1600,9 @@ class TypeChecker:
 
 # --- C runtime + HTTP server ------------------------------
 RUNTIME = r'''
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include <stdint.h>
 #include <stdbool.h>
 #include <errno.h>
@@ -2210,6 +2218,15 @@ static const char* env_get(const char* k) {
   return v ? v : "";
 }
 
+static const char* env_set(const char* k, const char* v) {
+#ifdef _WIN32
+  _putenv_s(k, v ? v : "");
+#else
+  setenv(k, v, 1);
+#endif
+  return v ? v : "";
+}
+
 static int terse_argc = 0;
 static char** terse_argv = NULL;
 
@@ -2747,6 +2764,11 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 exp_r = lt if str(lt).startswith('list') or str(lt).startswith('List') else f'list_{self.list_tag(lt)}'
             r, rt = self.gen_expr(e.right, exp_r)
             if e.op == '=':
+                if isinstance(e.left, Call) and isinstance(e.left.func, Var) and e.left.func.name == 'env':
+                    if len(e.left.args) == 1:
+                        key, _ = self.gen_expr(e.left.args[0])
+                        val, _ = self.gen_expr(e.right, 'str')
+                        return f"env_set({key}, {val})", "str"
                 # Map update: m[k] = v  →  m = map_put(m, k, v)
                 if isinstance(e.left, Index):
                     coll_e = e.left.coll

@@ -372,6 +372,14 @@ class TestEnv(unittest.TestCase):
         rc, out, _ = compile_and_run(src)
         self.assertIn("some env", out)
 
+    def test_env_assignment_returns_value(self):
+        src = (
+            "go {\n"
+            '  pr(env("TERSE_TEST_ASSIGN_VALUE") = "assigned")\n'
+            "}\n"
+        )
+        assert_result(self, src, "assigned")
+
     def test_env_set_overrides_cli(self):
         # env() = ... inside the program takes precedence over -e CLI flag
         src = (
