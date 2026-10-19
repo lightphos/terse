@@ -47,6 +47,47 @@ Terse: Run
 or F5
 ```
 
+
+## Output layout (`~/.terse/out`)
+
+By default the host writes under the Terse home directory:
+
+| What | Path |
+|------|------|
+| Home | `~/.terse` (override with `$TERSE_HOME`) |
+| Binaries / generated `.c` | `~/.terse/out/<name>` (override with `$TERSE_OUT`) |
+| Libraries | `~/.terse/out/lib/<module>/module.o` (+ `module.meta`) (override with `$TERSE_LIB`) |
+
+### Resolution rules
+
+- **No `-o`:** writes `~/.terse/out/<stem>` from the source file name
+- **`-o name` (bare name):** also under `~/.terse/out/name`
+- **`-o path/to/out` or an absolute `-o`:** uses that path as given
+
+```bash
+python3 compiler/tersec.py build src/hi.te
+# → ~/.terse/out/hi
+
+python3 compiler/tersec.py build src/hi.te -o out/hi
+# → out/hi  (relative path that includes a directory)
+
+python3 compiler/tersec.py lib src/utils.te
+# → ~/.terse/out/lib/utils/module.o
+```
+
+Environment overrides:
+
+```bash
+export TERSE_OUT=/path/to/out
+export TERSE_LIB=/path/to/libs
+export TERSE_HOME=/path/to/.terse
+```
+
+**Makefile note:** targets that pass `-o out/...` still land under the project `out/` folder, not `~/.terse/out`.
+
+- Explicit library build: `python3 compiler/tersec.py lib path/to/mod.te`
+- Auto-link of `~/.terse/out/lib/...` on `use` is **off by default**. Enable with `TERSE_AUTOLIB=1` if you want imports to prefer a fresh `module.o` over inlining.
+
 ## Language Spec
 
 See [spec/TERSE_BNF.md](spec/TERSE_BNF.md) and [spec/SPEC.md](spec/SPEC.md) for the full language specification.

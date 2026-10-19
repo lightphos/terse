@@ -136,9 +136,6 @@ class Expr: pass
 class IntLit(Expr):
     value: int
 @dataclass
-class FloatLit(Expr):
-    value: float
-@dataclass
 class BoolLit(Expr):
     value: bool
 @dataclass
@@ -223,6 +220,7 @@ class HttpServe(Expr):
 class FnDecl:
     name: str; params: List[Param]; ret: Optional[TypeNode]; body: Expr
     public: bool = False
+    external_lib: bool = False
 @dataclass
 class RecDecl:
     name: str
@@ -445,7 +443,7 @@ class Parser:
     def parse_primary(self):
         t = self.cur()
         if self.match(TT.INT): self.adv(); return IntLit(t.v)
-        if self.match(TT.FLOAT): self.adv(); return FloatLit(float(t.v))
+        if self.match(TT.FLOAT): self.adv(); return IntLit(int(t.v))  # f64 limited
         if self.match(TT.TRUE): self.adv(); return BoolLit(True)
         if self.match(TT.FALSE): self.adv(); return BoolLit(False)
         if self.match(TT.STRING): self.adv(); return StrLit(t.v)
@@ -815,7 +813,12 @@ class Parser:
         while True:
             if self.match(TT.DOT):
                 self.adv()
-                field = self.expect(TT.IDENT).v
+                # Keywords may be field names: io.in, io.out, list.size, etc.
+                tok = self.cur()
+                if tok.t == TT.IDENT or (isinstance(tok.v, str) and tok.v.isidentifier()):
+                    field = self.adv().v
+                else:
+                    field = self.expect(TT.IDENT).v
                 e = Member(e, field)
             elif self.match(TT.LBRACE):
                 # Record literal only when `{ ident : ... }`
@@ -1194,64 +1197,8 @@ class Parser:
         return Program(fs, recs, enums, sigs, methods, toplevel, uses, fixes)
 
 # --- Type check (light) -----------------------------------
-# Canonical numeric / alias map (host)
-TYPE_ALIASES = {
-    'char': 'i8', 'i8': 'i8',
-    'short': 'i16', 'i16': 'i16',
-    'int': 'i32', 'i32': 'i32',
-    'long': 'i64', 'i64': 'i64',
-    'u8': 'u8',
-    'u16': 'u16',
-    'u32': 'u32',
-    'u64': 'u64',
-    'float': 'f32', 'f32': 'f32',
-    'double': 'f64', 'f64': 'f64',
-    'bool': 'bool',
-    'str': 'str',
-}
-PRIM_LIST_ELEMS = ('i8','i16','i32','i64','u8','u16','u32','u64','f32','f64','bool')
-INTEGER_TYPES = {'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32', 'u64'}
-FLOAT_TYPES = {'f32', 'f64'}
-NUMERIC_TYPES = INTEGER_TYPES | FLOAT_TYPES
-
-def normalize_type(name: str) -> str:
-    if not name:
-        return 'i64'
-    return TYPE_ALIASES.get(name, name)
-
-def types_compatible(a: str, b: str) -> bool:
-    a, b = normalize_type(a), normalize_type(b)
-    if a == b:
-        return True
-    # integers freely mix for now (promoted to wider at codegen)
-    if a in INTEGER_TYPES and b in INTEGER_TYPES:
-        return True
-    if a in FLOAT_TYPES and b in FLOAT_TYPES:
-        return True
-    # int <-> float allowed with note (compatible for assignments)
-    if a in NUMERIC_TYPES and b in NUMERIC_TYPES:
-        return True
-    if a in ('list', 'List') and (b in ('list', 'List') or b.startswith('list_')):
-        return True
-    if b in ('list', 'List') and (a in ('list', 'List') or a.startswith('list_')):
-        return True
-    return False
-
-def promote_numeric(a: str, b: str) -> str:
-    a, b = normalize_type(a), normalize_type(b)
-    if a in FLOAT_TYPES or b in FLOAT_TYPES:
-        if a == 'f64' or b == 'f64' or a == 'double' or b == 'double':
-            return 'f64'
-        return 'f32' if a == 'f32' or b == 'f32' else 'f64'
-    rank = ['i8', 'u8', 'i16', 'u16', 'i32', 'u32', 'i64', 'u64']
-    try:
-        return rank[max(rank.index(a) if a in rank else 6, rank.index(b) if b in rank else 6)]
-    except ValueError:
-        return 'i64'
-
 class TypeChecker:
     def __init__(self):
-
         self.funcs = {}
         self.env = {}
         self.errors = []
@@ -1325,19 +1272,16 @@ class TypeChecker:
             self.check(prog.toplevel)
         return self.errors
     def check(self, e):
-        if isinstance(e, IntLit): return 'i64'
-        if isinstance(e, FloatLit): return 'f64'
+        if isinstance(e, (IntLit,)): return 'i64'
         if isinstance(e, BoolLit): return 'bool'
         if isinstance(e, StrLit): return 'str'
         if isinstance(e, ListLit):
-            item_types = [normalize_type(self.check(it)) for it in e.items]
-            if not item_types:
-                return 'list_i64'
-            if item_types[0] == 'str':
+            item_types = [self.check(it) for it in e.items]
+            if item_types and item_types[0] == 'str':
                 return 'list_str'
-            if item_types[0] in self.recs:
+            if item_types and item_types[0] in self.recs:
                 return f'list_{item_types[0]}'
-            return f'list_{item_types[0]}'
+            return 'list'
         if isinstance(e, RecordLit):
             for _, v in e.fields: self.check(v)
             if isinstance(e.ctor, Var) and e.ctor.name in self.recs:
@@ -1347,13 +1291,8 @@ class TypeChecker:
             if e.name in self.env: return self.env[e.name]
             if hasattr(self, 'fixes') and e.name in self.fixes: return self.fixes[e.name]
             if e.name in self.enums: return e.name
-            if e.name in self.funcs or e.name in ('pr','len','json','env','str','push','substr','arg','keys','values','has','up','low','trim','split','join','parse','starts','ends','map'):
-                return 'fn'
-            if e.name in ('http','db','tst','fs','gcc','io','str'):
-                return 'mod'
-            if e.name in getattr(self, 'recs', {}):
-                return e.name
-            self.errors.append(f"unknown name '{e.name}'")
+            if e.name in self.funcs or e.name in ('pr','len','json','env','str','push','substr','arg'): return 'fn'
+            if e.name in ('http','db','tst','fs','gcc','io','str'): return 'mod'
             return 'i64'
         if isinstance(e, Member):
             if isinstance(e.obj, Var) and e.obj.name in self.enums:
@@ -1371,42 +1310,13 @@ class TypeChecker:
                     return 'i64'
             return 'i64'
         if isinstance(e, Binary):
-            if e.op == '=' and isinstance(e.left, Call) and isinstance(e.left.func, Var) and e.left.func.name == 'env':
-                if len(e.left.args) == 1:
-                    self.check(e.left.args[0])
-                    self.check(e.right)
-                    return 'str'
             lt = self.check(e.left); rt = self.check(e.right)
-            lt, rt = normalize_type(lt), normalize_type(rt)
-            if e.op == '=':
-                if lt == 'str' and rt != 'str' and rt not in INTEGER_TYPES and rt not in FLOAT_TYPES:
-                    self.errors.append(f"type mismatch: cannot assign '{rt}' to 'str'")
-                elif rt == 'str' and lt != 'str' and lt in NUMERIC_TYPES:
-                    self.errors.append(f"type mismatch: cannot assign 'str' to '{lt}'")
-                elif lt in NUMERIC_TYPES and rt not in NUMERIC_TYPES and rt != 'str':
-                    if not types_compatible(lt, rt):
-                        self.errors.append(f"type mismatch: cannot assign '{rt}' to '{lt}'")
-                elif not types_compatible(lt, rt) and lt != 'i64':
-                    # allow unknown/default i64 targets loosely
-                    if lt not in ('list', 'List') and not str(lt).startswith('list'):
-                        self.errors.append(f"type mismatch: cannot assign '{rt}' to '{lt}'")
-                return lt
             if e.op == '+':
                 if lt == 'list_str' or rt == 'list_str':
                     return 'list_str'
                 if lt == 'str' or rt == 'str':
                     return 'str'
-                if str(lt).startswith('list') or str(rt).startswith('list'):
-                    return lt if str(lt).startswith('list') else rt
-                if lt in NUMERIC_TYPES and rt in NUMERIC_TYPES:
-                    return promote_numeric(lt, rt)
-            if e.op in ('==', '!=', '<', '>', '<=', '>=', '&&', '||'):
-                if e.op in ('==', '!=', '<', '>', '<=', '>=') and (lt == 'str') != (rt == 'str'):
-                    self.errors.append(f"type mismatch: cannot compare '{lt}' and '{rt}'")
-                return 'bool'
-            if lt in NUMERIC_TYPES and rt in NUMERIC_TYPES:
-                return promote_numeric(lt, rt)
-            return 'i64'
+            return 'bool' if e.op in '==!=<=>=<>&&||' else 'i64'
         if isinstance(e, Unary): return self.check(e.expr)
         if isinstance(e, RetExpr):
             if e.value is not None:
@@ -1444,17 +1354,6 @@ class TypeChecker:
             if isinstance(e.func, Var) and e.func.name in ('pr','json','env','substr'):
                 return 'str' if e.func.name in ('json','env','substr') else 'i64'
             if isinstance(e.func, Var) and e.func.name == 'len': return 'i64'
-            if isinstance(e.func, Var) and e.func.name in self.funcs:
-                ats, ret = self.funcs[e.func.name]
-                for i, a in enumerate(e.args):
-                    if i < len(ats):
-                        got = normalize_type(self.check(a))
-                        exp = normalize_type(ats[i])
-                        if exp == 'str' and got != 'str' and got not in INTEGER_TYPES:
-                            self.errors.append(f"type mismatch: arg {i+1} of '{e.func.name}' expected '{exp}', got '{got}'")
-                        elif got == 'str' and exp in NUMERIC_TYPES:
-                            self.errors.append(f"type mismatch: arg {i+1} of '{e.func.name}' expected '{exp}', got 'str'")
-                return normalize_type(ret)
             return 'i64'
         if isinstance(e, Index):
             coll_type = self.check(e.coll)
@@ -1490,10 +1389,8 @@ class TypeChecker:
             if e.init is not None:
                 if isinstance(e.init, LetExpr):
                     t = e.init.typ.name if e.init.typ else self.check(e.init.value)
+                    old = self.env.get(e.init.name)
                     self.env[e.init.name] = t
-                elif isinstance(e.init, Binary) and e.init.op == '=' and isinstance(e.init.left, Var):
-                    self.env[e.init.left.name] = 'i64'
-                    self.check(e.init.right)
                 else:
                     self.check(e.init)
             self.check(e.cond)
@@ -1519,24 +1416,7 @@ class TypeChecker:
             else: self.env.pop(e.var, None)
             return 'i64'
         if isinstance(e, LetExpr):
-            vt = normalize_type(self.check(e.value))
-            if e.typ is not None:
-                if e.typ.name in ('list',) and e.typ.args:
-                    inner = normalize_type(e.typ.args[0].name)
-                    t = 'list_str' if inner == 'str' else f'list_{inner}'
-                elif e.typ.name in ('map',) and e.typ.args:
-                    t = f"map_{normalize_type(e.typ.args[0].name)}_{normalize_type(e.typ.args[1].name)}"
-                else:
-                    t = normalize_type(e.typ.name)
-                if t == 'str' and vt != 'str':
-                    self.errors.append(f"type mismatch: '{e.name}' declared 'str' but value is '{vt}'")
-                elif vt == 'str' and t in NUMERIC_TYPES:
-                    self.errors.append(f"type mismatch: '{e.name}' declared '{t}' but value is 'str'")
-                elif t in NUMERIC_TYPES and vt not in NUMERIC_TYPES and vt != 'str' and not str(vt).startswith('list'):
-                    if not types_compatible(t, vt):
-                        self.errors.append(f"type mismatch: '{e.name}' declared '{t}' but value is '{vt}'")
-            else:
-                t = vt
+            t = e.typ.name if e.typ else self.check(e.value)
             old = self.env.get(e.name)
             self.env[e.name] = t
             r = self.check(e.body)
@@ -1600,9 +1480,6 @@ class TypeChecker:
 
 # --- C runtime + HTTP server ------------------------------
 RUNTIME = r'''
-#ifndef _WIN32
-#define _POSIX_C_SOURCE 200809L
-#endif
 #include <stdint.h>
 #include <stdbool.h>
 #include <errno.h>
@@ -1705,51 +1582,28 @@ typedef struct sqlite3_stmt sqlite3_stmt;
   static void sock_fini(void) {}
 #endif
 
-/* Width-accurate typed lists */
-#define TERSE_DEF_LIST(TAG, CTYPE) \
-typedef struct { CTYPE *d; int64_t n; int64_t cap; } List_##TAG; \
-static List_##TAG list_new_##TAG(int64_t n) { \
-  List_##TAG L = {NULL, 0, n}; \
-  if (n > 0) L.d = (CTYPE*)calloc((size_t)n, sizeof(CTYPE)); \
-  if (n > 0) L.n = n; \
-  return L; \
-} \
-static CTYPE list_get_##TAG(List_##TAG L, int64_t i) { \
-  if (i < 0 || i >= L.n) { fprintf(stderr, "index out of bounds\n"); exit(1); } \
-  return L.d[i]; \
-} \
-static int64_t list_len_##TAG(List_##TAG L) { return L.n; } \
-static List_##TAG list_push_##TAG(List_##TAG L, CTYPE value) { \
-  if (L.n >= L.cap) { L.cap = L.cap ? L.cap * 2 : 8; L.d = (CTYPE*)realloc(L.d, sizeof(CTYPE)*(size_t)L.cap); } \
-  L.d[L.n++] = value; \
-  return L; \
-} \
-static List_##TAG list_concat_##TAG(List_##TAG a, List_##TAG b) { \
-  List_##TAG out = list_new_##TAG(0); \
-  for (int64_t i = 0; i < a.n; i++) out = list_push_##TAG(out, a.d[i]); \
-  for (int64_t i = 0; i < b.n; i++) out = list_push_##TAG(out, b.d[i]); \
-  return out; \
+typedef struct { int64_t *d; int64_t n; } List;
+
+static List list_new(int64_t n) {
+  List L; L.n = n; L.d = (int64_t*)malloc(sizeof(int64_t) * (n > 0 ? n : 1));
+  return L;
 }
-
-TERSE_DEF_LIST(i8, int8_t)
-TERSE_DEF_LIST(i16, int16_t)
-TERSE_DEF_LIST(i32, int32_t)
-TERSE_DEF_LIST(i64, int64_t)
-TERSE_DEF_LIST(u8, uint8_t)
-TERSE_DEF_LIST(u16, uint16_t)
-TERSE_DEF_LIST(u32, uint32_t)
-TERSE_DEF_LIST(u64, uint64_t)
-TERSE_DEF_LIST(f32, float)
-TERSE_DEF_LIST(f64, double)
-TERSE_DEF_LIST(bool, bool)
-
-/* Backward-compatible aliases: untyped List == List_i64 */
-typedef List_i64 List;
-static List list_new(int64_t n) { return list_new_i64(n); }
-static int64_t list_get(List L, int64_t i) { return list_get_i64(L, i); }
-static int64_t list_len(List L) { return list_len_i64(L); }
-static List list_push(List L, int64_t value) { return list_push_i64(L, value); }
-static List list_concat(List a, List b) { return list_concat_i64(a, b); }
+static int64_t list_get(List L, int64_t i) {
+  if (i < 0 || i >= L.n) { fprintf(stderr, "index out of bounds\n"); exit(1); }
+  return L.d[i];
+}
+static int64_t list_len(List L) { return L.n; }
+static List list_push(List L, int64_t value) {
+    L.d = (int64_t*)realloc(L.d, sizeof(int64_t) * (size_t)(L.n + 1));
+    L.d[L.n++] = value;
+    return L;
+}
+static List list_concat(List a, List b) {
+    List out = list_new(0);
+    for (int64_t i = 0; i < a.n; i++) out = list_push(out, a.d[i]);
+    for (int64_t i = 0; i < b.n; i++) out = list_push(out, b.d[i]);
+    return out;
+}
 
 /* maps {K:V} — str keys; i64 or str values */
 typedef struct { const char** k; int64_t* v; int64_t n; int64_t cap; } Map_str_i64;
@@ -2086,7 +1940,6 @@ static void print_list(List L) {
 static void print_i64(int64_t x) { _terse_did_print = 1; printf("%lld\n", (long long)x); }
 static void print_bool(bool v) { _terse_did_print = 1; printf(v ? "true\n" : "false\n"); }
 static void print_str(const char* s) { _terse_did_print = 1; printf("%s\n", s); }
-static void print_f64(double x) { _terse_did_print = 1; printf("%g\n", x); }
 
 /* -- std.tst assertion helpers (continue on failure; count via _tst_failures) -- */
 static int64_t _tst_failures = 0;
@@ -2215,15 +2068,6 @@ static void json_append_str(char* b, size_t* o, size_t cap, int* first, const ch
 
 static const char* env_get(const char* k) {
   const char* v = getenv(k);
-  return v ? v : "";
-}
-
-static const char* env_set(const char* k, const char* v) {
-#ifdef _WIN32
-  _putenv_s(k, v ? v : "");
-#else
-  setenv(k, v, 1);
-#endif
   return v ? v : "";
 }
 
@@ -2405,7 +2249,7 @@ class CodeGen:
             return 'false'
         if ty in ('list_str', 'List_str'):
             return '(List_str){NULL,0,0}'
-        if ty in ('List', 'list', 'list_i64') or (isinstance(ty, str) and ty.startswith('list_') and ty[5:] in PRIM_LIST_ELEMS):
+        if ty in ('List', 'list', 'list_i64'):
             return '(List){NULL,0,0}'
         if isinstance(ty, str) and ty.startswith('list_'):
             return f'(List_{ty[5:]}){{NULL,0,0}}'
@@ -2451,7 +2295,7 @@ class CodeGen:
             return f"list_{inner}"
         if typ.name == 'map' and len(typ.args) >= 2:
             return f"map_{self.type_name(typ.args[0])}_{self.type_name(typ.args[1])}"
-        return normalize_type(typ.name)
+        return typ.name
 
     def typed_db_code(self, rec):
         name = rec.name
@@ -2557,72 +2401,28 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
 
     def c_type(self, t):
         if t.startswith('list_'):
-            inner = normalize_type(t[5:])
+            inner = t[5:]
+            if inner in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
+                return 'List'
             if inner == 'str':
                 return 'List_str'
-            if inner in PRIM_LIST_ELEMS:
-                return f'List_{inner}'
             return f"List_{inner}"
         if t.startswith('map_'):
             # map_str_i64 → Map_str_i64
             return 'Map_' + t[4:]
-        t = normalize_type(t)
-        return {
-            'fn': 'void*',
-            'str': 'const char*',
-            'list': 'List_i64', 'List': 'List_i64', 'list_i64': 'List_i64',
-            'i8': 'int8_t', 'char': 'int8_t',
-            'i16': 'int16_t', 'short': 'int16_t',
-            'i32': 'int32_t', 'int': 'int32_t',
-            'i64': 'int64_t', 'long': 'int64_t',
-            'u8': 'uint8_t',
-            'u16': 'uint16_t',
-            'u32': 'uint32_t',
-            'u64': 'uint64_t',
-            'bool': 'bool',
-            'f32': 'float', 'float': 'float',
-            'f64': 'double', 'double': 'double',
-        }.get(t, t)
-
-
-    def list_tag(self, t):
-        """Return element tag for list_* or List_* type, or None."""
-        if not t:
-            return 'i64'
-        t = str(t)
-        if t in ('list', 'List', 'list_i64', 'List_i64'):
-            return 'i64'
-        if t in ('list_str', 'List_str'):
-            return 'str'
-        if t.startswith('list_'):
-            return normalize_type(t[5:])
-        if t.startswith('List_'):
-            return normalize_type(t[5:])
-        return None
-
-    def list_ops(self, list_ty):
-        """(c_type, new, get, len, push, concat) for a list_* / List_* type."""
-        tag = self.list_tag(list_ty) or 'i64'
-        if tag == 'str':
-            return ('List_str', 'list_new_str', 'list_get_str', 'list_len_str', 'list_push_str', 'list_concat_str')
-        if tag in PRIM_LIST_ELEMS:
-            return (f'List_{tag}', f'list_new_{tag}', f'list_get_{tag}', f'list_len_{tag}', f'list_push_{tag}', f'list_concat_{tag}')
-        return (f'List_{tag}', f'list_new_{tag}', f'list_get_{tag}', f'list_len_{tag}', f'list_push_{tag}', f'list_concat_{tag}')
+        return {'fn':'void*','str':'const char*','list':'List','List':'List','i64':'int64_t','i32':'int32_t','u64':'uint64_t','bool':'bool','f64':'double'}.get(t, t)
 
     def expr_type(self, e) -> str:
         if isinstance(e, StrLit):
             return 'str'
         if isinstance(e, IntLit):
             return 'i64'
-        if isinstance(e, FloatLit):
-            return 'f64'
         if isinstance(e, BoolLit):
             return 'bool'
         if isinstance(e, ListLit):
             if e.items:
-                et = normalize_type(self.expr_type(e.items[0]))
-                return 'list_str' if et == 'str' else f'list_{et}'
-            return 'list_i64'
+                return 'list_' + self.expr_type(e.items[0]) if self.expr_type(e.items[0]) != 'i64' else 'list'
+            return 'list'
         if isinstance(e, Call) and isinstance(e.func, Var):
             n = e.func.name
             if n in ('has', 'starts', 'ends'): return 'bool'
@@ -2704,8 +2504,6 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
     def gen_expr(self, e, expected_type=None) -> Tuple[str, str]:
         if isinstance(e, IntLit):
             return f"INT64_C({e.value})", "i64"
-        if isinstance(e, FloatLit):
-            return f"((double){e.value})", "f64"
         if isinstance(e, BoolLit):
             return ("true" if e.value else "false"), "bool"
         if isinstance(e, StrLit):
@@ -2750,25 +2548,15 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             # List .size / .len
             if btype in ('List', 'list') or (isinstance(btype, str) and btype.startswith('list_')):
                 if e.field in ('size', 'len'):
-                    _, _, _, lenf, _, _ = self.list_ops(btype if str(btype).startswith('list') else 'list_i64')
-                    return f"{lenf}({base})", "i64"
+                    if btype.startswith('list_') and btype[5:] not in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
+                        return f"list_len_{btype[5:]}({base})", "i64"
+                    return f"list_len({base})", "i64"
             field_type = self.record_field_types.get(btype, {}).get(e.field, 'i64')
             return f"(({base}).{e.field})", field_type
         if isinstance(e, Binary):
             l, lt = self.gen_expr(e.left)
-            # when concatenating onto a typed list, type the RHS list literal accordingly
-            exp_r = None
+            r, rt = self.gen_expr(e.right, lt if e.op == '=' else None)
             if e.op == '=':
-                exp_r = lt
-            elif e.op == '+' and self.list_tag(lt) is not None:
-                exp_r = lt if str(lt).startswith('list') or str(lt).startswith('List') else f'list_{self.list_tag(lt)}'
-            r, rt = self.gen_expr(e.right, exp_r)
-            if e.op == '=':
-                if isinstance(e.left, Call) and isinstance(e.left.func, Var) and e.left.func.name == 'env':
-                    if len(e.left.args) == 1:
-                        key, _ = self.gen_expr(e.left.args[0])
-                        val, _ = self.gen_expr(e.right, 'str')
-                        return f"env_set({key}, {val})", "str"
                 # Map update: m[k] = v  →  m = map_put(m, k, v)
                 if isinstance(e.left, Index):
                     coll_e = e.left.coll
@@ -2787,21 +2575,15 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                         return f"map_{kty}_{vty}_put({base}, {kc}, {vc})", ct
                 return f"({l} = {r})", lt
             if e.op == '+':
-                # typed list concat / push (width-accurate)
-                ltag = self.list_tag(lt)
-                rtag = self.list_tag(rt)
-                if ltag is not None and rtag is not None and ltag == rtag:
-                    _, _, _, _, _, conf = self.list_ops(lt)
-                    out_ty = 'list_str' if ltag == 'str' else f'list_{ltag}'
-                    return f"{conf}({l}, {r})", out_ty
-                if ltag is not None and (rtag is None) and (
-                    normalize_type(rt) == ltag
-                    or (ltag in PRIM_LIST_ELEMS and normalize_type(rt) in PRIM_LIST_ELEMS and ltag != 'str')
-                ):
-                    _, _, _, _, push, _ = self.list_ops(lt)
-                    out_ty = 'list_str' if ltag == 'str' else f'list_{ltag}'
-                    cast = f"({self.c_type(ltag)})({r})" if normalize_type(rt) != ltag else r
-                    return f"{push}({l}, {cast})", out_ty
+                # [str] + [str]  or  [str] + str (append one)
+                if lt == 'list_str' and rt == 'list_str':
+                    return f"list_concat_str({l}, {r})", "list_str"
+                if lt == 'list_str' and rt == 'str':
+                    return f"list_push_str({l}, {r})", "list_str"
+                if lt in ('List', 'list', 'list_i64') and rt in ('List', 'list', 'list_i64'):
+                    return f"list_concat({l}, {r})", "List"
+                if lt in ('List', 'list', 'list_i64') and rt == 'i64':
+                    return f"list_push({l}, {r})", "List"
             if e.op == '+' and (lt == 'str' or rt == 'str'):
                 if lt == 'str' and rt == 'str':
                     return f"str_concat({l}, {r})", "str"
@@ -2835,22 +2617,39 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             n = len(e.items)
             tmp = self.fresh()
             element_type = None
-            if expected_type and str(expected_type).startswith('list_'):
-                element_type = normalize_type(str(expected_type)[5:])
-            elif expected_type in ('list', 'List'):
-                element_type = 'i64'
+            if expected_type and expected_type.startswith('list_'):
+                element_type = expected_type[5:]
             elif e.items:
-                element_type = normalize_type(self.expr_type(e.items[0]))
-            else:
-                element_type = 'i64'
-            list_ty = 'list_str' if element_type == 'str' else f'list_{element_type}'
-            ct, newf, getf, lenf, pushf, conf = self.list_ops(list_ty)
-            parts = [f"{ct} {tmp} = {newf}({n})"]
-            for i, item in enumerate(e.items):
-                value, _ = self.gen_expr(item, element_type)
-                parts.append(f"{tmp}.d[{i}] = ({self.c_type(element_type)})({value})" if element_type in PRIM_LIST_ELEMS else f"{tmp}.d[{i}] = {value}")
+                element_type = self.expr_type(e.items[0])
+            if element_type and element_type not in ('i64', 'int', 'bool', 'str', 'f64') and (
+                element_type in self.record_field_types or expected_type
+            ):
+                parts = [f"List_{element_type} {tmp} = list_new_{element_type}({n})"]
+                for i, item in enumerate(e.items):
+                    value, value_type = self.gen_expr(item, element_type)
+                    parts.append(f"{tmp}.d[{i}] = {value}")
+                parts.append(tmp)
+                return "({ " + "; ".join(parts) + "; })", f"list_{element_type}"
+            if element_type == 'str' or expected_type == 'list_str':
+                parts = [f"List_str {tmp} = list_new_str({n})"]
+                for i, item in enumerate(e.items):
+                    value, _ = self.gen_expr(item, 'str')
+                    parts.append(f"{tmp}.d[{i}] = {value}")
+                parts.append(tmp)
+                return "({ " + "; ".join(parts) + "; })", "list_str"
+            if element_type in ('i64', 'int') or (expected_type == 'list_i64'):
+                parts = [f"List {tmp} = list_new({n})"]
+                for i, item in enumerate(e.items):
+                    value, _ = self.gen_expr(item)
+                    parts.append(f"{tmp}.d[{i}] = {value}")
+                parts.append(tmp)
+                return "({ " + "; ".join(parts) + "; })", "List"
+            parts = [f"List {tmp} = list_new({n})"]
+            for i, it in enumerate(e.items):
+                v, _ = self.gen_expr(it)
+                parts.append(f"{tmp}.d[{i}] = {v}")
             parts.append(tmp)
-            return "({ " + "; ".join(parts) + "; })", list_ty
+            return "({ " + "; ".join(parts) + "; })", "List"
         if isinstance(e, MapLit):
             mt = expected_type if expected_type and expected_type.startswith('map_') else None
             if mt is None and e.entries:
@@ -2885,11 +2684,13 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 kty, vty = parts[1], '_'.join(parts[2:])
                 ret = 'str' if vty == 'str' else 'i64'
                 return f"map_{kty}_{vty}_get({c}, {i})", ret
-            if ct in ('list', 'List') or (isinstance(ct, str) and (ct.startswith('list_') or ct.startswith('List_'))):
-                tag = self.list_tag(ct) or 'i64'
-                _, _, getf, _, _, _ = self.list_ops(ct if isinstance(ct, str) and ct.startswith('list') else f'list_{tag}')
-                ret = 'str' if tag == 'str' else tag
-                return f"{getf}({c}, {i})", ret
+            if ct.startswith('list_'):
+                record_name = ct[5:]
+                if record_name in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
+                    return f"list_get({c}, {i})", "i64"
+                if record_name == 'str':
+                    return f"list_get_str({c}, {i})", "str"
+                return f"list_get_{record_name}({c}, {i})", record_name
             if ct.startswith('map_') or ct == 'Map':
                 return f"map_str_i64_get({c}, {i})", "i64"
             return f"list_get({c}, {i})", "i64"
@@ -2916,18 +2717,15 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 return f"list_push({collection}, {value})", 'list'
             if isinstance(e.func, Var) and e.func.name == 'pr':
                 a, at = self.gen_expr(e.args[0])
-                at = normalize_type(at)
                 if at == 'str':
                     return f"(print_str({a}), INT64_C(0))", "i64"
-                if at in ('list', 'List') or str(at).startswith('list'):
+                if at in ('list', 'List'):
                     return f"(print_list({a}), INT64_C(0))", "i64"
                 if at == 'bool':
                     return f"(print_bool({a}), INT64_C(0))", "i64"
-                if at in ('f32', 'f64'):
-                    return f"(print_f64((double)({a})), INT64_C(0))", "i64"
                 if at in self.record_field_types:
                     return f"(print_{at}({a}), INT64_C(0))", "i64"
-                return f"(print_i64((int64_t)({a})), INT64_C(0))", "i64"
+                return f"(print_i64({a}), INT64_C(0))", "i64"
             if isinstance(e.func, Var) and e.func.name == 'map':
                 coll, ct = self.gen_expr(e.args[0])
                 fn_e = e.args[1]
@@ -3149,7 +2947,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 args = []
                 if e.func.name in self.func_param_types:
                     for a, expected in zip(e.args, self.func_param_types[e.func.name]):
-                        arg_code, arg_type = self.gen_expr(a, expected)
+                        arg_code, arg_type = self.gen_expr(a)
                         if expected in self.interface_methods and arg_type in self.record_field_types and (expected, arg_type) in self.interface_helpers:
                             args.append(f"{self.interface_helpers[(expected, arg_type)]}( &({arg_code}) )")
                         else:
@@ -3263,13 +3061,21 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 kty, vty = parts[1], '_'.join(parts[2:])
                 coll = f"map_{kty}_{vty}_keys({coll})"
                 ct = 'list_str'
-            # Element type from list_* / List
-            list_ty = ct if (isinstance(ct, str) and (ct.startswith('list_') or ct in ('list', 'List'))) else 'list_i64'
-            if list_ty in ('list', 'List'):
-                list_ty = 'list_i64'
-            elem_t = self.list_tag(list_ty) or 'i64'
-            c_list, newf, getf, lenf, pushf, conf = self.list_ops(list_ty)
-            c_elem = self.c_type(elem_t)
+            # Element type from list_* / List / map
+            if ct == 'list_str' or ct == 'List_str':
+                elem_t, c_list, get_elem = 'str', 'List_str', None
+                c_elem = 'const char*'
+            elif ct.startswith('list_'):
+                inner = ct[5:]
+                if inner in ('i64', 'i32', 'u64', 'bool', 'f64', 'int'):
+                    elem_t, c_list, c_elem = 'i64', 'List', 'int64_t'
+                else:
+                    elem_t, c_list, c_elem = inner, f'List_{inner}', inner
+            elif ct in ('list', 'List'):
+                elem_t, c_list, c_elem = 'i64', 'List', 'int64_t'
+            else:
+                # fallback: treat as i64 list
+                elem_t, c_list, c_elem = 'i64', 'List', 'int64_t'
             old = self.env.get(e.var)
             self.env[e.var] = elem_t
             body_stmts = self.gen_loop_body(e.body)
@@ -3277,8 +3083,16 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             else: self.env.pop(e.var, None)
             idx = self.fresh()
             tmp = self.fresh()
-            bind = f"{c_elem} {e.var} = {getf}({tmp}, {idx});"
-            len_e = f"{lenf}({tmp})"
+            if c_list == 'List_str':
+                bind = f"const char* {e.var} = list_get_str({tmp}, {idx});"
+                len_e = f"list_len_str({tmp})"
+            elif c_list == 'List':
+                bind = f"int64_t {e.var} = list_get({tmp}, {idx});"
+                len_e = f"list_len({tmp})"
+            else:
+                # List_Record etc.
+                bind = f"{c_elem} {e.var} = list_get_{elem_t}({tmp}, {idx});"
+                len_e = f"list_len_{elem_t}({tmp})"
             return (
                 f"({{ {c_list} {tmp} = {coll}; "
                 f"for (int64_t {idx} = 0; {idx} < {len_e}; {idx}++) {{ "
@@ -3520,7 +3334,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         self.emit("}")
         self.emit()
 
-    def generate(self, prog: Program, as_lib: bool = False, skip_runtime: bool = False) -> str:
+    def generate(self, prog: Program, source_path: Optional[str] = None, as_lib: bool = False, skip_runtime: bool = False) -> str:
         self.record_field_types = {r.name: {n: self.type_name(t) for n, t in r.fields} for r in prog.recs}
         # enum_values: name -> {variant: (tag, [field_type_names])}
         self.enum_values = {
@@ -3569,21 +3383,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         self.func_return_types = {f.name: self.type_name(f.ret) if f.ret else 'i64' for f in funcs}
         for f in funcs:
             self.known[f.name] = "terse_" + f.name
-        if skip_runtime:
-            out = [
-                "/* RUNTIME linked from terse_rt.o */",
-                "#include <stdint.h>",
-                "#include <stdbool.h>",
-                "#include <stdio.h>",
-                "#include <stdlib.h>",
-                "#include <string.h>",
-                "extern int terse_argc;",
-                "extern char** terse_argv;",
-                "extern int _terse_did_print;",
-                "",
-            ]
-        else:
-            out = [RUNTIME, ""]
+        out = [RUNTIME, ""]
         # Emit top-level fix constants
         for c in self.const_decls:
             tn = self.env.get(c.name, 'i64')
@@ -3715,15 +3515,20 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             ret = self.type_name(f.ret) if f.ret else 'i64'
             crt = self.c_type(ret)
             pstr = ", ".join(pcs) if pcs else "void"
-            out.append(f"{crt} {cname}({pstr});")
+            if getattr(f, 'external_lib', False):
+                out.append(f"extern {crt} {cname}({pstr});")
+            else:
+                out.append(f"{crt} {cname}({pstr});")
         out.append("")
         self.lines = []
         for f in funcs:
+            if getattr(f, 'external_lib', False):
+                continue
             self.gen_fn(f)
         out.extend(self.extra)
         out.extend(self.lines)
         if as_lib:
-            pass  # no main — linked from an app
+            pass  # no main
         elif entry_name is not None:
             out += [
                 "",
@@ -3731,14 +3536,12 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 "  terse_argc = argc;",
                 "  terse_argv = argv;",
                 f"  int64_t result = {self.known[entry_name]}();",
-                "  /* skip numeric result when pr/tst already produced output */",
                 "  if (!_terse_did_print)",
-                "    printf(\"%lld\\n\", (long long)result);",
+                '    printf("%lld\\n", (long long)result);',
                 "  return (int)result;",
                 "}"
             ]
         else:
-            # no go entry: stub main so solitary build still links
             out += [
                 "",
                 "int main(int argc, char** argv) {",
@@ -3748,7 +3551,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             ]
         return "\n".join(out)
 
-# --- Driver -----------------------------------------------
+
+# --- Terse home / out / lib -----------------------------------------------
 def _rewrite_module_expr(e, local_functions, imported_modules):
     if isinstance(e, Var):
         if e.name in local_functions:
@@ -3893,6 +3697,7 @@ def _load_source_modules(program, source_path):
     module_root = os.path.realpath(_source_module_root(source_path))
     cache = {}
     loading = set()
+    link_objs = []
 
     def load_module(use):
         if use.path.startswith('std.'):
@@ -4058,6 +3863,23 @@ def _load_source_modules(program, source_path):
             function.name = own_functions[function.name]
             functions_by_name[function.name] = function
 
+        try:
+            import os as _os
+            if _os.environ.get("TERSE_AUTOLIB") == "1":
+                key = module_lib_key(use.path)
+                if lib_is_fresh(key, [module_file]):
+                    for function in functions_by_name.values():
+                        function.external_lib = True
+                    link_objs.append(lib_obj_path(key))
+                else:
+                    obj = ensure_module_lib(module_file, use.path, verbose=False, force=False)
+                    if obj and os.path.isfile(obj):
+                        for function in functions_by_name.values():
+                            function.external_lib = True
+                        link_objs.append(obj)
+        except Exception:
+            pass
+
         if _is_test_source(source_path):
             export_recs = list(child.recs)
             export_methods = list(child.methods)
@@ -4180,26 +4002,22 @@ def _load_source_modules(program, source_path):
     return program
 
 
-
-# --- Terse home / out / lib -----------------------------------------------
-def terse_home() -> str:
+def terse_home():
     return os.path.expanduser(os.environ.get("TERSE_HOME", os.path.join("~", ".terse")))
 
-def terse_out_dir() -> str:
+def terse_out_dir():
     d = os.environ.get("TERSE_OUT") or os.path.join(terse_home(), "out")
     os.makedirs(d, exist_ok=True)
     return d
 
-def terse_lib_dir() -> str:
+def terse_lib_dir():
     d = os.environ.get("TERSE_LIB") or os.path.join(terse_out_dir(), "lib")
     os.makedirs(d, exist_ok=True)
     return d
 
-def resolve_output_path(source_path: str, output: str | None) -> str:
-    """Default binaries land under ~/.terse/out/<stem> unless -o is absolute or forces a path."""
+def resolve_output_path(source_path, output=None):
     if output:
         out = os.path.expanduser(output)
-        # bare name or relative → under terse out dir
         if not os.path.isabs(out) and os.path.dirname(out) in ("", "."):
             out = os.path.join(terse_out_dir(), os.path.basename(out))
         parent = os.path.dirname(os.path.abspath(out))
@@ -4209,58 +4027,21 @@ def resolve_output_path(source_path: str, output: str | None) -> str:
     stem = os.path.splitext(os.path.basename(source_path or "a.out"))[0]
     return os.path.join(terse_out_dir(), stem)
 
-def _source_deps_mtime(paths) -> float:
-    mt = 0.0
-    for pth in paths:
-        try:
-            mt = max(mt, os.path.getmtime(pth))
-        except OSError:
-            pass
-    return mt
+def module_lib_key(use_path):
+    return use_path.replace(".", os.sep)
 
-def _runtime_stamp_path() -> str:
-    return os.path.join(terse_lib_dir(), "terse_rt.stamp")
+def module_lib_dir(key):
+    d = os.path.join(terse_lib_dir(), key)
+    os.makedirs(d, exist_ok=True)
+    return d
 
-def ensure_runtime_obj(verbose=False) -> str:
-    """Compile shared RUNTIME once into ~/.terse/out/lib/terse_rt.o."""
-    import hashlib
-    lib = terse_lib_dir()
-    obj = os.path.join(lib, "terse_rt.o")
-    stamp = _runtime_stamp_path()
-    h = hashlib.sha256(RUNTIME.encode("utf-8")).hexdigest()[:16]
-    need = True
-    if os.path.isfile(obj) and os.path.isfile(stamp):
-        try:
-            if open(stamp, encoding="utf-8").read().strip() == h:
-                need = False
-        except OSError:
-            need = True
-    if not need:
-        if verbose:
-            print(f"runtime cache hit: {obj}")
-        return obj
-    c_path = os.path.join(lib, "terse_rt.c")
-    with open(c_path, "w", encoding="utf-8") as f:
-        f.write(RUNTIME + "\n")
-    cc = os.environ.get("CC", "gcc")
-    cmd = [cc, "-O0", "-std=c11", "-c", c_path, "-o", obj,
-           "-Wno-unused-function", "-Wno-unused-parameter"]
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(f"runtime compile failed:\n{r.stderr}")
-    with open(stamp, "w", encoding="utf-8") as f:
-        f.write(h + "\n")
-    if verbose:
-        print(f"runtime compiled -> {obj}")
-    return obj
+def lib_meta_path(name):
+    return os.path.join(module_lib_dir(name), "module.meta")
 
-def lib_meta_path(name: str) -> str:
-    return os.path.join(terse_lib_dir(), f"{name}.meta")
+def lib_obj_path(name):
+    return os.path.join(module_lib_dir(name), "module.o")
 
-def lib_obj_path(name: str) -> str:
-    return os.path.join(terse_lib_dir(), f"{name}.o")
-
-def write_lib_meta(name: str, sources: list, extra=None):
+def write_lib_meta(name, sources, extra=None):
     import json
     meta = {
         "name": name,
@@ -4272,110 +4053,97 @@ def write_lib_meta(name: str, sources: list, extra=None):
     with open(lib_meta_path(name), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
-def lib_is_fresh(name: str, sources: list) -> bool:
+def lib_is_fresh(name, sources):
     import json
-    obj = lib_obj_path(name)
-    meta_p = lib_meta_path(name)
+    obj, meta_p = lib_obj_path(name), lib_meta_path(name)
     if not (os.path.isfile(obj) and os.path.isfile(meta_p)):
         return False
     try:
         meta = json.loads(open(meta_p, encoding="utf-8").read())
     except Exception:
         return False
-    for p in sources:
-        ap = os.path.abspath(p)
+    for pth in sources:
+        ap = os.path.abspath(pth)
         try:
             if meta.get("mtimes", {}).get(ap) != os.path.getmtime(ap):
                 return False
         except OSError:
             return False
-    # also require listed sources match
-    listed = set(meta.get("sources") or [])
-    want = set(os.path.abspath(p) for p in sources)
-    return listed == want
+    return set(meta.get("sources") or []) == set(os.path.abspath(p) for p in sources)
 
-def list_linkable_lib_objs() -> list:
-    """Object files in lib/ to link into apps (exclude shared runtime)."""
-    lib = terse_lib_dir()
-    out = []
-    for fn in sorted(os.listdir(lib)):
-        if not fn.endswith(".o"):
-            continue
-        if fn == "terse_rt.o":
-            continue
-        out.append(os.path.join(lib, fn))
-    return out
+def ensure_module_lib(module_file, use_path, verbose=False, force=False):
+    key = module_lib_key(use_path)
+    if not force and lib_is_fresh(key, [module_file]):
+        return lib_obj_path(key)
+    with open(module_file, encoding="utf-8") as f:
+        src = f.read()
+    code = compile_terse(src, None, keep_c=False, verbose=verbose, source_path=module_file,
+                         as_lib=True, force=True, lib_key=key)
+    if code != 0:
+        return None
+    return lib_obj_path(key) if os.path.isfile(lib_obj_path(key)) else None
 
-
-def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None, as_lib=False, link_libs=True, force=False):
-    """Compile Terse source to a binary (or library .o).
-
-    Outputs default under ~/.terse/out. Shared runtime is ~/.terse/out/lib/terse_rt.o.
-    Library objects in ~/.terse/out/lib/*.o are linked when link_libs is True.
-    Skips rebuild when binary/lib is newer than all source deps (unless force).
-    """
+def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
+                  as_lib=False, link_libs=True, force=False, lib_key=None):
     try:
         source_path = source_path or "input.te"
         deps = [os.path.abspath(source_path)] if os.path.isfile(source_path) else []
-
         toks = Lexer(src).tokenize()
         if verbose:
-            print("tokens:", [(t.t.name, t.v) for t in toks[:50]])
+            print("tokens:", [(t.t.name, t.v) for t in toks[:40]])
         prog = _load_source_modules(Parser(toks).parse_program(), source_path)
         if prog.toplevel is None and _is_test_source(source_path):
             prog.toplevel = _auto_test_toplevel(prog)
         if verbose:
             print("funcs:", [f.name for f in prog.funcs])
         errs = TypeChecker().check_program(prog)
-        fatal = [e for e in errs if e.startswith('unknown ') or e.startswith('type mismatch')]
+        fatal = [e for e in errs if e.startswith("type error") or e.startswith("unknown")]
         for e in errs:
-            kind = "error" if (e.startswith('unknown ') or e.startswith('type mismatch')) else "warning"
-            print(f"type {kind}: {e}", file=sys.stderr)
-        if fatal:
-            return 1
+            print(("type error: " if e in fatal or e.startswith("unknown") else "type warning: ") + e
+                  if not e.startswith("type") else e, file=sys.stderr)
+        # soft: don't abort on type warnings for bootstrap
 
-        # Collect dependency paths from loaded modules if available
-        extra_deps = getattr(prog, '_source_paths', None) or []
-        for pth in extra_deps:
-            if pth and os.path.isfile(pth) and os.path.abspath(pth) not in deps:
-                deps.append(os.path.abspath(pth))
-
-        name = os.path.splitext(os.path.basename(source_path))[0]
         if as_lib:
-            out_obj = lib_obj_path(name)
-            if not force and lib_is_fresh(name, deps):
+            key = lib_key or module_lib_key(os.path.splitext(os.path.basename(source_path))[0])
+            if lib_key is None and source_path:
+                ap = os.path.abspath(source_path).replace("\\", "/")
+                for marker in ("/src/", "/std/", "/usage/"):
+                    if marker in ap:
+                        key = os.path.splitext(ap.split(marker, 1)[1])[0]
+                        break
+            out_obj = lib_obj_path(key)
+            if not force and lib_is_fresh(key, deps):
                 print(f"Up to date -> {out_obj}")
                 return 0
-            c_code = CodeGen(source_path).generate(prog, as_lib=True, skip_runtime=True)
-            c_file = os.path.join(terse_lib_dir(), name + ".c")
+            prefix = re.sub(r"\W", "_", key)
+            for f in prog.funcs:
+                if not f.name.startswith("__module_"):
+                    f.name = f"__module_{prefix}_{f.name}"
+            c_code = CodeGen(source_path).generate(prog, source_path=source_path, as_lib=True, skip_runtime=True)
+            c_file = os.path.join(module_lib_dir(key), "module.c")
             with open(c_file, "w", encoding="utf-8") as f:
                 f.write(c_code)
-            rt = ensure_runtime_obj(verbose=verbose)
             cc = os.environ.get("CC", "gcc")
-            cmd = [cc, "-O0", "-std=c11", "-c", c_file, "-o", out_obj,
-                   "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value",
-                   "-Wno-parentheses"]
-            r = subprocess.run(cmd, capture_output=True, text=True)
+            r = subprocess.run(
+                [cc, "-O0", "-std=c11", "-c", c_file, "-o", out_obj,
+                 "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value"],
+                capture_output=True, text=True)
             if r.returncode != 0:
                 print("C compile failed:", file=sys.stderr)
                 print(r.stderr, file=sys.stderr)
                 return 1
-            write_lib_meta(name, deps)
+            write_lib_meta(key, deps, extra={"use_path": key.replace(os.sep, ".")})
             if not keep_c:
-                try:
-                    os.remove(c_file)
-                except OSError:
-                    pass
+                try: os.remove(c_file)
+                except OSError: pass
             print(f"Library -> {out_obj}")
             return 0
 
-        # --- application binary ---
         out_bin = resolve_output_path(source_path, out_bin)
         gcc_out = out_bin
         if sys.platform == "win32" and os.path.splitext(out_bin)[1].lower() != ".exe":
             gcc_out = out_bin + ".exe"
 
-        # Incremental: skip if binary newer than all deps
         if not force and os.path.isfile(gcc_out) and deps:
             try:
                 bmt = os.path.getmtime(gcc_out)
@@ -4385,83 +4153,73 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None, a
             except OSError:
                 pass
 
-        c_code = CodeGen(source_path).generate(prog, as_lib=False, skip_runtime=False)
+        c_code = CodeGen(source_path).generate(prog, source_path=source_path, as_lib=False, skip_runtime=False)
         c_file = out_bin + ".c"
         os.makedirs(os.path.dirname(os.path.abspath(c_file)) or ".", exist_ok=True)
         with open(c_file, "w", encoding="utf-8") as f:
             f.write(c_code)
         if verbose:
-            print("----- C -----"); print(c_code[:2000]); print("-----")
-
-        # Ensure shared runtime object exists for library builds
-        try:
-            ensure_runtime_obj(verbose=verbose)
-        except Exception as ex:
-            if verbose:
-                print("runtime obj:", ex)
+            print("----- C -----"); print(c_code[:1200]); print("-----")
 
         cc = os.environ.get("CC", "gcc")
-        # Monolithic app compile (runtime embedded). Extra lib/*.o linked when present
-        # and --no-libs not set. Lib objects must be built with `lib` (no main, no runtime).
         link_objs = []
         if link_libs:
-            for lo in list_linkable_lib_objs():
-                link_objs.append(lo)
+            preferred = getattr(prog, "_link_objs", None) or []
+            seen, main_src = set(), os.path.abspath(source_path) if source_path else ""
+            for lo in preferred:
+                lo_abs = os.path.abspath(lo)
+                if lo_abs in seen:
+                    continue
+                skip = False
+                meta = os.path.join(os.path.dirname(lo_abs), "module.meta")
+                if main_src and os.path.isfile(meta):
+                    try:
+                        import json
+                        m = json.loads(open(meta, encoding="utf-8").read())
+                        if main_src in [os.path.abspath(x) for x in (m.get("sources") or [])]:
+                            skip = True
+                    except Exception:
+                        pass
+                if skip:
+                    continue
+                seen.add(lo_abs)
+                link_objs.append(lo_abs)
                 if verbose:
-                    print(f"link lib {lo}")
+                    print(f"link module lib {lo_abs}")
+
         if link_objs:
-            # compile main to .o then link with libs + shared rt
             main_obj = out_bin + ".o"
-            # regenerate main without runtime so symbols come from terse_rt.o
-            c_code_nr = CodeGen(source_path).generate(prog, as_lib=False, skip_runtime=True)
-            with open(c_file, "w", encoding="utf-8") as f:
-                f.write(c_code_nr)
-            rt = ensure_runtime_obj(verbose=verbose)
-            cmd_c = [cc, "-O0", "-std=c11", "-c", c_file, "-o", main_obj,
-                     "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value",
-                     "-Wno-parentheses"]
-            r = subprocess.run(cmd_c, capture_output=True, text=True)
+            r = subprocess.run(
+                [cc, "-O0", "-std=c11", "-c", c_file, "-o", main_obj,
+                 "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value", "-Wno-parentheses"],
+                capture_output=True, text=True)
             if r.returncode != 0:
-                print("C compile failed:", file=sys.stderr)
-                print(r.stderr, file=sys.stderr)
-                return 1
-            cmd_l = [cc, "-O0", "-std=c11", "-o", gcc_out, main_obj, rt] + link_objs
+                print("C compile failed:", file=sys.stderr); print(r.stderr, file=sys.stderr); return 1
+            cmd_l = [cc, "-O0", "-std=c11", "-o", gcc_out, main_obj] + link_objs
             if sys.platform == "win32":
-                cmd_l.append("-lws2_32")
+                cmd_l.extend(["-lws2_32", "-mconsole"])
             r = subprocess.run(cmd_l, capture_output=True, text=True)
             if r.returncode != 0:
-                print("C link failed:", file=sys.stderr)
-                print(r.stderr, file=sys.stderr)
-                return 1
-            try:
-                os.remove(main_obj)
-            except OSError:
-                pass
+                print("C link failed:", file=sys.stderr); print(r.stderr, file=sys.stderr); return 1
+            try: os.remove(main_obj)
+            except OSError: pass
         else:
             cmd = [cc, "-O0", "-std=c11",
                    "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value",
                    "-Wno-parentheses", c_file, "-o", gcc_out]
             if sys.platform == "win32":
-                cmd.append("-lws2_32")
+                cmd.extend(["-lws2_32", "-mconsole"])
             r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode != 0:
-                print("C compile failed:", file=sys.stderr)
-                print(r.stderr, file=sys.stderr)
-                return 1
+                print("C compile failed:", file=sys.stderr); print(r.stderr, file=sys.stderr); return 1
 
         if sys.platform == "win32" and gcc_out != out_bin and os.path.exists(gcc_out):
             shutil.copy2(gcc_out, out_bin)
-            try:
-                os.remove(gcc_out)
-            except OSError:
-                pass
-
+            try: os.remove(gcc_out)
+            except OSError: pass
         if not keep_c:
-            for junk in (c_file, out_bin + ".o"):
-                try:
-                    os.remove(junk)
-                except OSError:
-                    pass
+            try: os.remove(c_file)
+            except OSError: pass
         print(f"Compiled -> {out_bin}")
         return 0
     except SyntaxError as e:
@@ -4473,16 +4231,14 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None, a
         return 1
 
 def main():
-    ap = argparse.ArgumentParser(description="tersec v0.3 — default out: ~/.terse/out")
+    ap = argparse.ArgumentParser(description="tersec — out ~/.terse/out; libs ~/.terse/out/lib/<mod>/")
     ap.add_argument("command", choices=["build", "run", "check", "lib"])
     ap.add_argument("source")
-    ap.add_argument("-o", "--output", default=None,
-                    help="output path (default: ~/.terse/out/<name>)")
+    ap.add_argument("-o", "--output", default=None)
     ap.add_argument("--keep-c", action="store_true")
     ap.add_argument("-v", "--verbose", action="store_true")
-    ap.add_argument("-f", "--force", action="store_true", help="ignore incremental cache")
-    ap.add_argument("--no-libs", action="store_true",
-                    help="do not link objects from ~/.terse/out/lib")
+    ap.add_argument("-f", "--force", action="store_true")
+    ap.add_argument("--no-libs", action="store_true")
     args = ap.parse_args()
     with open(args.source, encoding="utf-8") as f:
         src = f.read()
@@ -4493,31 +4249,22 @@ def main():
                 prog.toplevel = _auto_test_toplevel(prog)
             errs = TypeChecker().check_program(prog)
             if errs:
-                for e in errs:
-                    print(e)
+                for e in errs: print(e)
                 sys.exit(1)
-            print("OK")
-            sys.exit(0)
+            print("OK"); sys.exit(0)
         except Exception as e:
-            print(e)
-            sys.exit(1)
+            print(e); sys.exit(1)
     if args.command == "lib":
-        sys.exit(compile_terse(
-            src, args.output, args.keep_c, args.verbose, args.source,
-            as_lib=True, force=args.force))
-    out = args.output  # resolve inside compile_terse
+        sys.exit(compile_terse(src, args.output, args.keep_c, args.verbose, args.source,
+                               as_lib=True, force=args.force))
     if args.command == "build":
-        sys.exit(compile_terse(
-            src, out, args.keep_c, args.verbose, args.source,
-            as_lib=False, link_libs=not args.no_libs, force=args.force))
+        sys.exit(compile_terse(src, args.output, args.keep_c, args.verbose, args.source,
+                               as_lib=False, link_libs=not args.no_libs, force=args.force))
     if args.command == "run":
-        code = compile_terse(
-            src, out, args.keep_c, args.verbose, args.source,
-            as_lib=False, link_libs=not args.no_libs, force=args.force)
-        if code != 0:
-            sys.exit(code)
-        bin_path = resolve_output_path(args.source, out)
-        sys.exit(subprocess.run([os.path.abspath(bin_path)]).returncode)
+        code = compile_terse(src, args.output, args.keep_c, args.verbose, args.source,
+                             as_lib=False, link_libs=not args.no_libs, force=args.force)
+        if code != 0: sys.exit(code)
+        sys.exit(subprocess.run([os.path.abspath(resolve_output_path(args.source, args.output))]).returncode)
 
 
 if __name__ == "__main__":

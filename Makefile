@@ -81,7 +81,7 @@ test:
 tst:
 	@for f in tst/t_*.te; do \
 		base=$$(basename $$f .te); \
-		$(MAKE) tst.$$base; \
+		$(MAKE) --no-print-directory tst.$$base; \
 	done
 
 clean:

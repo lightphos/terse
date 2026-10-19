@@ -1,7 +1,9 @@
 // Stage-1 Terse compiler — grown toward self-host.
-// Bootstrap: python tersec.py build tc.te -o tc
-// Self-host: ./tc tc.te tc2
-// (or TERSE_SOURCE / TERSE_OUTPUT env fallback)
+// Bootstrap: python3 tersec.py build tc.te -o ~/.terse/out/tc-stage0
+// Self-host:  ~/.terse/out/tc-stage0 tc.te
+//             (writes ~/.terse/out/<stem> when output omitted)
+// CLI:  tc <source.te> [output]
+// Env fallback: TERSE_SOURCE, TERSE_OUTPUT, TERSE_OUT (default ~/.terse/out)
 //
 // Implements enough of the dialect this file uses:
 //   rec (hardcoded Token/Param/Function/Node/ParseState in runtime),
@@ -9,7 +11,7 @@
 //   lists push/len/index, strings +/len/substr/index,
 //   pr, io.in, io.out, env, gcc.compile
 
-use std.fs
+use std.io
 
 rec Token { kind: i64, text: str }
 rec Param { name: str, typ: str }
@@ -1150,9 +1152,43 @@ fn compile_file(source_path: str, output_path: str) -> i64 {
 }
 
 
+fn default_out_dir() -> str {
+  var d: str = env("TERSE_OUT")
+  if len(d) == 0 {
+    var home: str = env("HOME")
+    if len(home) == 0 {
+      home = env("USERPROFILE")
+    }
+    if len(home) == 0 {
+      d = ".terse/out"
+    } else {
+      d = home + "/.terse/out"
+    }
+  }
+  d
+}
+
+fn path_stem(path: str) -> str {
+  // basename without final extension
+  var n: i64 = len(path)
+  var i: i64 = n - 1
+  var slash: i64 = -1
+  var dot: i64 = -1
+  lp i >= 0 {
+    if slash < 0 && (path[i] == 47 || path[i] == 92) { slash = i }
+    if dot < 0 && path[i] == 46 && slash < 0 { dot = i }
+    if slash >= 0 { }
+    i = i - 1
+  }
+  var begin: i64 = slash + 1
+  var end: i64 = n
+  if dot > begin { end = dot }
+  substr(path, begin, end - begin)
+}
+
 go {
-  // argv[0] = program, argv[1] = source, argv[2] = output
-  // falls back to TERSE_SOURCE / TERSE_OUTPUT if args omitted
+  // argv[1] = source, argv[2] = optional output
+  // default output: $TERSE_OUT/<stem> or ~/.terse/out/<stem>
   var source_path: str = arg(1)
   var output_path: str = arg(2)
   if len(source_path) == 0 {
@@ -1161,18 +1197,23 @@ go {
   if len(output_path) == 0 {
     output_path = env("TERSE_OUTPUT")
   }
+  if len(output_path) == 0 && len(source_path) > 0 {
+    output_path = default_out_dir() + "/" + path_stem(source_path)
+  }
   var result: i64 = 0
-  if len(source_path) == 0 || len(output_path) == 0 {
-    pr("usage: tc <source.te> <output>")
+  if len(source_path) == 0 {
+    pr("usage: tc <source.te> [output]")
+    pr("  default output: ~/.terse/out/<name> (or $TERSE_OUT)")
     result = 1
   } else {
     var status: i64 = compile_file(source_path, output_path)
     if status == 0 {
       pr("TC_OK")
+      pr(output_path)
       result = 0
     } else if status == 2 {
       pr("TC_UNSUPPORTED")
-      result = 0
+      result = 2
     } else {
       pr("TC_GCC_ERROR")
       result = status
