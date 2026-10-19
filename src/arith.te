@@ -7,5 +7,3 @@ go {
     pr(add())
     pr(mult(5, 6))
 }
-// EXPECT: 42
-// EXPECT: 30

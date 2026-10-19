@@ -232,6 +232,7 @@ Continues after failure; process exit code is the failure count.
 `env("NAME")` reads a process environment variable (empty string if unset).
 `env("NAME") = "value"` sets it and evaluates to the assigned string.
 
+
 SQL/`db` is **disabled** in lean builds.
 
 ---
@@ -295,6 +296,16 @@ C-style `lp i = 0; cond; step { … }` introduces `i` into the type-checker envi
 ---
 
 ## 11. Compilation
+
+### Output layout (host)
+- Default binary directory: `~/.terse/out/` (env `TERSE_OUT` or `TERSE_HOME`, default home `~/.terse`)
+- Library objects: `~/.terse/out/lib/<module>.o` via `python3 tersec.py lib module.te`
+- Shared runtime: `~/.terse/out/lib/terse_rt.o`
+- Rebuild skipped when the binary is newer than source inputs; `-f` forces rebuild
+- `--no-libs` skips linking objects from the lib directory
+
+## 11b. Compilation (commands)
+
 
 ```sh
 python3 tersec.py build main.te -o app

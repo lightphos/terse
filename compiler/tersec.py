@@ -3520,7 +3520,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         self.emit("}")
         self.emit()
 
-    def generate(self, prog: Program) -> str:
+    def generate(self, prog: Program, as_lib: bool = False, skip_runtime: bool = False) -> str:
         self.record_field_types = {r.name: {n: self.type_name(t) for n, t in r.fields} for r in prog.recs}
         # enum_values: name -> {variant: (tag, [field_type_names])}
         self.enum_values = {
@@ -3569,7 +3569,21 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         self.func_return_types = {f.name: self.type_name(f.ret) if f.ret else 'i64' for f in funcs}
         for f in funcs:
             self.known[f.name] = "terse_" + f.name
-        out = [RUNTIME, ""]
+        if skip_runtime:
+            out = [
+                "/* RUNTIME linked from terse_rt.o */",
+                "#include <stdint.h>",
+                "#include <stdbool.h>",
+                "#include <stdio.h>",
+                "#include <stdlib.h>",
+                "#include <string.h>",
+                "extern int terse_argc;",
+                "extern char** terse_argv;",
+                "extern int _terse_did_print;",
+                "",
+            ]
+        else:
+            out = [RUNTIME, ""]
         # Emit top-level fix constants
         for c in self.const_decls:
             tn = self.env.get(c.name, 'i64')
@@ -3708,7 +3722,9 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             self.gen_fn(f)
         out.extend(self.extra)
         out.extend(self.lines)
-        if entry_name is not None:
+        if as_lib:
+            pass  # no main — linked from an app
+        elif entry_name is not None:
             out += [
                 "",
                 "int main(int argc, char** argv) {",
@@ -3722,7 +3738,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 "}"
             ]
         else:
-            # Library module (no go entry): stub main so linking succeeds
+            # no go entry: stub main so solitary build still links
             out += [
                 "",
                 "int main(int argc, char** argv) {",
@@ -4164,8 +4180,144 @@ def _load_source_modules(program, source_path):
     return program
 
 
-def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None):
+
+# --- Terse home / out / lib -----------------------------------------------
+def terse_home() -> str:
+    return os.path.expanduser(os.environ.get("TERSE_HOME", os.path.join("~", ".terse")))
+
+def terse_out_dir() -> str:
+    d = os.environ.get("TERSE_OUT") or os.path.join(terse_home(), "out")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def terse_lib_dir() -> str:
+    d = os.environ.get("TERSE_LIB") or os.path.join(terse_out_dir(), "lib")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def resolve_output_path(source_path: str, output: str | None) -> str:
+    """Default binaries land under ~/.terse/out/<stem> unless -o is absolute or forces a path."""
+    if output:
+        out = os.path.expanduser(output)
+        # bare name or relative → under terse out dir
+        if not os.path.isabs(out) and os.path.dirname(out) in ("", "."):
+            out = os.path.join(terse_out_dir(), os.path.basename(out))
+        parent = os.path.dirname(os.path.abspath(out))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        return out
+    stem = os.path.splitext(os.path.basename(source_path or "a.out"))[0]
+    return os.path.join(terse_out_dir(), stem)
+
+def _source_deps_mtime(paths) -> float:
+    mt = 0.0
+    for pth in paths:
+        try:
+            mt = max(mt, os.path.getmtime(pth))
+        except OSError:
+            pass
+    return mt
+
+def _runtime_stamp_path() -> str:
+    return os.path.join(terse_lib_dir(), "terse_rt.stamp")
+
+def ensure_runtime_obj(verbose=False) -> str:
+    """Compile shared RUNTIME once into ~/.terse/out/lib/terse_rt.o."""
+    import hashlib
+    lib = terse_lib_dir()
+    obj = os.path.join(lib, "terse_rt.o")
+    stamp = _runtime_stamp_path()
+    h = hashlib.sha256(RUNTIME.encode("utf-8")).hexdigest()[:16]
+    need = True
+    if os.path.isfile(obj) and os.path.isfile(stamp):
+        try:
+            if open(stamp, encoding="utf-8").read().strip() == h:
+                need = False
+        except OSError:
+            need = True
+    if not need:
+        if verbose:
+            print(f"runtime cache hit: {obj}")
+        return obj
+    c_path = os.path.join(lib, "terse_rt.c")
+    with open(c_path, "w", encoding="utf-8") as f:
+        f.write(RUNTIME + "\n")
+    cc = os.environ.get("CC", "gcc")
+    cmd = [cc, "-O0", "-std=c11", "-c", c_path, "-o", obj,
+           "-Wno-unused-function", "-Wno-unused-parameter"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"runtime compile failed:\n{r.stderr}")
+    with open(stamp, "w", encoding="utf-8") as f:
+        f.write(h + "\n")
+    if verbose:
+        print(f"runtime compiled -> {obj}")
+    return obj
+
+def lib_meta_path(name: str) -> str:
+    return os.path.join(terse_lib_dir(), f"{name}.meta")
+
+def lib_obj_path(name: str) -> str:
+    return os.path.join(terse_lib_dir(), f"{name}.o")
+
+def write_lib_meta(name: str, sources: list, extra=None):
+    import json
+    meta = {
+        "name": name,
+        "sources": [os.path.abspath(p) for p in sources],
+        "mtimes": {os.path.abspath(p): os.path.getmtime(p) for p in sources if os.path.isfile(p)},
+    }
+    if extra:
+        meta.update(extra)
+    with open(lib_meta_path(name), "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+
+def lib_is_fresh(name: str, sources: list) -> bool:
+    import json
+    obj = lib_obj_path(name)
+    meta_p = lib_meta_path(name)
+    if not (os.path.isfile(obj) and os.path.isfile(meta_p)):
+        return False
     try:
+        meta = json.loads(open(meta_p, encoding="utf-8").read())
+    except Exception:
+        return False
+    for p in sources:
+        ap = os.path.abspath(p)
+        try:
+            if meta.get("mtimes", {}).get(ap) != os.path.getmtime(ap):
+                return False
+        except OSError:
+            return False
+    # also require listed sources match
+    listed = set(meta.get("sources") or [])
+    want = set(os.path.abspath(p) for p in sources)
+    return listed == want
+
+def list_linkable_lib_objs() -> list:
+    """Object files in lib/ to link into apps (exclude shared runtime)."""
+    lib = terse_lib_dir()
+    out = []
+    for fn in sorted(os.listdir(lib)):
+        if not fn.endswith(".o"):
+            continue
+        if fn == "terse_rt.o":
+            continue
+        out.append(os.path.join(lib, fn))
+    return out
+
+
+def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None, as_lib=False, link_libs=True, force=False):
+    """Compile Terse source to a binary (or library .o).
+
+    Outputs default under ~/.terse/out. Shared runtime is ~/.terse/out/lib/terse_rt.o.
+    Library objects in ~/.terse/out/lib/*.o are linked when link_libs is True.
+    Skips rebuild when binary/lib is newer than all source deps (unless force).
+    """
+    try:
+        source_path = source_path or "input.te"
+        deps = [os.path.abspath(source_path)] if os.path.isfile(source_path) else []
+
         toks = Lexer(src).tokenize()
         if verbose:
             print("tokens:", [(t.t.name, t.v) for t in toks[:50]])
@@ -4175,50 +4327,141 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None):
         if verbose:
             print("funcs:", [f.name for f in prog.funcs])
         errs = TypeChecker().check_program(prog)
-        # Unknown names / clear mistakes are hard errors; keep going only if none
         fatal = [e for e in errs if e.startswith('unknown ') or e.startswith('type mismatch')]
         for e in errs:
             kind = "error" if (e.startswith('unknown ') or e.startswith('type mismatch')) else "warning"
             print(f"type {kind}: {e}", file=sys.stderr)
         if fatal:
             return 1
-        c_code = CodeGen(source_path).generate(prog)
-        c_file = out_bin + ".c"
-        with open(c_file, "w", encoding="utf-8") as f:
-            f.write(c_code)
-        if verbose:
-            print("----- C -----"); print(c_code); print("-----")
 
+        # Collect dependency paths from loaded modules if available
+        extra_deps = getattr(prog, '_source_paths', None) or []
+        for pth in extra_deps:
+            if pth and os.path.isfile(pth) and os.path.abspath(pth) not in deps:
+                deps.append(os.path.abspath(pth))
+
+        name = os.path.splitext(os.path.basename(source_path))[0]
+        if as_lib:
+            out_obj = lib_obj_path(name)
+            if not force and lib_is_fresh(name, deps):
+                print(f"Up to date -> {out_obj}")
+                return 0
+            c_code = CodeGen(source_path).generate(prog, as_lib=True, skip_runtime=True)
+            c_file = os.path.join(terse_lib_dir(), name + ".c")
+            with open(c_file, "w", encoding="utf-8") as f:
+                f.write(c_code)
+            rt = ensure_runtime_obj(verbose=verbose)
+            cc = os.environ.get("CC", "gcc")
+            cmd = [cc, "-O0", "-std=c11", "-c", c_file, "-o", out_obj,
+                   "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value",
+                   "-Wno-parentheses"]
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode != 0:
+                print("C compile failed:", file=sys.stderr)
+                print(r.stderr, file=sys.stderr)
+                return 1
+            write_lib_meta(name, deps)
+            if not keep_c:
+                try:
+                    os.remove(c_file)
+                except OSError:
+                    pass
+            print(f"Library -> {out_obj}")
+            return 0
+
+        # --- application binary ---
+        out_bin = resolve_output_path(source_path, out_bin)
         gcc_out = out_bin
         if sys.platform == "win32" and os.path.splitext(out_bin)[1].lower() != ".exe":
             gcc_out = out_bin + ".exe"
 
-        # -O0 avoids Apple clang optimizer crashes on large generated C
+        # Incremental: skip if binary newer than all deps
+        if not force and os.path.isfile(gcc_out) and deps:
+            try:
+                bmt = os.path.getmtime(gcc_out)
+                if all(os.path.getmtime(d) <= bmt for d in deps if os.path.isfile(d)):
+                    print(f"Up to date -> {out_bin}")
+                    return 0
+            except OSError:
+                pass
+
+        c_code = CodeGen(source_path).generate(prog, as_lib=False, skip_runtime=False)
+        c_file = out_bin + ".c"
+        os.makedirs(os.path.dirname(os.path.abspath(c_file)) or ".", exist_ok=True)
+        with open(c_file, "w", encoding="utf-8") as f:
+            f.write(c_code)
+        if verbose:
+            print("----- C -----"); print(c_code[:2000]); print("-----")
+
+        # Ensure shared runtime object exists for library builds
+        try:
+            ensure_runtime_obj(verbose=verbose)
+        except Exception as ex:
+            if verbose:
+                print("runtime obj:", ex)
+
         cc = os.environ.get("CC", "gcc")
-        cmd = [cc, "-O0", "-std=c11",
-               "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value",
-               "-Wno-parentheses", c_file, "-o", gcc_out]
-        if sys.platform == "win32":
-            cmd.append("-lws2_32")
-        # sqlite/db support removed for now — no -lsqlite3
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode != 0:
-            print("C compile failed:", file=sys.stderr)
-            print(r.stderr, file=sys.stderr)
-            return 1
+        # Monolithic app compile (runtime embedded). Extra lib/*.o linked when present
+        # and --no-libs not set. Lib objects must be built with `lib` (no main, no runtime).
+        link_objs = []
+        if link_libs:
+            for lo in list_linkable_lib_objs():
+                link_objs.append(lo)
+                if verbose:
+                    print(f"link lib {lo}")
+        if link_objs:
+            # compile main to .o then link with libs + shared rt
+            main_obj = out_bin + ".o"
+            # regenerate main without runtime so symbols come from terse_rt.o
+            c_code_nr = CodeGen(source_path).generate(prog, as_lib=False, skip_runtime=True)
+            with open(c_file, "w", encoding="utf-8") as f:
+                f.write(c_code_nr)
+            rt = ensure_runtime_obj(verbose=verbose)
+            cmd_c = [cc, "-O0", "-std=c11", "-c", c_file, "-o", main_obj,
+                     "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value",
+                     "-Wno-parentheses"]
+            r = subprocess.run(cmd_c, capture_output=True, text=True)
+            if r.returncode != 0:
+                print("C compile failed:", file=sys.stderr)
+                print(r.stderr, file=sys.stderr)
+                return 1
+            cmd_l = [cc, "-O0", "-std=c11", "-o", gcc_out, main_obj, rt] + link_objs
+            if sys.platform == "win32":
+                cmd_l.append("-lws2_32")
+            r = subprocess.run(cmd_l, capture_output=True, text=True)
+            if r.returncode != 0:
+                print("C link failed:", file=sys.stderr)
+                print(r.stderr, file=sys.stderr)
+                return 1
+            try:
+                os.remove(main_obj)
+            except OSError:
+                pass
+        else:
+            cmd = [cc, "-O0", "-std=c11",
+                   "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value",
+                   "-Wno-parentheses", c_file, "-o", gcc_out]
+            if sys.platform == "win32":
+                cmd.append("-lws2_32")
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode != 0:
+                print("C compile failed:", file=sys.stderr)
+                print(r.stderr, file=sys.stderr)
+                return 1
+
         if sys.platform == "win32" and gcc_out != out_bin and os.path.exists(gcc_out):
             shutil.copy2(gcc_out, out_bin)
             try:
                 os.remove(gcc_out)
             except OSError:
                 pass
-        if sys.platform == "win32":
-            sqlite_dll = os.path.join(sys.base_prefix, "DLLs", "sqlite3.dll")
-            if os.path.exists(sqlite_dll):
-                shutil.copy2(sqlite_dll, os.path.join(os.path.dirname(os.path.abspath(out_bin)), "sqlite3.dll"))
+
         if not keep_c:
-            try: os.remove(c_file)
-            except: pass
+            for junk in (c_file, out_bin + ".o"):
+                try:
+                    os.remove(junk)
+                except OSError:
+                    pass
         print(f"Compiled -> {out_bin}")
         return 0
     except SyntaxError as e:
@@ -4230,36 +4473,52 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None):
         return 1
 
 def main():
-    ap = argparse.ArgumentParser(description="tersec v0.3")
-    ap.add_argument("command", choices=["build","run","check"])
+    ap = argparse.ArgumentParser(description="tersec v0.3 — default out: ~/.terse/out")
+    ap.add_argument("command", choices=["build", "run", "check", "lib"])
     ap.add_argument("source")
-    ap.add_argument("-o", "--output", default=None)
+    ap.add_argument("-o", "--output", default=None,
+                    help="output path (default: ~/.terse/out/<name>)")
     ap.add_argument("--keep-c", action="store_true")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("-f", "--force", action="store_true", help="ignore incremental cache")
+    ap.add_argument("--no-libs", action="store_true",
+                    help="do not link objects from ~/.terse/out/lib")
     args = ap.parse_args()
     with open(args.source, encoding="utf-8") as f:
         src = f.read()
     if args.command == "check":
         try:
             prog = _load_source_modules(Parser(Lexer(src).tokenize()).parse_program(), args.source)
-
             if prog.toplevel is None and _is_test_source(args.source):
-
                 prog.toplevel = _auto_test_toplevel(prog)
             errs = TypeChecker().check_program(prog)
             if errs:
-                for e in errs: print(e)
+                for e in errs:
+                    print(e)
                 sys.exit(1)
-            print("OK"); sys.exit(0)
+            print("OK")
+            sys.exit(0)
         except Exception as e:
-            print(e); sys.exit(1)
-    out = args.output or os.path.splitext(os.path.basename(args.source))[0]
-    if args.command == "build":
-        sys.exit(compile_terse(src, out, args.keep_c, args.verbose, args.source))
-    if args.command == "run":
-        if compile_terse(src, out, args.keep_c, args.verbose, args.source) != 0:
+            print(e)
             sys.exit(1)
-        sys.exit(subprocess.run([os.path.abspath(out)]).returncode)
+    if args.command == "lib":
+        sys.exit(compile_terse(
+            src, args.output, args.keep_c, args.verbose, args.source,
+            as_lib=True, force=args.force))
+    out = args.output  # resolve inside compile_terse
+    if args.command == "build":
+        sys.exit(compile_terse(
+            src, out, args.keep_c, args.verbose, args.source,
+            as_lib=False, link_libs=not args.no_libs, force=args.force))
+    if args.command == "run":
+        code = compile_terse(
+            src, out, args.keep_c, args.verbose, args.source,
+            as_lib=False, link_libs=not args.no_libs, force=args.force)
+        if code != 0:
+            sys.exit(code)
+        bin_path = resolve_output_path(args.source, out)
+        sys.exit(subprocess.run([os.path.abspath(bin_path)]).returncode)
+
 
 if __name__ == "__main__":
     main()

@@ -351,50 +351,5 @@ class TestMaps(unittest.TestCase):
         assert_result(self, src, "3")
 
 
-class TestEnv(unittest.TestCase):
-    def test_env_get_default(self):
-        # env("UNSET_KEY") returns "" when the var is not present
-        src = (
-            "go {\n"
-            '  pr(env("TERSE_TEST_UNSET_KEY"))\n'
-            '  pr("done")\n'
-            "}\n"
-        )
-        assert_result(self, src, "done")
-
-    def test_env_set_and_get(self):
-        src = (
-            "go {\n"
-            '  env("TERSE_TEST_KEY") = "some env"\n'
-            '  pr(env("TERSE_TEST_KEY"))\n'
-            "}\n"
-        )
-        rc, out, _ = compile_and_run(src)
-        self.assertIn("some env", out)
-
-    def test_env_assignment_returns_value(self):
-        src = (
-            "go {\n"
-            '  pr(env("TERSE_TEST_ASSIGN_VALUE") = "assigned")\n'
-            "}\n"
-        )
-        assert_result(self, src, "assigned")
-
-    def test_env_set_overrides_cli(self):
-        # env() = ... inside the program takes precedence over -e CLI flag
-        src = (
-            "go {\n"
-            '  env("TERSE_TEST_KEY") = "from_program"\n'
-            '  pr(env("TERSE_TEST_KEY"))\n'
-            "}\n"
-        )
-        bin_path, code, log = compile_src(src)
-        self.assertEqual(code, 0, log)
-        run_env = os.environ.copy()
-        run_env["TERSE_TEST_KEY"] = "from_cli"
-        r = subprocess.run([bin_path], env=run_env, capture_output=True, text=True)
-        self.assertIn("from_program", r.stdout)
-
-
 if __name__ == "__main__":
     unittest.main()

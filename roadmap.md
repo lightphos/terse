@@ -27,6 +27,17 @@ Status legend: **Done** · **Next** · **Later** · **Parked**
 Priority order for the **host** — keep `make verify` / tests green.  
 Each item notes when **`tc.te` should be updated** (if at all).
 
+
+### 1.0 Output directory & library cache  **Done (host)**
+- Default binaries: `~/.terse/out/<name>` (override with absolute `-o` or `TERSE_OUT`)
+- Shared runtime object: `~/.terse/out/lib/terse_rt.o` (built once)
+- Library objects: `tersec.py lib module.te` → `~/.terse/out/lib/<name>.o` (+ `.meta` mtimes)
+- Incremental: skip rebuild when binary newer than sources (`-f` / `--force` to rebuild)
+- App build links `lib/*.o` when present; use `--no-libs` to disable
+- Env: `TERSE_HOME` (default `~/.terse`), `TERSE_OUT`, `TERSE_LIB`, `CC`
+
+**`tc.te`:** lift default out path + argv later (T1); lib linker after host stable (new T9)
+
 ### 1.1 Environment API  **Next**
 ```terse
 env("KEY") = "value"   // set
@@ -205,6 +216,7 @@ Native (only at triggers in §3.3):
 [ ] T2   env runtime/emit (after 1.1)
 [ ] T3   typed lists under native (if demos need them)
 [ ] T8   bootstrap-verify make target
+[ ] T9   native: default out ~/.terse/out + link ~/.terse/out/lib/*.o when fresh
 [ ] T4–T7 as needed — not by default
 ```
 
