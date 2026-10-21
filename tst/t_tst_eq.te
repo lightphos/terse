@@ -1,0 +1,34 @@
+// Parameter overloads for tst.eq / tst.ne (lib/std/tst.te)
+use std.tst
+
+fn t_eq_i64() {
+  tst.eq(42, 42)
+  tst.eq(0, 0)
+}
+
+fn t_eq_str() {
+  tst.eq("hello", "hello")
+  tst.eq("", "")
+}
+
+fn t_eq_bool() {
+  tst.eq(true, true)
+  tst.eq(false, false)
+}
+
+fn t_ne_i64() {
+  tst.ne(1, 2)
+  tst.ne(0, 1)
+}
+
+fn t_ne_str() {
+  tst.ne("a", "b")
+}
+
+fn t_ne_bool() {
+  tst.ne(true, false)
+}
+
+fn t_chk_i64() {
+  tst.chk(10, 10)
+}

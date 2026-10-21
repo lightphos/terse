@@ -1,0 +1,62 @@
+// std.tst — unit-test assertions (Terse library under lib/)
+// use std.tst
+//
+// Host sugar: tst.eq / tst.ne / tst.chk / tst.report
+// Resolved via parameter overloading on eq / ne.
+
+pub fn eq(got: i64, expected: i64, file: str, line: i64) -> i64 {
+  if got != expected {
+    pr("FAIL " + file + ":" + line + ": expected " + expected + ", got " + got)
+    ret 1
+  }
+  ret 0
+}
+
+pub fn eq(got: str, expected: str, file: str, line: i64) -> i64 {
+  if got != expected {
+    pr("FAIL " + file + ":" + line + ": expected \"" + expected + "\", got \"" + got + "\"")
+    ret 1
+  }
+  ret 0
+}
+
+pub fn eq(got: bool, expected: bool, file: str, line: i64) -> i64 {
+  if got != expected {
+    if expected {
+      pr("FAIL " + file + ":" + line + ": expected true, got false")
+    } else {
+      pr("FAIL " + file + ":" + line + ": expected false, got true")
+    }
+    ret 1
+  }
+  ret 0
+}
+
+pub fn ne(got: i64, unexpected: i64, file: str, line: i64) -> i64 {
+  if got == unexpected {
+    pr("FAIL " + file + ":" + line + ": expected not " + unexpected + ", got " + got)
+    ret 1
+  }
+  ret 0
+}
+
+pub fn ne(got: str, unexpected: str, file: str, line: i64) -> i64 {
+  if got == unexpected {
+    pr("FAIL " + file + ":" + line + ": expected not \"" + unexpected + "\", got \"" + got + "\"")
+    ret 1
+  }
+  ret 0
+}
+
+pub fn ne(got: bool, unexpected: bool, file: str, line: i64) -> i64 {
+  if got == unexpected {
+    pr("FAIL " + file + ":" + line + ": expected values to differ")
+    ret 1
+  }
+  ret 0
+}
+
+pub fn report() -> i64 {
+  // Host prefers runtime tst_report() so failure counts stay accurate.
+  ret 0
+}

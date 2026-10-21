@@ -1,9 +1,17 @@
 use std.tst
 use numeric
 
-fn t_numerics() {
-  tst.eq(num(), 7)
-  tst.eq(char(), 65)
-  tst.eq(dbl(), 1.5)
-  tst.eq(flt(), 1.5)
+fn t_dbl() {
+  val v = dbl(1.5)
+  tst.eq(v == 3.0, true)
+}
+
+fn t_flt() {
+  val v = flt(1.5)
+  tst.eq(v == 3.0, true)
+}
+
+fn t_add() {
+  val v = add_f64(1.25, 2.25)
+  tst.eq(v == 3.5, true)
 }

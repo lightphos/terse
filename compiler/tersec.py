@@ -1200,11 +1200,120 @@ class Parser:
         return Program(fs, recs, enums, sigs, methods, toplevel, uses, fixes)
 
 # --- Type check (light) -----------------------------------
+
+# --- Type aliases & parameter overloading ---------------------------------
+_TYPE_ALIASES = {
+    'long': 'i64', 'int': 'i32', 'short': 'i16', 'char': 'i8',
+    'float': 'f32', 'double': 'f64',
+    'List': 'list', 'String': 'str',
+}
+
+def _norm_type_name(t) -> str:
+    """Normalize a TypeNode or type name string for overload matching."""
+    if t is None:
+        return 'i64'
+    if isinstance(t, str):
+        name = t
+    else:
+        # TypeNode
+        name = getattr(t, 'name', None) or 'i64'
+        args = getattr(t, 'args', None) or []
+        if name in ('list', 'List') and args:
+            inner = _norm_type_name(args[0])
+            return 'list_str' if inner == 'str' else f'list_{inner}'
+        if name == 'map' and len(args) >= 2:
+            return f"map_{_norm_type_name(args[0])}_{_norm_type_name(args[1])}"
+    return _TYPE_ALIASES.get(name, name)
+
+def _mangle_overload(name: str, param_types) -> str:
+    """C symbol for an overloaded function: terse_eq__i64_i64."""
+    if not param_types:
+        return f"terse_{name}__"
+    parts = [str(t).replace(' ', '_') for t in param_types]
+    return f"terse_{name}__" + "_".join(parts)
+
+def _resolve_overload(overloads, arg_types):
+    """Pick (param_types, cname, ret) matching arg_types.
+    overloads: list of (param_types, cname, ret)
+    Prefer exact match; then soft numeric width match (i32↔i64 etc.).
+    """
+    if not overloads:
+        return None
+    args = [_norm_type_name(a) if not isinstance(a, str) else _TYPE_ALIASES.get(a, a) for a in arg_types]
+    # exact
+    for pts, cname, ret in overloads:
+        if len(pts) != len(args):
+            continue
+        if all(_norm_type_name(p) == a for p, a in zip(pts, args)):
+            return (pts, cname, ret)
+    # soft: all integer-ish widths interchangeable for resolution
+    _intish = {'i8','i16','i32','i64','u8','u16','u32','u64','int','long','short','char'}
+    def soft_ok(p, a):
+        p, a = _norm_type_name(p), _norm_type_name(a)
+        if p == a:
+            return True
+        if p in _intish and a in _intish:
+            return True
+        if p in ('f32','f64','float','double') and a in ('f32','f64','float','double','i64','i32'):
+            return True
+        return False
+    soft = []
+    for pts, cname, ret in overloads:
+        if len(pts) != len(args):
+            continue
+        if all(soft_ok(p, a) for p, a in zip(pts, args)):
+            soft.append((pts, cname, ret))
+    if len(soft) == 1:
+        return soft[0]
+    if len(soft) > 1:
+        # prefer exact width when possible; else first soft
+        for pts, cname, ret in soft:
+            if all(_norm_type_name(p) == a for p, a in zip(pts, args)):
+                return (pts, cname, ret)
+        return soft[0]
+    return None
+
+
+def _types_compatible(expected, got, strict_list=False):
+    """True if got may be used where expected is required.
+
+    Empty lists are typed as 'list' (polymorphic) and inhabit any list_*.
+    Integer list literals default to list_i64 but may assign to list_i32/etc.
+    """
+    e = _norm_type_name(expected)
+    g = _norm_type_name(got)
+    if e == g:
+        return True
+    _intish = {'i8','i16','i32','i64','u8','u16','u32','u64','char'}
+    if e in _intish and g in _intish:
+        return not strict_list
+    if e in ('f32','f64') and g in ('f32','f64','i64','i32'):
+        return True
+    # Polymorphic empty list
+    if e in ('list', 'List') and (g in ('list', 'List') or (isinstance(g, str) and g.startswith('list_'))):
+        return True
+    if g in ('list', 'List') and (e in ('list', 'List') or (isinstance(e, str) and e.startswith('list_'))):
+        return True
+    if isinstance(e, str) and isinstance(g, str) and e.startswith('list_') and g.startswith('list_'):
+        if e == g:
+            return True
+        if strict_list:
+            # Still allow int-width lists to interconvert (literals are i64)
+            return _types_compatible(e[5:], g[5:], strict_list=False)
+        return _types_compatible(e[5:], g[5:], strict_list=False)
+    if e in ('list', 'List') and isinstance(g, str) and g.startswith('list_'):
+        return True
+    if g in ('list', 'List') and isinstance(e, str) and e.startswith('list_'):
+        return True
+    return False
+
 class TypeChecker:
     def __init__(self):
         self.funcs = {}
         self.env = {}
         self.errors = []
+        self.current_fn = None
+        self.current_ret = None
         self.recs = {}
         self.enums = {}
         self.sigs = {}     # trait name -> list of (method_name, [param_type_names], ret_type_name)
@@ -1253,7 +1362,7 @@ class TypeChecker:
 
     def check_program(self, prog):
         self.compute_satisfaction(prog)
-        self.recs = {r.name: {n: t.name if t else 'i64' for n, t in r.fields} for r in prog.recs}
+        self.recs = {r.name: {n: (self._type_name(t) if t else 'i64') for n, t in r.fields} for r in prog.recs}
         self.enums = {
             e.name: {v.name: [self._type_name(t) for t in v.fields] for v in e.variants}
             for e in prog.enums
@@ -1264,14 +1373,37 @@ class TypeChecker:
                 self.fixes[c.name] = c.typ.name
             else:
                 self.fixes[c.name] = self.check(c.value)
+        self.overloads = {}  # name -> [(param_types, ret)]
         for f in prog.funcs:
-            ats = [p.typ.name if p.typ else 'i64' for p in f.params]
-            self.funcs[f.name] = (ats, f.ret.name if f.ret else 'i64')
+            ats = [_norm_type_name(p.typ) if p.typ else 'i64' for p in f.params]
+            ret = _norm_type_name(f.ret) if f.ret else 'i64'
+            existing = self.overloads.setdefault(f.name, [])
+            for pats, pret in existing:
+                if pats == ats:
+                    self.errors.append(
+                        f"type error: duplicate overload '{f.name}({', '.join(ats)})'"
+                    )
+                    break
+            else:
+                existing.append((ats, ret))
+            self.funcs[f.name] = (ats, ret)  # last wins for simple lookup
         for f in prog.funcs:
-            self.env = {p.name: (p.typ.name if p.typ else 'i64') for p in f.params}
-            self.check(f.body)
+            self.current_fn = f.name
+            self.current_ret = _norm_type_name(f.ret) if f.ret else 'i64'
+            self.env = {
+                p.name: (_norm_type_name(p.typ) if p.typ else 'i64') for p in f.params
+            }
+            body_t = self.check(f.body)
+            if body_t and not _types_compatible(self.current_ret, body_t):
+                self.errors.append(
+                    f"type error: function '{f.name}' returns '{self.current_ret}' but body yields '{body_t}'"
+                )
+            self.current_fn = None
+            self.current_ret = None
         if prog.toplevel is not None:
             self.env = {}
+            self.current_fn = None
+            self.current_ret = None
             self.check(prog.toplevel)
         return self.errors
     def check(self, e):
@@ -1280,11 +1412,28 @@ class TypeChecker:
         if isinstance(e, StrLit): return 'str'
         if isinstance(e, ListLit):
             item_types = [self.check(it) for it in e.items]
-            if item_types and item_types[0] == 'str':
+            if not item_types:
+                return 'list'  # empty: inhabits any list_* via annotation
+            norms = [_norm_type_name(t) for t in item_types]
+            base = norms[0]
+            _intish = {'i8','i16','i32','i64','u8','u16','u32','u64','char'}
+            for i, t in enumerate(norms[1:], start=2):
+                if t == base:
+                    continue
+                if base in _intish and t in _intish:
+                    base = 'i64'
+                    continue
+                self.errors.append(
+                    f"type error: list element {i} has type '{t}', expected '{base}'"
+                )
+                break
+            if base == 'str':
                 return 'list_str'
-            if item_types and item_types[0] in self.recs:
-                return f'list_{item_types[0]}'
-            return 'list'
+            if base in self.recs:
+                return f'list_{base}'
+            if base in ('i8','i16','i32','u8','u16','u32','u64','char','f32','f64','bool'):
+                return f'list_{base}'
+            return 'list_i64'
         if isinstance(e, RecordLit):
             for _, v in e.fields: self.check(v)
             if isinstance(e.ctor, Var) and e.ctor.name in self.recs:
@@ -1320,16 +1469,64 @@ class TypeChecker:
             return 'i64'
         if isinstance(e, Binary):
             lt = self.check(e.left); rt = self.check(e.right)
+            if e.op == '=':
+                if not _types_compatible(lt, rt):
+                    self.errors.append(
+                        f"type error: cannot assign '{rt}' to '{lt}'"
+                    )
+                return lt
             if e.op == '+':
+                if isinstance(lt, str) and (lt.startswith('list_') or lt in ('list', 'List')):
+                    if isinstance(rt, str) and (rt.startswith('list_') or rt in ('list', 'List')):
+                        if not _types_compatible(lt, rt):
+                            self.errors.append(
+                                f"type error: cannot concat '{lt}' and '{rt}'"
+                            )
+                        return lt if lt.startswith('list_') else rt
+                    elem = lt[5:] if lt.startswith('list_') else 'i64'
+                    if not _types_compatible(elem, rt):
+                        self.errors.append(
+                            f"type error: cannot push '{rt}' into '{lt}'"
+                        )
+                    return lt
                 if lt == 'list_str' or rt == 'list_str':
                     return 'list_str'
                 if lt == 'str' or rt == 'str':
                     return 'str'
-            return 'bool' if e.op in '==!=<=>=<>&&||' else 'i64'
+            if e.op in ('==', '!=', '<', '>', '<=', '>='):
+                if (isinstance(lt, str) and lt.startswith('list_')) or (isinstance(rt, str) and rt.startswith('list_')):
+                    if not _types_compatible(lt, rt, strict_list=True):
+                        self.errors.append(
+                            f"type error: cannot compare '{lt}' and '{rt}'"
+                        )
+                elif (lt == 'str') != (rt == 'str') and lt != rt:
+                    self.errors.append(
+                        f"type error: cannot compare '{lt}' and '{rt}'"
+                    )
+                return 'bool'
+            if e.op in ('+','-','*','/','%'):
+                # float arithmetic keeps float width
+                if lt in ('f64','f32') or rt in ('f64','f32'):
+                    if lt == 'f64' or rt == 'f64' or lt == 'double' or rt == 'double':
+                        return 'f64'
+                    return 'f32'
+                return 'i64'
+            return 'bool' if e.op in ('==','!=','<','>','<=','>=','&&','||') else 'i64'
         if isinstance(e, Unary): return self.check(e.expr)
         if isinstance(e, RetExpr):
             if e.value is not None:
-                return self.check(e.value)
+                vt = self.check(e.value)
+                if self.current_ret is not None and not _types_compatible(self.current_ret, vt):
+                    fn = self.current_fn or '<fn>'
+                    self.errors.append(
+                        f"type error: ret type '{vt}' does not match function '{fn}' return type '{self.current_ret}'"
+                    )
+                return vt
+            if self.current_ret is not None and not _types_compatible(self.current_ret, 'i64'):
+                fn = self.current_fn or '<fn>'
+                self.errors.append(
+                    f"type error: bare ret is i64 but function '{fn}' returns '{self.current_ret}'"
+                )
             return 'i64'
         if isinstance(e, Call) and isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name in self.enums:
             for a in e.args:
@@ -1343,8 +1540,23 @@ class TypeChecker:
                             'has','up','low','trim','split','join','parse','starts','ends','map'}
                 if n not in self.funcs and n not in builtins and n not in self.env:
                     self.errors.append(f"unknown function '{n}'")
+            arg_types = [self.check(a) for a in e.args]
+            if isinstance(e.func, Var):
+                n = e.func.name
+                overs = getattr(self, 'overloads', {}).get(n) or []
+                if len(overs) > 1:
+                    # Type-directed resolution among overloads
+                    pack = [(pts, n, ret) for pts, ret in overs]
+                    resolved = _resolve_overload(pack, arg_types)
+                    if resolved is None:
+                        self.errors.append(
+                            f"type error: no overload of '{n}' matches ({', '.join(arg_types)})"
+                        )
+                        return 'i64'
+                    return resolved[2]
+                if n in self.funcs:
+                    return self.funcs[n][1]
             self.check(e.func)
-            for a in e.args: self.check(a)
             if isinstance(e.func, Var) and e.func.name == 'push' and e.args:
                 return self.check(e.args[0])
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
@@ -1353,6 +1565,19 @@ class TypeChecker:
                 if e.func.field in ('in', 'read_text'): return 'str'
                 if e.func.field in ('out', 'write_text'): return 'i64'
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'str':
+                f = e.func.field
+                if f == 'split':
+                    return 'list_str'
+                if f in ('has', 'starts', 'ends'):
+                    return 'bool'
+                if f in ('trim', 'up', 'low', 'join'):
+                    return 'str'
+                if f == 'parse':
+                    return 'i64'
+                if f == 'len':
+                    return 'i64'
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'gcc' and e.func.field == 'compile':
                 return 'i64'
             if isinstance(e.func, Index) and isinstance(e.func.coll, Member) \
@@ -1360,20 +1585,36 @@ class TypeChecker:
                     and e.func.coll.field in ('query', 'query_one') \
                     and isinstance(e.func.idx, Var):
                 return f'list_{e.func.idx.name}'
-            if isinstance(e.func, Var) and e.func.name in ('pr','json','env','substr'):
-                return 'str' if e.func.name in ('json','env','substr') else 'i64'
-            if isinstance(e.func, Var) and e.func.name == 'len': return 'i64'
-            if isinstance(e.func, Var) and e.func.name == 'has': return 'bool'
-            if isinstance(e.func, Var) and e.func.name == 'keys': return 'list_str'
-            if isinstance(e.func, Var) and e.func.name == 'values': return 'list'
-            if isinstance(e.func, Var) and e.func.name in ('starts','ends'): return 'bool'
+            if isinstance(e.func, Var):
+                n = e.func.name
+                if n == 'pr':
+                    return 'i64'
+                if n in ('json', 'env', 'substr', 'arg', 'trim', 'up', 'low', 'join', 'parse'):
+                    return 'str' if n != 'parse' else 'i64'
+                if n == 'split':
+                    return 'list_str'
+                if n == 'len':
+                    return 'i64'
+                if n == 'has':
+                    return 'bool'
+                if n == 'keys':
+                    return 'list_str'
+                if n == 'values':
+                    return 'list'
+                if n in ('starts', 'ends'):
+                    return 'bool'
+                if n == 'str':
+                    return 'str'
             return 'i64'
         if isinstance(e, Index):
             coll_type = self.check(e.coll)
             self.check(e.idx)
-            if coll_type.startswith('list_'):
+            if isinstance(coll_type, str) and coll_type.startswith('list_'):
                 return coll_type[5:]
-            if coll_type.startswith('map_'):
+            # Legacy List_Token / List_Function field types
+            if isinstance(coll_type, str) and coll_type.startswith('List_'):
+                return coll_type[5:]
+            if isinstance(coll_type, str) and coll_type.startswith('map_'):
                 parts = coll_type.split('_')
                 return '_'.join(parts[2:]) if len(parts) >= 3 else 'i64'
             return 'i64'
@@ -1432,7 +1673,29 @@ class TypeChecker:
             else: self.env.pop(e.var, None)
             return 'i64'
         if isinstance(e, LetExpr):
-            t = e.typ.name if e.typ else self.check(e.value)
+            vt = self.check(e.value)
+            if e.typ is not None:
+                t = _norm_type_name(e.typ)
+                if not _types_compatible(t, vt):
+                    self.errors.append(
+                        f"type error: '{e.name}' declared '{t}' but value is '{vt}'"
+                    )
+                else:
+                    # Prefer declared list/element width (e.g. [] or [1,2] as [i32])
+                    if t.startswith('list_') or t in ('list', 'List', 'str', 'bool') or t in (
+                        'i8','i16','i32','i64','u8','u16','u32','u64','char','f32','f64'
+                    ):
+                        vt = t
+            else:
+                t = vt
+            # Store declared type when present so later assigns use it
+            store = _norm_type_name(e.typ) if e.typ is not None else vt
+            if e.typ is not None and _types_compatible(store, vt):
+                t = store
+            elif e.typ is not None:
+                t = store  # keep declared even on error so later checks are consistent
+            else:
+                t = vt
             old = self.env.get(e.name)
             self.env[e.name] = t
             r = self.check(e.body)
@@ -2509,7 +2772,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         if t.startswith('map_'):
             # map_str_i64 → Map_str_i64
             return 'Map_' + t[4:]
-        return {'fn':'void*','str':'const char*','list':'List_i64','List':'List_i64','i64':'int64_t','i32':'int32_t','i16':'int16_t','i8':'int8_t','char':'int8_t','u64':'uint64_t','u32':'uint32_t','u16':'uint16_t','bool':'bool','f64':'double'}.get(t, t)
+        return {'fn':'void*','str':'const char*','list':'List_i64','List':'List_i64','i64':'int64_t','i32':'int32_t','i16':'int16_t','i8':'int8_t','char':'int8_t','u64':'uint64_t','u32':'uint32_t','u16':'uint16_t','bool':'bool','f64':'double','f32':'float','float':'float','double':'double'}.get(t, t)
 
     def expr_type(self, e) -> str:
         if isinstance(e, StrLit):
@@ -2782,12 +3045,15 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     parts.append(f"{tmp}.n = {n}")
                 parts.append(tmp)
                 return "({ " + "; ".join(parts) + "; })", f"list_{et}"
-            parts = [f"List {tmp} = list_new({n})"]
+            # Default unannotated lists are [i64]
+            parts = [f"List_i64 {tmp} = list_new_i64({n})"]
             for i, it in enumerate(e.items):
                 v, _ = self.gen_expr(it)
                 parts.append(f"{tmp}.d[{i}] = {v}")
+            if n:
+                parts.append(f"{tmp}.n = {n}")
             parts.append(tmp)
-            return "({ " + "; ".join(parts) + "; })", "List"
+            return "({ " + "; ".join(parts) + "; })", "list_i64"
         if isinstance(e, MapLit):
             mt = expected_type if expected_type and expected_type.startswith('map_') else None
             if mt is None and e.entries:
@@ -2828,11 +3094,13 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     record_name = 'i64'
                 if record_name == 'str':
                     return f"list_get_str({c}, {i})", "str"
-                # width / record typed lists
                 return f"list_get_{record_name}({c}, {i})", record_name if record_name not in ('i64',) else 'i64'
+            if ct in ('List', 'list', 'List_i64'):
+                return f"list_get_i64({c}, {i})", "i64"
             if ct.startswith('map_') or ct == 'Map':
                 return f"map_str_i64_get({c}, {i})", "i64"
-            return f"list_get({c}, {i})", "i64"
+            # last resort: treat as [i64]
+            return f"list_get_i64({c}, {i})", "i64"
         if isinstance(e, Call) and isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name in self.enum_values:
             ename = e.func.obj.name
             vname = e.func.field
@@ -2853,7 +3121,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 if collection_type.startswith('list_'):
                     item_type = collection_type[5:]
                     return f"list_push_{item_type}({collection}, {value})", collection_type
-                return f"list_push({collection}, {value})", 'list'
+                return f"list_push_i64({collection}, {value})", 'list_i64'
             if isinstance(e.func, Var) and e.func.name == 'pr':
                 a, at = self.gen_expr(e.args[0])
                 if at == 'str':
@@ -2884,7 +3152,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 tmp = self.fresh()
                 idx = self.fresh()
                 return (
-                    f"({{ List __map_in = {coll}; List {tmp} = list_new(__map_in.n); "
+                    f"({{ List_i64 __map_in = {coll}; List_i64 {tmp} = list_new_i64(__map_in.n); "
                     f"for (int64_t {idx} = 0; {idx} < __map_in.n; {idx}++) "
                     f"{tmp}.d[{idx}] = {fn_c}(__map_in.d[{idx}]); "
                     f"{tmp}; }})",
@@ -3041,23 +3309,46 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name == 'tst':
                 if e.func.field == 'report':
                     return "tst_report()", "i64"
+                def _tst_lib(kind, got_t):
+                    # Prefer Terse overloaded helpers: ..._eq__i64_i64_str_i64
+                    # kind is 'eq' or 'ne'; params (got, expected, file, line)
+                    gt = got_t if got_t in ('i64', 'str', 'bool') else 'i64'
+                    sig = f"{kind}__{gt}_{gt}_str_i64"
+                    for name, cname in self.known.items():
+                        if 'tst' in name and sig in name:
+                            return cname
+                    # legacy eq_i64 naming
+                    legacy = f"{kind}_{gt}"
+                    for name, cname in self.known.items():
+                        if 'tst' in name and (name.endswith('_' + legacy) or name.endswith(legacy)):
+                            return cname
+                    return None
                 if e.func.field in ('eq', 'equals') and len(e.args) >= 2:
                     got, got_t = self.gen_expr(e.args[0])
                     exp, _ = self.gen_expr(e.args[1])
-                    helper = {'i64': 'tst_eq_i64', 'bool': 'tst_eq_bool', 'str': 'tst_eq_str'}.get(got_t, 'tst_eq_i64')
                     where = self.tst_where(e)
+                    lib = _tst_lib('eq', got_t)
+                    if lib:
+                        return f"({{ _tst_checks++; if ({lib}({got}, {exp}, {where})) _tst_failures++; INT64_C(0); }})", "i64"
+                    helper = {'i64': 'tst_eq_i64', 'bool': 'tst_eq_bool', 'str': 'tst_eq_str'}.get(got_t, 'tst_eq_i64')
                     return f"({helper}({got}, {exp}, {where}), INT64_C(0))", "i64"
                 if e.func.field in ('ne', 'not_equals') and len(e.args) >= 2:
                     got, got_t = self.gen_expr(e.args[0])
                     exp, _ = self.gen_expr(e.args[1])
-                    helper = {'i64': 'tst_ne_i64', 'bool': 'tst_ne_bool', 'str': 'tst_ne_str'}.get(got_t, 'tst_ne_i64')
                     where = self.tst_where(e)
+                    lib = _tst_lib('ne', got_t)
+                    if lib:
+                        return f"({{ _tst_checks++; if ({lib}({got}, {exp}, {where})) _tst_failures++; INT64_C(0); }})", "i64"
+                    helper = {'i64': 'tst_ne_i64', 'bool': 'tst_ne_bool', 'str': 'tst_ne_str'}.get(got_t, 'tst_ne_i64')
                     return f"({helper}({got}, {exp}, {where}), INT64_C(0))", "i64"
                 if e.func.field == 'chk' and len(e.args) >= 2:
                     exp, _ = self.gen_expr(e.args[0])
                     got, got_t = self.gen_expr(e.args[1])
-                    helper = {'i64': 'tst_eq_i64', 'bool': 'tst_eq_bool', 'str': 'tst_eq_str'}.get(got_t, 'tst_eq_i64')
                     where = self.tst_where(e)
+                    lib = _tst_lib('eq', got_t)
+                    if lib:
+                        return f"({{ _tst_checks++; if ({lib}({got}, {exp}, {where})) _tst_failures++; INT64_C(0); }})", "i64"
+                    helper = {'i64': 'tst_eq_i64', 'bool': 'tst_eq_bool', 'str': 'tst_eq_str'}.get(got_t, 'tst_eq_i64')
                     return f"({helper}({got}, {exp}, {where}), INT64_C(0))", "i64"
             if isinstance(e.func, Member) and isinstance(e.func.obj, Member) \
                     and isinstance(e.func.obj.obj, Var) and e.func.obj.obj.name == 'tst' \
@@ -3088,11 +3379,38 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     args = [self.gen_expr(e.func.obj)[0]] + [self.gen_expr(a)[0] for a in e.args]
                     cname = self.method_names[method_key]
                     return f"{cname}({', '.join(args)})", self.method_returns[method_key]
-            if isinstance(e.func, Var) and e.func.name in self.known:
-                cname = self.known[e.func.name]
+            if isinstance(e.func, Var) and (
+                e.func.name in self.known or e.func.name in getattr(self, 'overloads', {})
+            ):
+                overs = getattr(self, 'overloads', {}).get(e.func.name) or []
+                cname = None
+                ret_ty = "i64"
+                pts = None
+                if len(overs) > 1 or (len(overs) == 1 and getattr(self, 'overloads', {}).get(e.func.name)):
+                    # Type-directed overload resolution
+                    typed_args = []
+                    arg_types = []
+                    for a in e.args:
+                        ac, at = self.gen_expr(a)
+                        typed_args.append((ac, at))
+                        arg_types.append(at)
+                    resolved = _resolve_overload(overs, arg_types) if overs else None
+                    if resolved:
+                        pts, cname, ret_ty = resolved
+                        args = []
+                        for (ac, at), expected in zip(typed_args, pts):
+                            if expected in self.interface_methods and at in self.record_field_types and (expected, at) in self.interface_helpers:
+                                args.append(f"{self.interface_helpers[(expected, at)]}( &({ac}) )")
+                            else:
+                                args.append(ac)
+                        return f"{cname}({', '.join(args)})", ret_ty
+                cname = self.known.get(e.func.name)
+                if cname is None and overs:
+                    pts, cname, ret_ty = overs[0]
                 args = []
-                if e.func.name in self.func_param_types:
-                    for a, expected in zip(e.args, self.func_param_types[e.func.name]):
+                param_ts = self.func_param_types.get(cname) or self.func_param_types.get(e.func.name) or []
+                if param_ts:
+                    for a, expected in zip(e.args, param_ts):
                         arg_code, arg_type = self.gen_expr(a, expected)
                         if expected in self.interface_methods and arg_type in self.record_field_types and (expected, arg_type) in self.interface_helpers:
                             args.append(f"{self.interface_helpers[(expected, arg_type)]}( &({arg_code}) )")
@@ -3101,7 +3419,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 else:
                     args = [self.gen_expr(a)[0] for a in e.args]
                 args_str = ", ".join(args)
-                return f"{cname}({args_str})", self.func_return_types.get(e.func.name, "i64")
+                return f"{cname}({args_str})", self.func_return_types.get(cname, self.func_return_types.get(e.func.name, "i64"))
             fptr, _ = self.gen_expr(e.func)
             args = ", ".join(self.gen_expr(a)[0] for a in e.args)
             n = len(e.args)
@@ -3218,11 +3536,11 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 elem_t = inner
                 c_list = f'List_{inner}'
                 c_elem = self.c_type(inner)
-            elif ct in ('list', 'List'):
+            elif ct in ('list', 'List', 'List_i64'):
                 elem_t, c_list, c_elem = 'i64', 'List_i64', 'int64_t'
             else:
                 # fallback: treat as i64 list
-                elem_t, c_list, c_elem = 'i64', 'List', 'int64_t'
+                elem_t, c_list, c_elem = 'i64', 'List_i64', 'int64_t'
             old = self.env.get(e.var)
             self.env[e.var] = elem_t
             body_stmts = self.gen_loop_body(e.body)
@@ -3233,9 +3551,9 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             if c_list == 'List_str':
                 bind = f"const char* {e.var} = list_get_str({tmp}, {idx});"
                 len_e = f"list_len_str({tmp})"
-            elif c_list == 'List':
-                bind = f"int64_t {e.var} = list_get({tmp}, {idx});"
-                len_e = f"list_len({tmp})"
+            elif c_list in ('List', 'List_i64'):
+                bind = f"int64_t {e.var} = list_get_i64({tmp}, {idx});"
+                len_e = f"list_len_i64({tmp})"
             else:
                 # List_Record etc.
                 bind = f"{c_elem} {e.var} = list_get_{elem_t}({tmp}, {idx});"
@@ -3459,7 +3777,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         return f"(http_serve_run({port_c}, {dispatcher}), INT64_C(0))", "i64"
 
     def gen_fn(self, f: FnDecl):
-        cname = self.known[f.name]
+        cname = getattr(f, '_c_name', None) or self.known[f.name]
         pcs = []
         for p in f.params:
             tn = self.type_name(p.typ) if p.typ else 'i64'
@@ -3526,10 +3844,32 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             while any(f.name == entry_name for f in funcs):
                 entry_name += '_'
             funcs.append(FnDecl(entry_name, [], TypeNode('i64'), prog.toplevel))
-        self.func_param_types = {f.name: [self.type_name(p.typ) if p.typ else 'i64' for p in f.params] for f in funcs}
-        self.func_return_types = {f.name: self.type_name(f.ret) if f.ret else 'i64' for f in funcs}
+        # Parameter overloads: same source name, distinct C symbols when signatures differ
+        from collections import Counter
+        name_counts = Counter(f.name for f in funcs)
+        self.func_param_types = {}
+        self.func_return_types = {}
+        self.overloads = {}  # name -> [(param_types, cname, ret)]
         for f in funcs:
-            self.known[f.name] = "terse_" + f.name
+            pts = [_norm_type_name(p.typ) if p.typ else 'i64' for p in f.params]
+            ret = _norm_type_name(f.ret) if f.ret else 'i64'
+            if name_counts[f.name] > 1:
+                cname = _mangle_overload(f.name, pts)
+            else:
+                cname = "terse_" + f.name
+            f._c_name = cname
+            # Detect identical signatures (same name + same param types)
+            for prev_pts, prev_c, _ in self.overloads.get(f.name, []):
+                if prev_pts == pts and prev_c != cname:
+                    raise SyntaxError(
+                        f"duplicate overload '{f.name}({', '.join(pts)})'"
+                    )
+            self.known[f.name] = cname  # last wins for non-call path; calls use overloads
+            self.func_param_types[cname] = pts
+            self.func_param_types[f.name] = pts  # single-overload convenience
+            self.func_return_types[cname] = ret
+            self.func_return_types[f.name] = ret
+            self.overloads.setdefault(f.name, []).append((pts, cname, ret))
         out = [RUNTIME, ""]
         # Emit top-level fix constants
         for c in self.const_decls:
@@ -3654,7 +3994,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             out.append(self.record_json_code(rec))
         # emit generated fit methods after record declarations so their receiver type is known
         for f in funcs:
-            cname = self.known[f.name]
+            cname = getattr(f, '_c_name', None) or self.known[f.name]
             pcs = []
             for p in f.params:
                 tn = self.type_name(p.typ) if p.typ else 'i64'
@@ -3849,20 +4189,31 @@ def _load_source_modules(program, source_path):
     def load_module(use):
         if use.path.startswith('std.'):
             # Prefer on-disk std library if present (next to tersec / cwd / module root)
-            rel = use.path.replace('.', os.sep) + '.te'
-            std_candidates = [
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), rel),
-                os.path.join(os.getcwd(), rel),
-                os.path.join(module_root, rel),
-            ]
+            rel = use.path.replace('.', os.sep) + '.te'  # std/tst.te
+            std_candidates = []
             if source_path:
-                std_candidates.insert(0, os.path.join(os.path.dirname(os.path.abspath(source_path)), rel))
+                src_dir = os.path.dirname(os.path.abspath(source_path))
+                # src/../lib/std/tst.te  and same-dir
+                std_candidates.append(os.path.join(src_dir, '..', 'lib', rel))
+                std_candidates.append(os.path.join(src_dir, rel))
+            for root in _project_roots(source_path):
+                std_candidates.append(os.path.join(root, 'lib', rel))
+                std_candidates.append(os.path.join(root, rel))
+            std_candidates.extend([
+                os.path.join(os.getcwd(), 'lib', rel),
+                os.path.join(os.getcwd(), rel),
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'lib', rel),
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), rel),
+                os.path.join(module_root, '..', 'lib', rel),
+                os.path.join(module_root, rel),
+            ])
             for cand in std_candidates:
-                if os.path.isfile(cand):
-                    # fall through to normal file load by rewriting path
+                module_file = os.path.realpath(cand)
+                if not os.path.isfile(module_file):
+                    continue
+                if True:
+                    # load Terse std module from lib/ (or std/)
                     use = UseDecl(use.path, use.alias, use.symbol, use.glob)
-                    # load as file: temporarily clear std. short-circuit by using absolute path load
-                    module_file = os.path.realpath(cand)
                     if module_file in cache:
                         return cache[module_file]
                     if module_file in loading:
@@ -3873,9 +4224,19 @@ def _load_source_modules(program, source_path):
                     # rec/methods/traits allowed; filtered on export
                     public_functions = ({f.name for f in child.funcs} if _is_test_source(source_path)
                         else {f.name for f in child.funcs if f.public})
-                    own_functions = {f.name: f"__module_std_{use.path.replace('.', '_')}_{f.name}" for f in child.funcs}
+                    from collections import Counter as _Counter
+                    _nc = _Counter(f.name for f in child.funcs)
+                    own_functions = {}
                     for f in child.funcs:
-                        f.name = own_functions[f.name]
+                        pts = [_norm_type_name(p.typ) if p.typ else 'i64' for p in f.params]
+                        base = f"__module_std_{use.path.replace('.', '_')}_{f.name}"
+                        if _nc[f.name] > 1:
+                            mangled = base + "__" + "_".join(pts)
+                        else:
+                            mangled = base
+                        # last export mapping for simple names; generate() uses unique f.name
+                        own_functions[f.name] = mangled
+                        f.name = mangled
                     export_recs = list(child.recs) if _is_test_source(source_path) else [r for r in child.recs if getattr(r, 'public', False)]
                     export_methods = list(child.methods) if _is_test_source(source_path) else [
                         m for m in child.methods if m.public or m.receiver in {r.name for r in export_recs}
@@ -3883,6 +4244,10 @@ def _load_source_modules(program, source_path):
                     export_enums = list(child.enums) if _is_test_source(source_path) else [
                         e for e in child.enums if getattr(e, 'public', True)
                     ]
+                    if not child.funcs and not child.recs and not child.enums:
+                        # Comment-only stub — try next candidate / builtin
+                        loading.discard(module_file)
+                        continue
                     bundle = {
                         'functions': list(child.funcs),
                         'exports': {name: own_functions[name] for name in public_functions if name in own_functions},
@@ -3938,7 +4303,12 @@ def _load_source_modules(program, source_path):
                 break
         if module_file is None:
             tried = ', '.join(os.path.realpath(c) for c in candidates)
-            raise SyntaxError(f"module '{use.path}' not found (tried: {tried})")
+            raise SyntaxError(
+                f"module '{use.path}' not found\n"
+                f"  searched: {tried}\n"
+                f"  hint: place sources under src/, lib/, or next to the importer "
+                f"(dots map to paths: use usage.util -> src/usage/util.te)"
+            )
         try:
             # stay under workspace-ish roots when possible
             pass
@@ -3988,13 +4358,21 @@ def _load_source_modules(program, source_path):
             public_functions = {function.name for function in child.funcs}
         else:
             public_functions = {function.name for function in child.funcs if function.public}
-        own_functions = {function.name: f"__module_{prefix}_{function.name}"
-                         for function in child.funcs}
+        from collections import Counter as _Counter2
+        _nc2 = _Counter2(function.name for function in child.funcs)
+        own_functions = {}
+        for function in child.funcs:
+            pts = [_norm_type_name(p.typ) if p.typ else 'i64' for p in function.params]
+            base = f"__module_{prefix}_{function.name}"
+            mangled = (base + "__" + "_".join(pts)) if _nc2[function.name] > 1 else base
+            own_functions[function.name] = mangled  # last wins for rewrite of simple calls
+            function._orig_name = function.name
+            function.name = mangled
         local_functions = dict(child_symbols)
-        if set(local_functions).intersection(own_functions):
-            duplicate = sorted(set(local_functions).intersection(own_functions))[0]
-            raise SyntaxError(f"module '{use.path}' redeclares imported name '{duplicate}'")
-        local_functions.update(own_functions)
+        # Allow same source name only via overloads (already mangled unique)
+        local_functions.update({function._orig_name: function.name for function in child.funcs
+                                if _nc2[function._orig_name] == 1})
+        # For overloads, rewrite of unqualified name is ambiguous — leave mangled in program only
         # fix: private by default — rename file-local constants so they are not importable
         processed_fixes = []
         for fx in child.fixes:
@@ -4007,7 +4385,7 @@ def _load_source_modules(program, source_path):
         child.fixes = processed_fixes
         for function in child.funcs:
             function.body = _rewrite_module_expr(function.body, local_functions, child_namespaces)
-            function.name = own_functions[function.name]
+            # name already mangled above
             functions_by_name[function.name] = function
 
         try:
@@ -4073,7 +4451,16 @@ def _load_source_modules(program, source_path):
             builtin = use.path.split('.')[-1]
             if use.alias in namespaces or use.alias in imported_symbols:
                 raise SyntaxError(f"duplicate import name '{use.alias}'")
-            # Always bind alias (e.g. use std.str → str.has / starts / ...)
+            # Prefer lib/std/*.te; fall back to host builtin sugar
+            module = load_module(use)
+            if module.get('functions'):
+                namespaces[use.alias] = {'__builtin_module__': builtin}
+                namespaces[use.alias].update(module.get('exports') or {})
+                for function in module['functions']:
+                    imported_functions[function.name] = function
+                for fx in module.get('fixes') or []:
+                    imported_fixes.append(fx)
+                continue
             namespaces[use.alias] = {'__builtin_module__': builtin}
             continue
         module = load_module(use)
@@ -4249,10 +4636,22 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             or e.startswith("unknown")
             or "unknown name" in e
             or "unknown function" in e
+            or "does not match" in e
+            or "cannot assign" in e
+            or "cannot concat" in e
+            or "cannot push" in e
+            or "cannot compare" in e
+            or "list element" in e
+            or "declared" in e and "but value" in e
         )]
         for e in errs:
-            if e in fatal or e.startswith("unknown") or "unknown " in e:
-                print(f"type error: {e}", file=sys.stderr)
+            is_fatal = (
+                e in fatal or e.startswith("unknown") or "unknown " in e
+                or e.startswith("type error")
+            )
+            if is_fatal:
+                msg = e if e.startswith("type error") or e.startswith("unknown") else f"type error: {e}"
+                print(msg, file=sys.stderr)
             else:
                 msg = e if e.startswith("type") else f"type warning: {e}"
                 print(msg, file=sys.stderr)

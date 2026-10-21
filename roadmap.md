@@ -38,41 +38,48 @@ Each item notes when **`tc.te` should be updated** (if at all).
 
 **`tc.te`:** lift default out path + argv later (T1); lib linker after host stable (new T9)
 
-### 1.1 Environment API  **Next**
+### 1.1 Environment API  **Done (host)**
 ```terse
-env("KEY") = "value"   // set
-ret env("KEY")         // get
+env("KEY") = "value"   // set → env_set
+ret env("KEY")         // get → getenv; missing → ""
 ```
-- Runtime: `getenv` / `setenv` (or platform equivalent)
-- Type: `str` in / `str` out; missing key → `""` or documented sentinel
-- Tests: `src/` demo + `tst/t_env.te`
-- **`tc.te`:** update when bootstrap or native demos need env (e.g. `TERSE_SOURCE` already used); add runtime helpers + parse/emit for `env(...)` and assignment form once host is stable
+- Tests: `src/env.te`, `tst/t_env.te`
+- **`tc.te`:** T2 done — `terse_env` / `terse_env_set` + emit for `env(k)=v`
 
-### 1.2 Richer type diagnostics  **Next**
+### 1.2 Richer type diagnostics  **Done (host)**
+- `ret` vs declared return type
+- Function body yield vs return type
+- Annotated `val`/`var` vs value
+- Assignment / list concat-push / mixed list elements
+- Clearer `use` module-not-found (search paths + hint)
+
 - Return-type vs `ret` value mismatches (with line:col when available)
 - List element type mismatches (`[i32]` vs `[f64]`)
 - Clear messages for bad `use` paths / missing modules
 - Prefer hard errors over silent `i64` defaults where practical
 - **`tc.te`:** **do not** mirror full diagnostics yet; host remains the conformance checker. Revisit only if native is used as the daily compiler and opaque C failures dominate
 
-### 1.3 Freeze std surface  **Next**
-Document and lock only what the host implements:
+### 1.3 Freeze std surface  **Done (host)**
+Locked in `SPEC.md` §8 — only these are the supported host surface:
 
-| Module   | Surface |
-|----------|---------|
+| Module / kind | Surface |
+|---------------|---------|
 | `std.str` | `has`, `starts`, `ends`, `trim`, `up`, `low`, `parse`, `split`, `join` |
-| `std.io`  | `in`, `out` (read/write text) |
-| `std.tst` | `eq`, `ne`, (optional `chk` / `report`) |
+| `std.io`  | `in`, `out` |
+| `std.tst` | `eq`, `ne`, `chk`, `report` |
+| Maps      | `m[k]`, `m[k]=v`, `has(m,k)`, `keys(m)`, `len(m)`, `lp k:m` |
+| Env       | `env(k)`, `env(k)=v` |
+| Core      | `pr`, `len`, `arg` |
 
 No silent expansion of std without a SPEC/BNF note.
 
-- **`tc.te`:** no code change for a freeze note; when implementing std in native, only emit calls the native runtime already has (`fs_read_text` / `fs_write_text`, string helpers). Do not invent std modules inside `tc.te` ahead of host
+- **`tc.te`:** when lifting std, only emit calls the native runtime already has
 
-### 1.4 List / map edge cases  **Next**
-- Empty typed lists `var xs: [i32] = []` everywhere stable
-- Map `{:}` / `{str:i64}` put/get/keys consistent with docs
-- Index bounds messages (already exit; make message consistent)
-- **`tc.te`:** lift **typed list runtime + emit** when native must compile programs that use `[i32]`/`[f64]` (not only `List`/`i64`). Until then, native may keep i64-only lists. Update when a bootstrap or demo fails without width-accurate lists
+### 1.4 List / map edge cases  **Done (host, core)** / polish **Later**
+- Empty typed lists `var xs: [i32] = []`, width lists, push/concat/`len` — working
+- Maps `{str:i64}`: `{:}`, put/get, `has`, `keys`, `len`, `lp k:m` — tests `t_map_has`, `t_map_lp`
+- Bounds still process-exit; message polish **Later**
+- **`tc.te`:** T3/T4 when native must compile non-i64 lists / maps
 
 ### 1.5 Tooling quality gate  **Next**
 - `make verify` = `test_compiler.py` + selected `tst/*.te`
@@ -127,8 +134,8 @@ Minimal option (prefer one, not both):
 | Item | Status | Update `tc.te` when… |
 |------|--------|----------------------|
 | Bootstrap stage0→stage1 (Linux/macOS, `-O0`) | **Done** | Regression only |
-| CLI: argv source + output (not only `TERSE_SOURCE`/`TERSE_OUTPUT`) | **Next** | Daily native use is awkward without args |
-| `env` get/set | After host §1.1 | Native demos or bootstrap need process env beyond the two TERSE_* vars |
+| CLI: argv source + optional output; default `~/.terse/out/<stem>` | **Done** | — |
+| `env` get/set | **Host + native Done** | — |
 | Width-accurate lists / maps | After host §1.4 stable | Native must compile non-i64 list programs |
 | Numeric types beyond i64 | Later | Same as lists — when demos need `i32`/`f64` in native path |
 | Modules `use` / `pub` | Later | Multi-file native compiles are required |
@@ -136,6 +143,7 @@ Minimal option (prefer one, not both):
 | Records / methods | Later | Same |
 | Full type diagnostics | **Parked** | Host remains source of truth |
 | Emit performance (string building) | **Later** | Stage compile times hurt daily workflow |
+| Native emit size (self-host tc.te) | **Later** | stage0→tc.te OOMs cc1 on Windows; host builds stage1 until emit is compact |
 | Feature parity with host | **Parked** | Never a goal by itself |
 
 ### 3.3 Explicit lift triggers (checklist)
@@ -143,8 +151,8 @@ Minimal option (prefer one, not both):
 Update **`tc.te`** at these milestones:
 
 ```
-[ ] T1  CLI argv: first arg = source, second = output (fallback to env)
-[ ] T2  After host env API: native runtime env_get / env_set + emit
+[x] T1  CLI argv: source + optional output; default ~/.terse/out/<stem> (fallback env)
+[x] T2  native env get (terse_env) + env set (terse_env_set) for env(k)=v
 [ ] T3  When lists other than [i64]/[str] appear in native-compiled demos:
         typed List_* runtime + list_new/get/push/len/concat emit
 [ ] T4  When maps are required under native: Map_* runtime + put/get/keys
@@ -154,7 +162,7 @@ Update **`tc.te`** at these milestones:
         (no need for full host pattern exhaustiveness)
 [ ] T7  If stage compile is too slow: switch emit to buffered/rope-style
         string building (not before T1–T3 if those are blocking)
-[ ] T8  make bootstrap-verify target: stage0→stage1 + smoke .te files
+[x] T8  make bootstrap-verify target: stage0 smoke tiny .te (full tc.te may OOM)
 ```
 
 ### 3.4 What native does **not** need soon
@@ -205,7 +213,7 @@ Update **`tc.te`** at these milestones:
 ```
 Host:
 [ ] 1.1  env get/set + tests
-[ ] 1.2  return-type and list-element mismatch diagnostics
+[x] 1.2  return-type and list-element mismatch diagnostics
 [ ] 1.3  SPEC/std freeze note (short section)
 [ ] 1.4  empty list / map edge-case tests
 [ ] 1.5  verify gate still green after each item
@@ -215,7 +223,7 @@ Native (only at triggers in §3.3):
 [ ] T1   CLI argv source + output
 [ ] T2   env runtime/emit (after 1.1)
 [ ] T3   typed lists under native (if demos need them)
-[ ] T8   bootstrap-verify make target
+[x] T8   bootstrap-verify make target
 [ ] T9   native: default out ~/.terse/out + link ~/.terse/out/lib/*.o when fresh
 [ ] T4–T7 as needed — not by default
 ```

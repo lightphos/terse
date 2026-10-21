@@ -243,3 +243,31 @@
    - unknown name / unknown function → hard error (abort before gcc)
    - C-style lp i = 0 binds i in the type checker
    ------------------------------------------------------------ *)
+
+---
+
+## Frozen host std surface (SPEC §8)
+
+Documented contract only — do not extend without SPEC + tests:
+
+- **std.str:** has, starts, ends, trim, up, low, parse, split, join
+- **std.io:** in, out
+- **std.tst:** eq, ne, chk, report
+- **env:** `env(k)` / `env(k) = v`
+- **maps:** `has(m,k)`, `keys(m)`, `len(m)`, `m[k]`, `m[k]=v`, `lp k:m`
+- **core:** pr, len, arg
+
+---
+
+## Parameter overloading (host)
+
+Multiple `<fn-decl>` may use the same *name* when parameter type sequences differ after alias normalization (`long`≡`i64`, `int`≡`i32`, …).
+
+```
+fn-name-overloads ::= { fn-decl }   (* same Ident, distinct typed-param lists *)
+```
+
+- Call resolution: match argument types to one overload (exact, then numeric-width soft match).
+- Duplicate identical signatures → error.
+- Codegen mangles symbols: `terse_<name>__<t0>_<t1>_...` when two or more overloads share a name; a single definition keeps `terse_<name>`.
+

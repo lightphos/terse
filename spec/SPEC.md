@@ -112,6 +112,26 @@ pub fix VERSION: str = "0.3"      // exported
 
 Methods: `fn Point.add() -> i64 { self.x + self.y }`
 
+### Parameter overloading **Implemented (host)**
+Multiple functions may share a **name** if their **parameter type lists** differ:
+
+```
+fn eq(got: i64, exp: i64) -> i64 { ... }
+fn eq(got: str, exp: str) -> i64 { ... }
+fn eq(got: long, exp: long) -> i64 { ... }   // long ≡ i64 → same as first; error if identical
+```
+
+Rules:
+- Resolution is **type-directed** at each call site (argument types after local checking).
+- Identical signatures for the same name (after alias normalization) are a **type error**.
+- Aliases normalize before comparing: `long`≡`i64`, `int`≡`i32`, `short`≡`i16`, `char`≡`i8`, `float`≡`f32`, `double`≡`f64`.
+- Soft match: if no exact overload, integer widths may match each other (e.g. `i32` arg to `i64` param) when unique.
+- Each overload is a distinct C symbol: `terse_eq__i64_i64`, `terse_eq__str_str`, …
+- A single definition of a name still emits `terse_<name>` (no suffix).
+- Arity must match; no default arguments or optional parameters.
+- Return type is not part of the overload key (only parameters).
+
+
 ---
 
 ## 5. Modules (`use`)
@@ -184,20 +204,24 @@ ss = ss + ["a"] + "b"
 ```
 
 ### Maps
+Host supports **string keys** and **i64 or str values** (`{str: i64}`, `{str: str}`).
+
 ```
 var m: {str: i64} = {:}
 m["a"] = 3
 pr(m["a"])
 len(m)
+has(m, "a")              // bool
 keys(m)                  // [str]
 lp k: m { ... }          // iterate keys
 ```
 
 ---
 
-## 8. Standard Library Surface
+## 8. Standard Library Surface (frozen host 0.3)
 
-Not keywords — resolved via `use std.*` or as builtins in the host.
+**Freeze:** the host implements **only** what is listed here. New std APIs require a SPEC + BNF note and a test.  
+Names are not keywords — use `use std.*` or call the same names as builtins (host).
 
 ### `std.str`
 ```
@@ -210,10 +234,11 @@ str.parse(s) -> i64
 str.split(s, sep) -> [str]
 str.join(parts, sep) -> str
 ```
+Unqualified forms (`has(s, sub)`, …) are accepted by the host when not ambiguous with map `has`.
 
 ### `std.io`
 ```
-io.in(path) -> str
+io.in(path) -> str       // read text file
 io.out(path, text) -> i64
 ```
 
@@ -226,14 +251,24 @@ tst.report()               // summary (auto in t_*.te)
 ```
 Continues after failure; process exit code is the failure count.
 
-### Other builtins
-`pr`, `len`, `env`, `arg`, `json` (limited), `map` (list), minimal `http.serve` (limited).
+### Environment
+```
+env("KEY")           // -> str; missing key → ""
+env("KEY") = "value" // set process env (setenv / _putenv_s)
+```
 
-`env("NAME")` reads a process environment variable (empty string if unset).
-`env("NAME") = "value"` sets it and evaluates to the assigned string.
+### Maps (builtins)
+```
+has(m, key) -> bool
+keys(m) -> [str]
+len(m) -> i64
+```
 
+### Other core builtins
+`pr`, `len`, `arg`.
 
-SQL/`db` is **disabled** in lean builds.
+### Limited / not part of the freeze
+`json` (limited), list `map`, minimal `http.serve` (limited). SQL/`db` is **disabled** in lean builds.
 
 ---
 
@@ -297,6 +332,11 @@ C-style `lp i = 0; cond; step { … }` introduces `i` into the type-checker envi
 
 ## 11. Compilation
 
+### Standard library location (host)
+- Preferred: `lib/std/<name>.te` (project `lib/`, or `src/../lib/`)
+- Fallback: `std/<name>.te`, then host builtins
+- `use std.tst` loads `lib/std/tst.te` when present (Terse helpers); host still provides `tst.report` counting
+
 ### Output layout (host)
 - Default binary directory: `~/.terse/out/` (env `TERSE_OUT` or `TERSE_HOME`, default home `~/.terse`)
 - Library objects: `~/.terse/out/lib/<module>.o` via `python3 tersec.py lib module.te`
@@ -324,14 +364,17 @@ python3 tersec.py run main.te
 - Arithmetic, comparisons, `val`/`var`, blocks, `ret`, ternary  
 - `fix` / `pub fix` (private by default)  
 - Functions, methods, recursion, simple lambdas  
+- Parameter overloading (distinct param type lists)  
 - Records, enums (+ payloads), traits (implicit)  
 - Pattern `if` / `match`  
 - Loops: for-in, C-style, condition; `brk` / `skip`  
-- Lists `[i64]` / `[str]` (+, len, index); maps `{str:i64|str}`  
+- Lists width types `[i32]`/`[i64]`/`[f64]`/`[str]`/… (+, len, index, push)  
+- Maps `{str:i64|str}`: put/get, `has`, `keys`, `len`, for-in keys  
 - Modules: `use`, `pub`, parallel `tst`↔`src`  
-- `std.str`, `std.io`, `std.tst` (`eq` / `ne`)  
+- Frozen std: `std.str`, `std.io`, `std.tst`; `env` get/set  
 - `go` entry; `pr`; string/int concat  
-- Unit-test runner layout; hard errors for unknown names/functions  
+- Unit-test runner; hard errors for unknown names/functions  
+- Output: `~/.terse/out`; optional `lib` objects (`TERSE_AUTOLIB` for auto-link)  
 
 ### Limited
 - Higher-order / closures with capture  

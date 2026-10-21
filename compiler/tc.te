@@ -9,7 +9,7 @@
 //   rec (hardcoded Token/Param/Function/Node/ParseState in runtime),
 //   fn/go, var, if/else, lp, field access, record literals,
 //   lists push/len/index, strings +/len/substr/index,
-//   pr, io.in, io.out, env, gcc.compile
+//   pr, io.in, io.out, env / env set, gcc.compile
 
 use std.io
 
@@ -93,6 +93,7 @@ fn scan_kw(s: ScanState, word: str, kind: i64) -> ScanState {
 fn scan_try_kw(s: ScanState, source: str) -> ScanState {
   var hit: bool = false
   if starts_kw(source, s.pos, "fn") { s = scan_kw(s, "fn", 22); hit = true }
+  if hit == false && starts_kw(source, s.pos, "pub") { s = scan_kw(s, "pub", 56); hit = true }
   if hit == false && starts_kw(source, s.pos, "go") { s = scan_kw(s, "go", 23); hit = true }
   if hit == false && starts_kw(source, s.pos, "if") { s = scan_kw(s, "if", 24); hit = true }
   if hit == false && starts_kw(source, s.pos, "else") { s = scan_kw(s, "else", 25); hit = true }
@@ -685,7 +686,10 @@ fn parse_fn(state: ParseState) -> ParseState {
 
 fn parse_program(state: ParseState) -> ParseState {
   lp ck(state) != 0 && state.valid {
-    if ck(state) == 22 {
+    if ck(state) == 56 {
+      // pub — visibility ignored in minimal native; next token is fn/rec/...
+      state = bump(state)
+    } else if ck(state) == 22 {
       state = parse_fn(state)
     } else if ck(state) == 54 {
       state = skip_rec(state)
@@ -886,7 +890,12 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
       out = "if (" + emit(nodes, n.left, env, functions) + ") { " + emit(nodes, n.right, env, functions) + "; } else { " + emit(nodes, n.extra, env, functions) + "; }"
     } else if n.kind == 2 {
       if n.text == "=" {
-        out = "(" + emit(nodes, n.left, env, functions) + " = " + emit(nodes, n.right, env, functions) + ")"
+        // env("KEY") = value  →  terse_env_set(KEY, value)
+        if n.left >= 0 && nodes[n.left].kind == 7 && is_name(nodes[n.left].text, 101,110,118,0,0,0,0,0,0,0, 3) {
+          out = "terse_env_set(" + emit_args(nodes, nodes[n.left].left, env, functions) + ", " + emit(nodes, n.right, env, functions) + ")"
+        } else {
+          out = "(" + emit(nodes, n.left, env, functions) + " = " + emit(nodes, n.right, env, functions) + ")"
+        }
       } else if n.text == "+" {
         out = "terse_plus(" + emit(nodes, n.left, env, functions) + ", " + emit(nodes, n.right, env, functions) + ")"
       } else if n.text == "==" || n.text == "!=" {
@@ -959,10 +968,11 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
         out = "__auto_type " + nm + " = " + emit(nodes, n.left, env, functions)
       }
     } else if n.kind == 16 {
+      // ret is a statement; trailing INT64_C(0) broke str returns (const char* vs i64)
       if n.left < 0 {
-        out = "({ return INT64_C(0); INT64_C(0); })"
+        out = "return INT64_C(0)"
       } else {
-        out = "({ return " + emit(nodes, n.left, env, functions) + "; INT64_C(0); })"
+        out = "return " + emit(nodes, n.left, env, functions)
       }
     }
   }
@@ -999,6 +1009,12 @@ fn emit_fn_body(nodes: [Node], index: i64, env: [Binding], functions: [Function]
     var n: Node = nodes[index]
     if n.kind == 20 {
       out = emit_stmt(nodes, n.left, env, functions) + ";\n  " + emit_fn_body(nodes, n.right, env, functions)
+    } else if n.kind == 16 {
+      if n.left < 0 {
+        out = "return INT64_C(0);"
+      } else {
+        out = "return " + emit(nodes, n.left, env, functions) + ";"
+      }
     } else if n.kind == 8 {
       out = emit_stmt(nodes, index, env, functions) + ";\n  return INT64_C(0);"
     } else if n.kind == 18 {
@@ -1009,6 +1025,7 @@ fn emit_fn_body(nodes: [Node], index: i64, env: [Binding], functions: [Function]
   }
   out
 }
+
 
 fn emit_params(params: [Param], index: i64) -> str {
   var out: str = "void"
@@ -1024,6 +1041,7 @@ fn emit_params(params: [Param], index: i64) -> str {
 
 fn runtime_a() -> str {
   "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n" +
+  "#ifndef _WIN32\n#include <unistd.h>\n#endif\n" +
   "#pragma GCC diagnostic ignored \"-Wunused-function\"\n" +
   "static int did_print = 0;\n" +
   "typedef int64_t i64;\n" +
@@ -1091,6 +1109,13 @@ fn runtime_c() -> str {
   "static char** terse_argv = NULL;\n" +
   "static const char* terse_arg(int64_t index){if(index<0||index>=terse_argc)return \"\";return terse_argv[index]?terse_argv[index]:\"\";}\n" +
   "static const char* terse_env(const char* k){const char* v=getenv(k);return v?v:\"\";}\n" +
+  "static int64_t terse_env_set(const char* k,const char* v){if(!k)return INT64_C(-1);\n" +
+  "#ifdef _WIN32\n" +
+  "return (_putenv_s(k,v?v:\"\")==0)?INT64_C(0):INT64_C(-1);\n" +
+  "#else\n" +
+  "return (setenv(k,v?v:\"\",1)==0)?INT64_C(0):INT64_C(-1);\n" +
+  "#endif\n" +
+  "}\n" +
   "static char* fs_read_text(const char* path){FILE* f=fopen(path,\"rb\");if(!f){fprintf(stderr,\"read fail %s\\n\",path);exit(1);}fseek(f,0,SEEK_END);long n=ftell(f);fseek(f,0,SEEK_SET);char* b=malloc(n+1);fread(b,1,n,f);b[n]=0;fclose(f);return b;}\n" +
   "static int64_t fs_write_text(const char* path,const char* text){FILE* f=fopen(path,\"wb\");if(!f){fprintf(stderr,\"write fail %s\\n\",path);exit(1);}size_t n=text?strlen(text):0;fwrite(text,1,n,f);fclose(f);return (int64_t)n;}\n" +
   "static int64_t terse_gcc_compile(const char* src,const char* out){char cmd[4096];const char* cc=getenv(\"CC\");if(!cc||!cc[0])cc=\"gcc\";snprintf(cmd,sizeof(cmd),\"%s -O0 -std=c11 -Wno-unused-function -Wno-unused-parameter -Wno-unused-value -Wno-parentheses %s -o %s\",cc,src,out);return (int64_t)system(cmd);}\n"

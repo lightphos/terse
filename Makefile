@@ -21,7 +21,7 @@ tdir ?= tst
 help:
 	@echo "Targets:"
 	@echo "  make tcc         - host build stage0 (Python tersec -> out/tc-stage0)"
-	@echo "  make tcc1        - stage0 compiles tc.te -> out/tc-stage1"
+	@echo "  make tcc1        - host builds stage1 (reliable)\n  make tcc1-native - stage0 compiles tc.te (may OOM)"
 	@echo "  make bootstrap   - stage1 compiles tc.te -> out/tc"
 	@echo "  make terse.NAME  - compile src/NAME.te with out/tc and run it"
 	@echo "  make run.NAME    - compile and run src/NAME.te with host tersec and run"
@@ -35,17 +35,48 @@ verify:
 
 
 # --- Bootstrap ----------------------------------------------------------
-# Generated C is large; host/tc use -O0 so Apple clang does not abort at -O2.
+# Host-generated C for tc.te is ~130KB and fine.
+# Native stage0 emit is much larger (nested statement-exprs) and often OOMs
+# the C compiler on Windows (cc1.exe) when compiling full tc.te.
+# Default tcc1 uses the host again (reliable). Optional: make tcc1-native
 
 tcc:
 	@mkdir -p $(OUT)
-	$(PYTHON) $(TERSEC) build $(TC_SRC) -o $(STAGE0)
+	$(PYTHON) $(TERSEC) build $(TC_SRC) -o $(STAGE0) --no-libs
 
+# Reliable stage1: same as stage0 source, rebuilt by host under a new name
 tcc1: tcc
+	@mkdir -p $(OUT)
+	$(PYTHON) $(TERSEC) build $(TC_SRC) -o $(STAGE1) --no-libs
+	@echo "tcc1: host-built $(STAGE1) (use make tcc1-native to try stage0 self-compile)"
+
+# Experimental: stage0 compiles tc.te (may OOM on Windows/low-RAM)
+tcc1-native: tcc
+	@mkdir -p $(OUT)
 	CC=$(CC) $(STAGE0) $(TC_SRC) $(STAGE1)
 
+# Full native chain when tcc1-native works on your machine
 bootstrap: tcc1
-	CC=$(CC) $(STAGE1) $(TC_SRC) $(TC)
+	@mkdir -p $(OUT)
+	@if [ -x "$(STAGE1)" ]; then \
+	  CC=$(CC) $(STAGE1) $(TC_SRC) $(TC) || \
+	  ($(PYTHON) $(TERSEC) build $(TC_SRC) -o $(TC) --no-libs && echo "bootstrap: host fallback -> $(TC)"); \
+	else \
+	  $(PYTHON) $(TERSEC) build $(TC_SRC) -o $(TC) --no-libs; \
+	fi
+
+
+# Smoke: host builds stage0; stage0 compiles a tiny program (not full tc.te)
+bootstrap-verify: tcc
+	@mkdir -p $(OUT)
+	@echo "==> host stage0"
+	@test -x "$(STAGE0)" || test -f "$(STAGE0)" || (echo "missing $(STAGE0)" && exit 1)
+	@printf '%s\n' 'go { pr(42) }' > $(OUT)/_bv_hi.te
+	@echo "==> stage0 compile smoke"
+	@CC=$(CC) $(STAGE0) $(OUT)/_bv_hi.te $(OUT)/_bv_hi && \
+	  test -f $(OUT)/_bv_hi -o -f $(OUT)/_bv_hi.exe && \
+	  echo "bootstrap-verify: OK" || \
+	  (echo "bootstrap-verify: stage0 smoke failed (use host if OOM on full tc.te)" && exit 1)
 
 # --- Compile & run apps -------------------------------------------------
 

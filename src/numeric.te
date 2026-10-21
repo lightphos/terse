@@ -1,21 +1,17 @@
+// Numeric helpers — float return types must be annotated
 
-fn num() {
-  val x: i32 = 3
-  val y: long = 4
-  ret x + y
-} 
-
-fn char() {
-  val c: char = 65
-  ret c
+pub fn dbl(x: f64) -> f64 {
+  ret x * 2.0
 }
 
-fn dbl() {
-  val d: double = 1.5
-  ret d
+pub fn flt(x: f32) -> f32 {
+  ret x * 2.0
 }
 
-fn flt() {
-  val f: float = 1.5
-  ret f
+pub fn add_f64(a: f64, b: f64) -> f64 {
+  ret a + b
+}
+
+go {
+  pr(0)
 }
