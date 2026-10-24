@@ -2,6 +2,9 @@
 
 A (very) succinct language that compiles to native binaries, with structures, interfaces, first-class higher-order functions, supporting libraries and builtin in test runner.
 
+> Code as code rather than verbiage
+
+
 ## Quick Start
 
 > Requires python3
@@ -10,9 +13,7 @@ A (very) succinct language that compiles to native binaries, with structures, in
 ```bash
 # Build program in example directory to a binary
 make run.eg dir=src
-
 make tst.t_eg
-
 make tst (all)
 ```
 
