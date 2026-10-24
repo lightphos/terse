@@ -881,6 +881,8 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
         out = "fs_write_text(" + emit_args(nodes, n.left, env, functions) + ")"
       } else if is_name(n.text, 111,117,116,0,0,0,0,0,0,0, 3) {
         out = "fs_write_text(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else if is_name(n.text, 97,112,112,101,110,100,0,0,0,0, 6) {
+        out = "fs_append_text(" + emit_args(nodes, n.left, env, functions) + ")"
       } else if is_name(n.text, 99,111,109,112,105,108,101,0,0,0, 7) {
         out = "terse_gcc_compile(" + emit_args(nodes, n.left, env, functions) + ")"
       } else {
@@ -897,17 +899,21 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
           out = "(" + emit(nodes, n.left, env, functions) + " = " + emit(nodes, n.right, env, functions) + ")"
         }
       } else if n.text == "+" {
-        out = "terse_plus(" + emit(nodes, n.left, env, functions) + ", " + emit(nodes, n.right, env, functions) + ")"
+        var pl: str = emit(nodes, n.left, env, functions)
+        var pright: str = emit(nodes, n.right, env, functions)
+        out = "terse_plus(" + pl + ", " + pright + ")"
       } else if n.text == "==" || n.text == "!=" {
         // strcmp when either side is a string literal; otherwise numeric/pointer ==
         var use_str: bool = false
         if n.left >= 0 && nodes[n.left].kind == 4 { use_str = true }
         if n.right >= 0 && nodes[n.right].kind == 4 { use_str = true }
         if use_str {
+          var ls: str = emit(nodes, n.left, env, functions)
+          var rs: str = emit(nodes, n.right, env, functions)
           if n.text == "==" {
-            out = "(strcmp(" + emit(nodes, n.left, env, functions) + " ? " + emit(nodes, n.left, env, functions) + " : \"\", " + emit(nodes, n.right, env, functions) + " ? " + emit(nodes, n.right, env, functions) + " : \"\") == 0)"
+            out = "({ const char* _l = " + ls + "; const char* _r = " + rs + "; (strcmp(_l ? _l : \"\", _r ? _r : \"\") == 0); })"
           } else {
-            out = "(strcmp(" + emit(nodes, n.left, env, functions) + " ? " + emit(nodes, n.left, env, functions) + " : \"\", " + emit(nodes, n.right, env, functions) + " ? " + emit(nodes, n.right, env, functions) + " : \"\") != 0)"
+            out = "({ const char* _l = " + ls + "; const char* _r = " + rs + "; (strcmp(_l ? _l : \"\", _r ? _r : \"\") != 0); })"
           }
         } else {
           out = "(" + emit(nodes, n.left, env, functions) + " " + n.text + " " + emit(nodes, n.right, env, functions) + ")"
@@ -924,6 +930,8 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
         out = "fs_write_text(" + emit_args(nodes, n.left, env, functions) + ")"
       } else if is_name(n.text, 111,117,116,0,0,0,0,0,0,0, 3) {
         out = "fs_write_text(" + emit_args(nodes, n.left, env, functions) + ")"
+      } else if is_name(n.text, 97,112,112,101,110,100,0,0,0,0, 6) {
+        out = "fs_append_text(" + emit_args(nodes, n.left, env, functions) + ")"
       } else if is_name(n.text, 99,111,109,112,105,108,101,0,0,0, 7) {
         out = "terse_gcc_compile(" + emit_args(nodes, n.left, env, functions) + ")"
       } else {
@@ -1118,6 +1126,7 @@ fn runtime_c() -> str {
   "}\n" +
   "static char* fs_read_text(const char* path){FILE* f=fopen(path,\"rb\");if(!f){fprintf(stderr,\"read fail %s\\n\",path);exit(1);}fseek(f,0,SEEK_END);long n=ftell(f);fseek(f,0,SEEK_SET);char* b=malloc(n+1);fread(b,1,n,f);b[n]=0;fclose(f);return b;}\n" +
   "static int64_t fs_write_text(const char* path,const char* text){FILE* f=fopen(path,\"wb\");if(!f){fprintf(stderr,\"write fail %s\\n\",path);exit(1);}size_t n=text?strlen(text):0;fwrite(text,1,n,f);fclose(f);return (int64_t)n;}\n" +
+  "static int64_t fs_append_text(const char* path,const char* text){FILE* f=fopen(path,\"ab\");if(!f){fprintf(stderr,\"append fail %s\\n\",path);exit(1);}size_t n=text?strlen(text):0;if(n)fwrite(text,1,n,f);fclose(f);return (int64_t)n;}\n" +
   "static int64_t terse_gcc_compile(const char* src,const char* out){char cmd[4096];const char* cc=getenv(\"CC\");if(!cc||!cc[0])cc=\"gcc\";snprintf(cmd,sizeof(cmd),\"%s -O0 -std=c11 -Wno-unused-function -Wno-unused-parameter -Wno-unused-value -Wno-parentheses %s -o %s\",cc,src,out);return (int64_t)system(cmd);}\n"
 }
 
@@ -1147,10 +1156,22 @@ fn compile_file(source_path: str, output_path: str) -> i64 {
     result = 2
   } else {
     var empty_env: [Binding] = []
-    var expression: str = emit(parsed.nodes, parsed.root, empty_env, parsed.functions)
-    var protos: str = ""
-    var bodies: str = ""
+    var c_path: str = output_path + ".c"
+    // T7: write .c in chunks — avoid one giant string of runtime+protos+bodies+main.
+    // Prototypes for every function first: a body may call a function defined
+    // later, and -std=c11 rejects the implicit int declaration.
+    io.out(c_path, runtime())
     var i: i64 = 0
+    lp i < len(parsed.functions) {
+      var f: Function = parsed.functions[i]
+      var cn: str = "terse_" + f.name
+      var ps: str = emit_params(f.params, 0)
+      var rt: str = c_type(f.return_type)
+      io.append(c_path, "static " + rt + " " + cn + "(" + ps + ");
+")
+      i = i + 1
+    }
+    i = 0
     lp i < len(parsed.functions) {
       var f: Function = parsed.functions[i]
       var cn: str = "terse_" + f.name
@@ -1162,15 +1183,19 @@ fn compile_file(source_path: str, output_path: str) -> i64 {
         param_env = env_put(param_env, f.params[pi].name, f.params[pi].typ)
         pi = pi + 1
       }
-      protos = protos + "static " + rt + " " + cn + "(" + ps + ");\n"
-      bodies = bodies + "static " + rt + " " + cn + "(" + ps + ") {\n  " + emit_fn_body(parsed.nodes, f.root, param_env, parsed.functions) + "\n}\n"
+      io.append(c_path, "static " + rt + " " + cn + "(" + ps + ") {
+  " + emit_fn_body(parsed.nodes, f.root, param_env, parsed.functions) + "
+}
+")
       i = i + 1
     }
-    var c_source: str = runtime() + protos + bodies +
-      "int main(int argc, char** argv){\n  terse_argc = argc;\n  terse_argv = argv;\n  int64_t result = " + expression + ";\n" +
-      "  if(!(did_print && result==0)) printf(\"%lld\\n\",(long long)result);\n  return (int)result;\n}\n"
-    var c_path: str = output_path + ".c"
-    io.out(c_path, c_source)
+    var entry: str = emit_fn_body(parsed.nodes, parsed.root, empty_env, parsed.functions)
+    io.append(c_path, "int main(int argc, char** argv){
+  terse_argc = argc;
+  terse_argv = argv;
+  " + entry + "
+}
+")
     result = gcc.compile(c_path, output_path)
   }
   result

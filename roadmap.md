@@ -75,6 +75,11 @@ No silent expansion of std without a SPEC/BNF note.
 
 - **`tc.te`:** when lifting std, only emit calls the native runtime already has
 
+### 1.4b Optional packages (`lib/`)  **Done (host)**
+- SPEC §5 + README: `lib/<name>.te` → `use name` (e.g. `math`, `http` stub)
+- Tests: `tst/t_math.te`, `tst/t_http.te`
+- No package registry
+
 ### 1.4 List / map edge cases  **Done (host, core)** / polish **Later**
 - Empty typed lists `var xs: [i32] = []`, width lists, push/concat/`len` — working
 - Maps `{str:i64}`: `{:}`, put/get, `has`, `keys`, `len`, `lp k:m` — tests `t_map_has`, `t_map_lp`
@@ -160,8 +165,11 @@ Update **`tc.te`** at these milestones:
         (single search path is enough at first)
 [ ] T6  When en/rec are required under native: tags + field access emit only
         (no need for full host pattern exhaustiveness)
-[ ] T7  If stage compile is too slow: switch emit to buffered/rope-style
-        string building (not before T1–T3 if those are blocking)
+[x] T7  Smaller native emit (mitigations)
+        - Double-emit fixed for strcmp / +
+        - compile_file writes .c in chunks (io.out + io.append) + emit_fn_body for entry
+        - fs_append_text in host + native runtime
+        - Full tc.te under stage0 may still stress cc1; prefer `make tcc1` until measured OK
 [x] T8  make bootstrap-verify target: stage0 smoke tiny .te (full tc.te may OOM)
 ```
 
@@ -189,8 +197,8 @@ Update **`tc.te`** at these milestones:
 
 1. **LSP / editor basics** — syntax highlight + diagnostics from host (or external wrapper)  
    - **`tc.te`:** not involved
-2. **Package layout** — optional `terse.mod` or directory convention beyond path `use`  
-   - **`tc.te`:** only if native multi-file (T5) is already real
+2. **Package layout / tpm** — deferred; design in `tpm_spec.md` (install into `lib/`, lockfile, no compiler changes)
+   - **`tc.te`:** not involved until a Terse-written tpm needs HTTP/hash
 3. **More std (optional)** — only with SPEC entries  
    - **`tc.te`:** runtime stubs only when native must link them
 4. **Ownership / borrowing** — Parked  

@@ -1,0 +1,6 @@
+// Optional package stub: use http
+// Not a full HTTP stack — placeholder for package layout only.
+
+pub fn ok() -> i64 {
+  ret 200
+}

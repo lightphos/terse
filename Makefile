@@ -30,7 +30,7 @@ help:
 	@echo "  make clean"
 	@echo "CC=$(CC)  (export CC=... to change C compiler used by tc stages)"
 
-verify:
+verify: tst
 	$(PYTHON) $(TERSEC_TEST)
 
 

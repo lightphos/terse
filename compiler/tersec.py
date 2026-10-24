@@ -1563,7 +1563,7 @@ class TypeChecker:
                     and e.func.obj.name in ('io', 'fs'):
                 # std.io: io.in / io.out  (fs.* kept as aliases)
                 if e.func.field in ('in', 'read_text'): return 'str'
-                if e.func.field in ('out', 'write_text'): return 'i64'
+                if e.func.field in ('out', 'write_text', 'append', 'append_text'): return 'i64'
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'str':
                 f = e.func.field
@@ -2513,6 +2513,15 @@ static int64_t fs_write_text(const char* path, const char* text) {
     return (int64_t)written;
 }
 
+static int64_t fs_append_text(const char* path, const char* text) {
+    FILE* file = fopen(path, "ab");
+    if (!file) fs_io_fail("append", path);
+    size_t size = text ? strlen(text) : 0;
+    size_t written = size ? fwrite(text, 1, size, file) : 0;
+    if (written != size || fclose(file) != 0) fs_io_fail("append", path);
+    return (int64_t)written;
+}
+
 /* -- minimal HTTP/1.1 server -- */
 typedef const char* (*route_fn)(const char* method, const char* path, const char* body);
 
@@ -3272,6 +3281,10 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     path, _ = self.gen_expr(e.args[0])
                     text, _ = self.gen_expr(e.args[1])
                     return f"fs_write_text({path}, {text})", "i64"
+                if e.func.field == 'append' or e.func.field == 'append_text':
+                    path, _ = self.gen_expr(e.args[0])
+                    text, _ = self.gen_expr(e.args[1])
+                    return f"fs_append_text({path}, {text})", "i64"
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'gcc' and e.func.field == 'compile':
                 source, _ = self.gen_expr(e.args[0])
@@ -4280,20 +4293,25 @@ def _load_source_modules(program, source_path):
                 candidates.append(os.path.join(parallel_dir, relative + ".te"))
                 # also src/<same relative under tst>
                 # e.g. tst/usage → src/usage already handled by parallel_dir
-            # preferred library roots: sibling src/ then project root
+            # preferred roots: lib/ (optional packages), src/, project root
             for root in _project_roots(source_path):
+                candidates.append(os.path.join(root, 'lib', relative + '.te'))
                 candidates.append(os.path.join(root, 'src', relative + '.te'))
                 # if test lives in tst/<sub>/, also try src/<sub>/<module>
                 if "/tst/" in norm:
                     sub = norm.split("/tst/", 1)[-1]  # e.g. "usage" or "usage/nested"
                     if sub and sub != norm:
                         candidates.append(os.path.join(root, 'src', sub, relative + '.te'))
+                        candidates.append(os.path.join(root, 'lib', sub, relative + '.te'))
             for root in _project_roots(source_path):
                 candidates.append(os.path.join(root, relative + '.te'))
             parent = os.path.dirname(src_dir)
             if parent:
+                candidates.append(os.path.join(parent, 'lib', relative + '.te'))
                 candidates.append(os.path.join(parent, relative + '.te'))
+        candidates.append(os.path.join(module_root, 'lib', relative + '.te'))
         candidates.append(os.path.join(module_root, relative + '.te'))
+        candidates.append(os.path.join(os.getcwd(), 'lib', relative + '.te'))
         candidates.append(os.path.join(os.getcwd(), relative + '.te'))
         module_file = None
         for cand in candidates:
@@ -4306,7 +4324,7 @@ def _load_source_modules(program, source_path):
             raise SyntaxError(
                 f"module '{use.path}' not found\n"
                 f"  searched: {tried}\n"
-                f"  hint: place sources under src/, lib/, or next to the importer "
+                f"  hint: optional packages in lib/ (use math -> lib/math.te); app modules in src/ "
                 f"(dots map to paths: use usage.util -> src/usage/util.te)"
             )
         try:

@@ -140,22 +140,51 @@ Rules:
 use std.tst
 use std.str
 use std.io
-use arith                 // → src/arith.te (or parallel path)
-use usage.result_option   // → usage/result_option.te
+use math                  // → lib/math.te  (optional package)
+use arith                 // → src/arith.te (app module)
+use usage.result_option   // → src/usage/result_option.te
 ```
 
 ### Resolution order (importer `path/to/file.te`)
+
+Dots in the path become directories: `use foo.bar` → `foo/bar.te`.
+
 1. Same directory as the importer  
 2. **Parallel `src/`** when under `tst/` (`tst/usage/t_mod.te` → `src/usage/mod.te`)  
-3. Project `src/<module>.te`  
-4. Project root / cwd fallbacks  
+3. Project **`lib/<module>.te`** (optional packages shipped with Terse)  
+4. Project **`src/<module>.te`** (application modules)  
+5. Project root / cwd / parent fallbacks  
+
+For `use std.*` only:
+
+1. `lib/std/<name>.te`  
+2. `std/<name>.te`  
+3. Host builtin surface (no file required)
+
+### Optional packages (`lib/`)
+
+Optional libraries that ship with the Terse tree but are **not** part of the frozen std surface (§8):
+
+| File | Import | Call style |
+|------|--------|------------|
+| `lib/math.te` | `use math` | `math.abs(x)`, `math.fact(5)` |
+| `lib/http.te` | `use http` | (stub / future) |
+
+Rules:
+
+- Export with **`pub fn`** / **`pub rec`** (tests under `tst/` may see non-`pub` too)
+- Prefer **bare** names (`use math`), not `std.math`, unless the API is frozen into §8
+- No package registry yet — “install” means the file is on the search path (`lib/` in the repo or copied next to the project)
+- Optional: `python3 compiler/tersec.py lib lib/math.te` builds `~/.terse/out/lib/math/module.o`
 
 ### What `use m` imports
 - `pub fn` (and all fns when the importer is a **test** `tst/**/t_*.te`)
 - `pub rec` and methods on exported types (tests see all recs/methods)
 - All `en` (public by default)
 - `pub fix` only (plain `fix` stays file-local; rewritten internally for module code)
-- `std.*` is a builtin surface (no `.te` required)
+- `std.*` is a builtin surface (no `.te` required when the file is missing)
+
+Call through the module alias: `math.fact(5)`, not `fact.fact(5)`.
 
 Unqualified calls after `use m` in **tests**: `use mod` → `mod()` works even when the function is named `mod`.
 
@@ -332,9 +361,9 @@ C-style `lp i = 0; cond; step { … }` introduces `i` into the type-checker envi
 
 ## 11. Compilation
 
-### Standard library location (host)
-- Preferred: `lib/std/<name>.te` (project `lib/`, or `src/../lib/`)
-- Fallback: `std/<name>.te`, then host builtins
+### Standard library & packages (host)
+- Frozen std: `lib/std/<name>.te` (fallback `std/<name>.te`, then host builtins)
+- Optional packages: `lib/<name>.te` → `use <name>` (e.g. `lib/math.te` → `use math`)
 - `use std.tst` loads `lib/std/tst.te` when present (Terse helpers); host still provides `tst.report` counting
 
 ### Output layout (host)

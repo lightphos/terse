@@ -88,6 +88,31 @@ export TERSE_HOME=/path/to/.terse
 - Explicit library build: `python3 compiler/tersec.py lib path/to/mod.te`
 - Auto-link of `~/.terse/out/lib/...` on `use` is **off by default**. Enable with `TERSE_AUTOLIB=1` if you want imports to prefer a fresh `module.o` over inlining.
 
+
+## Optional packages (`lib/`)
+
+Ship optional libraries next to the compiler tree (not frozen std):
+
+```text
+lib/math.te      →  use math       →  math.fact(5), math.abs(x)
+lib/std/tst.te   →  use std.tst    →  tst.eq(...)
+src/arith.te     →  use arith      →  app modules
+```
+
+```terse
+use std.tst
+use math
+
+fn t_fact5() {
+  tst.eq(math.fact(5), 120)
+}
+```
+
+- **`pub`** functions are the public API of a package  
+- Search order includes **`lib/`** for every `use` (see SPEC §5)  
+- No registry yet — packages are files in `lib/` (or on the module search path)  
+- Precompile: `python3 compiler/tersec.py lib lib/math.te` → `~/.terse/out/lib/math/module.o`
+
 ## Language Spec
 
 See [spec/TERSE_BNF.md](spec/TERSE_BNF.md) and [spec/SPEC.md](spec/SPEC.md) for the full language specification.

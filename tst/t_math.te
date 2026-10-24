@@ -1,0 +1,15 @@
+use std.tst
+use math
+
+fn t_abs() {
+  tst.eq(math.abs(0 - 7), 7)
+}
+
+fn t_max() {
+  tst.eq(math.max(3, 9), 9)
+}
+
+fn t_fact0() { tst.eq(math.fact(0), 1) }
+fn t_fact1() { tst.eq(math.fact(1), 1) }
+fn t_fact5() { tst.eq(math.fact(5), 120) }
+fn t_fact10() { tst.eq(math.fact(10), 3628800) }

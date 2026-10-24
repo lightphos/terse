@@ -1,0 +1,15 @@
+// Optional package: use math
+// Call as math.abs / math.fact / math.max
+
+pub fn abs(x: i64) -> i64 {
+  if x < 0 { ret 0 - x }
+  ret x
+}
+
+pub fn fact(n: i64) -> i64 =
+  if n <= 1 { 1 } else { n * fact(n - 1) }
+
+pub fn max(a: i64, b: i64) -> i64 {
+  if a > b { ret a }
+  ret b
+}

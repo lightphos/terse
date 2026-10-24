@@ -1,0 +1,6 @@
+use std.tst
+use http
+
+fn t_ok() {
+  tst.eq(http.ok(), 200)
+}
