@@ -42,7 +42,7 @@ verify: tst
 
 tcc:
 	@mkdir -p $(OUT)
-	$(PYTHON) $(TERSEC) build $(TC_SRC) -o $(STAGE0) --no-libs
+	$(PYTHON) $(TERSEC) build $(TC_SRC) -o $(STAGE0) -f --no-libs
 
 # Reliable stage1: same as stage0 source, rebuilt by host under a new name
 tcc1: tcc
@@ -94,9 +94,9 @@ run.%:
 	$(OUT)/$*
 
 tst.%:
-	@mkdir -p $(OUT)
-	$(PYTHON) $(TERSEC) build $(tdir)/$*.te -o $(OUT)/$*
-	$(OUT)/$*
+	@@mkdir -p $(OUT)
+	@$(PYTHON) $(TERSEC) build $(tdir)/$*.te -f -o $(OUT)/$*
+	@$(OUT)/$*
 
 # --- VS Code extension / tests ------------------------------------------
 
@@ -110,6 +110,7 @@ test:
 	tst/test.sh
 
 tst:
+	@rm -rf $(OUT)
 	@for f in tst/t_*.te; do \
 		base=$$(basename $$f .te); \
 		$(MAKE) --no-print-directory tst.$$base; \

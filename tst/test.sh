@@ -23,7 +23,6 @@ skipped=0
 failed=0
 fallback_count=0
 failed_files=()
-passed_files=()
 
 for source_path in "${files[@]}"; do
   relative_path=${source_path#"$root_dir/"}
@@ -143,12 +142,6 @@ for source_path in "${files[@]}"; do
         fi
       fi
 
-      printf 'PASS %s\n' "$relative_path"
-      passed_files+=("$relative_path")
-    else
-      # No expectations specified, just check it runs
-      printf 'PASS %s (no expectations)\n' "$relative_path"
-      passed_files+=("$relative_path")
     fi
   else
     printf 'FAIL run %s\n' "$relative_path" >&2
@@ -159,13 +152,6 @@ done
 
 printf '\nSummary: %d compiled, %d ran, %d skipped, %d failures, %d fallbacks\n' \
   "$compiled" "$ran" "$skipped" "$failed" "$fallback_count"
-
-if [[ ${#passed_files[@]} -gt 0 ]]; then
-  printf '\nPassed files:\n'
-  for entry in "${passed_files[@]}"; do
-    printf '  %s\n' "$entry"
-  done
-fi
 
 if ((failed > 0)); then
   printf '\nFailed files:\n' >&2

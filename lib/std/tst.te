@@ -1,8 +1,11 @@
-// std.tst — unit-test assertions (Terse library under lib/)
+// std.tst — unit-test assertions (optional package under lib/)
 // use std.tst
 //
-// Host sugar: tst.eq / tst.ne / tst.chk / tst.report
-// Resolved via parameter overloading on eq / ne.
+// Policy: quiet on success. Only print FAIL (and later SKIP).
+// Do not print PASS lines. Host runtime tst_report() may print
+// "FAILED k of n" when the failure count is non-zero.
+//
+// Overloads: eq / ne for i64, str, bool (file/line from host sugar).
 
 pub fn eq(got: i64, expected: i64, file: str, line: i64) -> i64 {
   if got != expected {
@@ -56,7 +59,7 @@ pub fn ne(got: bool, unexpected: bool, file: str, line: i64) -> i64 {
   ret 0
 }
 
+// No PASS / summary print here — host tst_report() is quiet unless failures > 0.
 pub fn report() -> i64 {
-  // Host prefers runtime tst_report() so failure counts stay accurate.
   ret 0
 }

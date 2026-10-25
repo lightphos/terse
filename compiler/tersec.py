@@ -4,6 +4,8 @@ Terse Compiler (tersec) 0.1beta
 Native binary via C. Strings, lists, pr, http.serve (minimal socket server).
 """
 import sys, os, re, shutil, subprocess, argparse
+
+TERSE_VERSION = "0.3"
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Tuple
 from enum import Enum, auto
@@ -1759,6 +1761,10 @@ class TypeChecker:
 
 # --- C runtime + HTTP server ------------------------------
 RUNTIME = r'''
+#if !defined(_WIN32)
+#define _DEFAULT_SOURCE
+#define _POSIX_C_SOURCE 200112L
+#endif
 #include <stdint.h>
 #include <stdbool.h>
 #include <errno.h>
@@ -2363,10 +2369,9 @@ static int64_t tst_ne_str(const char* got, const char* unexpected, const char* f
   return INT64_C(0);
 }
 static int64_t tst_report(void) {
-  _terse_did_print = 1; /* avoid printing failure count on stdout */
-  if (_tst_failures == 0) {
-    fprintf(stderr, "PASS %lld check(s)\n", (long long)_tst_checks);
-  } else {
+  /* Quiet on success: only print failures (and SKIP when implemented). */
+  _terse_did_print = 1; /* suppress main's leftover numeric print */
+  if (_tst_failures != 0) {
     fprintf(stderr, "FAILED %lld of %lld check(s)\n",
             (long long)_tst_failures, (long long)_tst_checks);
   }
@@ -2422,6 +2427,9 @@ static const char* env_get(const char* k) {
   const char* v = getenv(k);
   return v ? v : "";
 }
+#ifndef _WIN32
+int setenv(const char *name, const char *value, int overwrite);
+#endif
 static int64_t env_set(const char* k, const char* v) {
   if (!k) return INT64_C(-1);
 #ifdef _WIN32
@@ -4686,7 +4694,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
                         break
             out_obj = lib_obj_path(key)
             if not force and lib_is_fresh(key, deps):
-                print(f"Up to date -> {out_obj}")
+                if verbose: print(f"Up to date -> {out_obj}")
                 return 0
             prefix = re.sub(r"\W", "_", key)
             for f in prog.funcs:
@@ -4709,7 +4717,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             if not keep_c:
                 try: os.remove(c_file)
                 except OSError: pass
-            print(f"Library -> {out_obj}")
+            if verbose: print(f"Library -> {out_obj}")
             return 0
 
         out_bin = resolve_output_path(source_path, out_bin)
@@ -4721,7 +4729,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             try:
                 bmt = os.path.getmtime(gcc_out)
                 if all(os.path.getmtime(d) <= bmt for d in deps if os.path.isfile(d)):
-                    print(f"Up to date -> {out_bin}")
+                    if verbose: print(f"Up to date -> {out_bin}")
                     return 0
             except OSError:
                 pass
@@ -4793,7 +4801,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
         if not keep_c:
             try: os.remove(c_file)
             except OSError: pass
-        print(f"Compiled -> {out_bin}")
+        if verbose: print(f"Compiled -> {out_bin}")
         return 0
     except SyntaxError as e:
         print(f"Syntax error: {e}", file=sys.stderr)
@@ -4805,14 +4813,26 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
 
 def main():
     ap = argparse.ArgumentParser(description="tersec — out ~/.terse/out; libs ~/.terse/out/lib/<mod>/")
-    ap.add_argument("command", choices=["build", "run", "check", "lib"])
-    ap.add_argument("source")
+    ap.add_argument("-v", "--version", action="store_true",
+                    help="print version (0.3) and exit")
+    ap.add_argument("-a", "--announce", action="store_true",
+                    help="print 'compile <file>' before building")
+    ap.add_argument("--verbose", action="store_true",
+                    help="extra debug (tokens, funcs, C snippet)")
+    ap.add_argument("command", nargs="?", choices=["build", "run", "check", "lib"])
+    ap.add_argument("source", nargs="?")
     ap.add_argument("-o", "--output", default=None)
     ap.add_argument("--keep-c", action="store_true")
-    ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument("-f", "--force", action="store_true")
     ap.add_argument("--no-libs", action="store_true")
     args = ap.parse_args()
+    if args.version:
+        print(f"tersec {TERSE_VERSION}")
+        sys.exit(0)
+    if not args.command or not args.source:
+        ap.error("command and source are required (unless -v)")
+    if args.announce:
+        print(f"compile {args.source}")
     with open(args.source, encoding="utf-8") as f:
         src = f.read()
     if args.command == "check":

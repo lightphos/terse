@@ -1048,8 +1048,9 @@ fn emit_params(params: [Param], index: i64) -> str {
 }
 
 fn runtime_a() -> str {
+  "#if !defined(_WIN32)\n#define _DEFAULT_SOURCE\n#define _POSIX_C_SOURCE 200112L\n#endif\n" +
   "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n" +
-  "#ifndef _WIN32\n#include <unistd.h>\n#endif\n" +
+  "#ifndef _WIN32\n#include <unistd.h>\nint setenv(const char*, const char*, int);\n#endif\n" +
   "#pragma GCC diagnostic ignored \"-Wunused-function\"\n" +
   "static int did_print = 0;\n" +
   "typedef int64_t i64;\n" +
@@ -1117,6 +1118,7 @@ fn runtime_c() -> str {
   "static char** terse_argv = NULL;\n" +
   "static const char* terse_arg(int64_t index){if(index<0||index>=terse_argc)return \"\";return terse_argv[index]?terse_argv[index]:\"\";}\n" +
   "static const char* terse_env(const char* k){const char* v=getenv(k);return v?v:\"\";}\n" +
+  "#ifndef _WIN32\nint setenv(const char*,const char*,int);\n#endif\n" +
   "static int64_t terse_env_set(const char* k,const char* v){if(!k)return INT64_C(-1);\n" +
   "#ifdef _WIN32\n" +
   "return (_putenv_s(k,v?v:\"\")==0)?INT64_C(0):INT64_C(-1);\n" +
@@ -1157,9 +1159,7 @@ fn compile_file(source_path: str, output_path: str) -> i64 {
   } else {
     var empty_env: [Binding] = []
     var c_path: str = output_path + ".c"
-    // T7: write .c in chunks — avoid one giant string of runtime+protos+bodies+main.
-    // Prototypes for every function first: a body may call a function defined
-    // later, and -std=c11 rejects the implicit int declaration.
+    // T7: write .c in chunks. All prototypes first, then bodies (mutual recursion).
     io.out(c_path, runtime())
     var i: i64 = 0
     lp i < len(parsed.functions) {
