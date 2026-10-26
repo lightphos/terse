@@ -83,7 +83,7 @@ No silent expansion of std without a SPEC/BNF note.
 ### 1.4 List / map edge cases  **Done (host, core)** / polish **Later**
 - Empty typed lists `var xs: [i32] = []`, width lists, push/concat/`len` — working
 - Maps `{str:i64}`: `{:}`, put/get, `has`, `keys`, `len`, `lp k:m` — tests `t_map_has`, `t_map_lp`
-- Bounds still process-exit; message polish **Later**
+- Bounds process-exit with `index`/`len` in message **Done (host)**
 - **`tc.te`:** T3/T4 when native must compile non-i64 lists / maps
 
 ### 1.5 Tooling quality gate  **Next**
@@ -96,20 +96,30 @@ No silent expansion of std without a SPEC/BNF note.
 
 ## 2. Near-term language (after §1)
 
-### 2.1 String interpolation or format helper  **Later**
-Minimal option (prefer one, not both):
-- `fmt("x={x} y={y}")` style, **or**
-- Keep `+` concat only and document it as the official path
-- **`tc.te`:** only after host lands and SPEC freezes the choice; emit as concat or a single runtime `fmt` helper
+### 2.0 Generics phase 1–2  **Done (host)**
+- `fn f[T](...)` + monomorphize; infer or `f[i64](...)`
+- `rec Box[T]`, `en Opt[T]` + monomorphize (`Box[i64] {…}`, `Opt[i64].Some(…)`)
+- Examples: `src/generic_demo.te`, `src/generic_rec_en.te`
+- T1 parametric `tr Eq[T]` parse + structural sat after subst **Done**
+- Later: `T: Eq` bounds (T2), pattern sugar without `Opt__i64`
+
+
+
+### 2.1 String `+` and minimal `fmt`  **Done (host)**
+- Official concat: `"a" + x` (`str` with `str` / `i64` / `bool`)
+- Minimal helper: `fmt(a, b, ...)` → stringify + concat (no `{x}` interpolation)
+- Examples: `src/hello.te`, `src/fmt_demo.te`, `src/quickstart.te`
+- **`tc.te`:** optional later — emit as nested `str_concat` / `str_from_*`
 
 ### 2.2 Better errors for C backend failures  **Later**
 - Surface first gcc/clang error line mapped to terse source when possible
 - Reduce “C compile failed” without context
 - **`tc.te`:** low priority; native already prints `TC_GCC_ERROR`. Improve only if users compile primarily with `tc`
 
-### 2.3 Public API defaults review  **Later**
-- Confirm: `en` public; `fn`/`rec`/`tr`/`fix` private unless `pub`
-- SPEC + examples stay aligned
+### 2.3 Public API defaults review  **Done (host)**
+- Confirmed: `en` public; `fn`/`rec`/`tr`/`fix` private unless `pub` (`pub fix` to export)
+- SPEC §4 quick reference + tests may call non-pub from parallel `src/`
+- Example CLI story: `src/cli_story.te` (`arg` / `env` / `fmt`)
 - **`tc.te`:** update module export filtering when native gains real `use`/`pub` (see §3.3)
 
 ### 2.4 `use` / package paths  **Later**

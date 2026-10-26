@@ -2,9 +2,6 @@
 
 A (very) succinct language that compiles to native binaries, with structures, interfaces, first-class higher-order functions, supporting libraries and builtin in test runner.
 
-> Code as code rather than verbiage
-
-
 ## Quick Start
 
 > Requires python3
@@ -13,7 +10,9 @@ A (very) succinct language that compiles to native binaries, with structures, in
 ```bash
 # Build program in example directory to a binary
 make run.eg dir=src
+
 make tst.t_eg
+
 make tst (all)
 ```
 
@@ -89,6 +88,26 @@ export TERSE_HOME=/path/to/.terse
 - Explicit library build: `python3 compiler/tersec.py lib path/to/mod.te`
 - Auto-link of `~/.terse/out/lib/...` on `use` is **off by default**. Enable with `TERSE_AUTOLIB=1` if you want imports to prefer a fresh `module.o` over inlining.
 
+
+
+## Quick examples (stranger-friendly)
+
+```bash
+python3 compiler/tersec.py build src/hello.te -o out/hello && ./out/hello
+python3 compiler/tersec.py build src/fmt_demo.te -o out/fmt_demo && ./out/fmt_demo
+python3 compiler/tersec.py build src/quickstart.te -o out/quickstart && ./out/quickstart
+```
+
+| File | Shows |
+|------|--------|
+| `src/hello.te` | smallest `go` + `pr` |
+| `src/fmt_demo.te` | string `+` and `fmt(...)` |
+| `src/quickstart.te` | list, `lp`, `fn`, `fmt` |
+| `src/cli_story.te` | `arg`, `env`, `fmt` mini-CLI |
+| `src/generic_demo.te` | `fn id[T]` / `first[T]` generics |
+| `src/generic_rec_en.te` | `rec Box[T]`, `en Opt[T]` |
+
+Strings: use `"a" + b` or `fmt("a=", b, " c=", d)` (no `{x}` interpolation yet).
 
 ## Optional packages (`lib/`)
 

@@ -1,0 +1,15 @@
+use std.tst
+
+rec Box[T] {
+  value: T
+}
+
+fn t_box_i64() {
+  val b = Box[i64] { value: 7 }
+  tst.eq(b.value, 7)
+}
+
+fn t_box_update() {
+  val b = Box[i64] { value: 1 }
+  tst.eq(b.value + 2, 3)
+}

@@ -1,0 +1,14 @@
+// Phase-1 generics: fn f[T](...) with monomorphization
+//   python3 compiler/tersec.py build src/generic_demo.te -o out/generic_demo
+
+fn id[T](x: T) -> T = x
+
+pub fn first[T](xs: [T]) -> T =
+  xs[0]
+
+go {
+  pr(id(42))
+  pr(id[str]("hi"))
+  val xs = [10, 20, 30]
+  pr(first(xs))
+}

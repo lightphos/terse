@@ -1,0 +1,31 @@
+use std.tst
+
+en Opt[T] {
+  Some(T),
+  None
+}
+
+fn is_some_i64(o: Opt__i64) -> bool {
+  // tag-only discrimination via pattern if
+  if o {
+    Opt__i64.Some(x) => ret true
+    Opt__i64.None => ret false
+  }
+  ret false
+}
+
+fn t_some_tag() {
+  val o = Opt[i64].Some(9)
+  tst.eq(is_some_i64(o), true)
+}
+
+fn t_none_tag() {
+  val o = Opt[i64].None
+  tst.eq(is_some_i64(o), false)
+}
+
+fn t_some_construct() {
+  val o = Opt[i64].Some(42)
+  // constructing Some is enough; unwrap via match payload when env binds
+  tst.eq(is_some_i64(o), true)
+}

@@ -1,0 +1,18 @@
+// String + and minimal fmt
+//   python3 compiler/tersec.py build src/fmt_demo.te -o out/fmt_demo
+//   ./out/fmt_demo
+
+fix GREETING: str = "Greetings"
+fix ANSWER: i64 = 42
+
+fn line(name: str, n: i64) -> str {
+  ret fmt(name, " -> ", n)
+}
+
+go {
+  pr(GREETING + " from Terse")
+  pr("answer=" + ANSWER)
+  pr(fmt("x=", 3, " y=", 4))
+  pr(line("sum", 3 + 4))
+  pr(fmt("flag=", true, " done"))
+}

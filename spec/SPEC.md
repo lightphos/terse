@@ -89,7 +89,38 @@ Inference is local. Annotate non-`i64` parameters/returns when needed.
 
 ---
 
+## 3b. Generics (phase 1 — host)
+
+Parametric functions with **monomorphization** (no runtime dictionaries):
+
+```terse
+fn id[T](x: T) -> T = x
+fn first[T](xs: [T]) -> T = xs[0]
+
+id(42)           // infer T=i64
+id[str]("hi")    // explicit
+first(xs)        // infer T from list element
+```
+
+- Type params: `[T]` or `[A, B]` after the name.
+- Call with inference or explicit `name[Type](...)` / `name[A,B](...)`.
+- Each concrete use emits a specialized C function (`id__i64`, …).
+- Generic **`rec Box[T]`** and **`en Opt[T]`** — monomorphize at use:
+  `Box[i64] { value: 1 }`, `Opt[i64].Some(3)` (specialized names like `Opt__i64` in patterns for now).
+- **Not yet:** constraints (`T: Ord`), generic `tr`, pretty pattern names without `__`.
+
 ## 4. Declarations & Visibility
+
+### Visibility quick reference
+
+| Construct | Default | Export with |
+|-----------|---------|-------------|
+| `en` | **public** | (always available via `use`) |
+| `fn` / `rec` / `tr` | **private** | `pub` |
+| `fix` | **file-local** | `pub fix` |
+
+Tests under `tst/**/t_*.te` may call non-`pub` fns from a parallel `src/` module.
+
 
 | Declaration | Default visibility | Export with |
 |-------------|-------------------|-------------|
@@ -232,6 +263,13 @@ var ss: [str] = []
 ss = ss + ["a"] + "b"
 ```
 
+
+### Maps — missing keys
+
+- `m[k]` on a missing key returns **`0`** (`{str:i64}`) or **`""`** (`{str:str}`); it does **not** abort.
+- Use `has(m, k)` before read when absence is an error.
+- List index OOB still aborts: `index out of bounds: index N len M`.
+
 ### Maps
 Host supports **string keys** and **i64 or str values** (`{str: i64}`, `{str: str}`).
 
@@ -247,10 +285,53 @@ lp k: m { ... }          // iterate keys
 
 ---
 
+### Traits (`tr`) — current + needed for maturity
+
+**Today (structural, non-generic):**
+
+```terse
+tr Printable { fn str() -> str }
+fn Point.str() -> str { ... }
+fn print(p: Printable) { pr(p.str()) }
+```
+
+A `rec` **satisfies** a trait when it has methods with matching names and signatures (implicit; no `impl` keyword).
+
+**To grow traits later (not phase 1):**
+
+| Need | Why |
+|------|-----|
+| Generic traits `tr Eq[T]` | Shared behavior over type params |
+| Explicit `impl` or keep structural | Clarity vs ceremony |
+| Dynamic dispatch (vtable) **or** monomorphize trait params | `fn f(p: Printable)` today is likely specialized/adapter |
+| Super-traits / defaults | Only if real demand |
+| `tr` + generics interaction | `fn sort[T: Ord]` |
+
+Prefer **structural + monomorphize** to stay Terse; add vtables only if you need heterogeneous lists of trait objects.
+
 ## 8. Standard Library Surface (frozen host 0.3)
 
 **Freeze:** the host implements **only** what is listed here. New std APIs require a SPEC + BNF note and a test.  
 Names are not keywords — use `use std.*` or call the same names as builtins (host).
+
+### Strings: `+` and `fmt`
+
+**Concatenation** uses `+`. At least one side is `str`; the other may be `str`, `i64`/`long`, or `bool` (converted automatically):
+
+```terse
+"hi " + name
+"n=" + 42
+"ok=" + true
+```
+
+**`fmt(...)`** is a minimal multi-arg helper: each argument is stringified and concatenated (same conversions as `+`). Prefer this when chaining many pieces:
+
+```terse
+fmt("x=", x, " y=", y)
+fmt(GREETING, " ", ANSWER)   // fix/str + int
+```
+
+There is no `"{x}"` interpolation yet — use `+` or `fmt`.
 
 ### `std.str`
 ```

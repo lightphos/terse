@@ -110,11 +110,17 @@ test:
 	tst/test.sh
 
 tst:
+	@echo "Running all tst/t_*.te tests"
 	@rm -rf $(OUT)
 	@for f in tst/t_*.te; do \
+	    printf '.'; \
 		base=$$(basename $$f .te); \
 		$(MAKE) --no-print-directory tst.$$base; \
 	done
+	@echo ""
 
 clean:
 	rm -rf $(OUT)
+
+wzone:
+	find . -name "*Zone*" -exec rm {} \;

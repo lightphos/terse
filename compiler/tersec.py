@@ -3,7 +3,7 @@
 Terse Compiler (tersec) 0.1beta
 Native binary via C. Strings, lists, pr, http.serve (minimal socket server).
 """
-import sys, os, re, shutil, subprocess, argparse
+import sys, os, re, shutil, subprocess, argparse, copy
 
 TERSE_VERSION = "0.3"
 from dataclasses import dataclass, field
@@ -226,15 +226,18 @@ class FnDecl:
     name: str; params: List[Param]; ret: Optional[TypeNode]; body: Expr
     public: bool = False
     external_lib: bool = False
+    type_params: List[str] = field(default_factory=list)  # e.g. ["T"] for fn id[T](...)
 @dataclass
 class RecDecl:
     name: str
     fields: List[Tuple[str, TypeNode]]
     public: bool = False
+    type_params: List[str] = field(default_factory=list)
 @dataclass
 class TraitDecl:
     name: str
     methods: List[Tuple[str, List[Param], Optional[TypeNode]]]
+    type_params: List[str] = field(default_factory=list)
 @dataclass
 class MethodDecl:
     receiver: str                # struct type name, e.g. "Point"
@@ -264,6 +267,7 @@ class EnumDecl:
     name: str
     variants: List[EnumVariantDecl]  # was List[str]
     public: bool = True  # en is public by default (exportable via use)
+    type_params: List[str] = field(default_factory=list)
 
 @dataclass
 class FixDecl:
@@ -827,7 +831,8 @@ class Parser:
                 e = Member(e, field)
             elif self.match(TT.LBRACE):
                 # Record literal only when `{ ident : ... }`
-                if isinstance(e, (Var, Member)):
+                # Allow Index so Box[i64] { value: 1 } parses as RecordLit
+                if isinstance(e, (Var, Member, Index)):
                     if (self.i + 1 < len(self.toks) and self.toks[self.i + 1].t == TT.IDENT
                             and self.i + 2 < len(self.toks) and self.toks[self.i + 2].t == TT.COLON):
                         e = self.parse_record_lit(e)
@@ -850,9 +855,16 @@ class Parser:
                     e = HttpServe(e.args[0], routes)
             elif self.match(TT.LBRACK):
                 self.adv()
-                idx = self.parse_expr()
+                # f[T] or f[A,B] — comma-separated indices (type args or values)
+                parts = [self.parse_expr()]
+                while self.match(TT.COMMA):
+                    self.adv()
+                    parts.append(self.parse_expr())
                 self.expect(TT.RBRACK)
-                e = Index(e, idx)
+                if len(parts) == 1:
+                    e = Index(e, parts[0])
+                else:
+                    e = Index(e, ListLit(parts))  # multi type-arg pack
             else:
                 break
         return e
@@ -1016,6 +1028,14 @@ class Parser:
                 name = tok.v
         else:
             raise SyntaxError(f"expected record name at {self.cur().line}:{self.cur().col}")
+        type_params = []
+        if self.match(TT.LBRACK):
+            self.adv()
+            while not self.match(TT.RBRACK):
+                type_params.append(self.expect(TT.IDENT).v)
+                if self.match(TT.COMMA):
+                    self.adv()
+            self.expect(TT.RBRACK)
         self.expect(TT.LBRACE)
         fields = []
         while not self.match(TT.RBRACE):
@@ -1025,11 +1045,19 @@ class Parser:
             fields.append((field_name, field_type))
             if self.match(TT.COMMA): self.adv()
         self.expect(TT.RBRACE)
-        return RecDecl(name, fields)
+        return RecDecl(name, fields, type_params=type_params)
 
     def parse_enum(self):
         self.expect(TT.EN)
         name = self.expect(TT.IDENT).v
+        type_params = []
+        if self.match(TT.LBRACK):
+            self.adv()
+            while not self.match(TT.RBRACK):
+                type_params.append(self.expect(TT.IDENT).v)
+                if self.match(TT.COMMA):
+                    self.adv()
+            self.expect(TT.RBRACK)
         self.expect(TT.LBRACE)
         variants = []
         while not self.match(TT.RBRACE):
@@ -1044,11 +1072,19 @@ class Parser:
             variants.append(EnumVariantDecl(vname, fields))
             if self.match(TT.COMMA): self.adv()
         self.expect(TT.RBRACE)
-        return EnumDecl(name, variants)
+        return EnumDecl(name, variants, type_params=type_params)
 
     def parse_trait(self):
         self.expect(TT.TR)
         name = self.expect(TT.IDENT).v
+        type_params = []
+        if self.match(TT.LBRACK):
+            self.adv()
+            while not self.match(TT.RBRACK):
+                type_params.append(self.expect(TT.IDENT).v)
+                if self.match(TT.COMMA):
+                    self.adv()
+            self.expect(TT.RBRACK)
         self.expect(TT.LBRACE)
         methods = []
         while not self.match(TT.RBRACE):
@@ -1061,7 +1097,7 @@ class Parser:
             methods.append((method_name, params, ret))
             if self.match(TT.SEMI): self.adv()
         self.expect(TT.RBRACE)
-        return TraitDecl(name, methods)
+        return TraitDecl(name, methods, type_params=type_params)
 
     def parse_method(self, receiver: str, name: str):
         # receiver and name already consumed (e.g. from `fn Point.show`).
@@ -1085,13 +1121,22 @@ class Parser:
             self.adv()
             method_name = self.expect(TT.IDENT).v
             return self.parse_method(name, method_name)
+        # Type params: fn id[T](...) / fn map[A,B](...)
+        type_params = []
+        if self.match(TT.LBRACK):
+            self.adv()
+            while not self.match(TT.RBRACK):
+                type_params.append(self.expect(TT.IDENT).v)
+                if self.match(TT.COMMA):
+                    self.adv()
+            self.expect(TT.RBRACK)
         params = self.parse_params()
         ret = None
         if self.match(TT.ARROW):
             self.adv(); ret = self.parse_type()
         if self.match(TT.ASSIGN): self.adv()
         body = self.parse_expr()
-        return FnDecl(name, params, ret, body)
+        return FnDecl(name, params, ret, body, type_params=type_params)
 
     def parse_go(self):
         if self.match(TT.GO):
@@ -1309,6 +1354,43 @@ def _types_compatible(expected, got, strict_list=False):
         return True
     return False
 
+def _type_node_name(t) -> str:
+    if t is None:
+        return 'i64'
+    if isinstance(t, str):
+        return t
+    if hasattr(t, 'name'):
+        n = t.name
+        if n == 'list' and getattr(t, 'args', None):
+            inner = _type_node_name(t.args[0]) if t.args else 'i64'
+            return 'list_i64' if inner == 'i64' else f'list_{inner}'
+        if n == 'map' and getattr(t, 'args', None) and len(t.args) >= 2:
+            return f"map_{_type_node_name(t.args[0])}_{_type_node_name(t.args[1])}"
+        return n
+    return 'i64'
+
+
+def _subst_type_name(name: str, mapping: dict) -> str:
+    return mapping.get(name, name)
+
+
+def _subst_type_node(t, mapping: dict):
+    if t is None:
+        return None
+    if isinstance(t, str):
+        return mapping.get(t, t)
+    name = mapping.get(t.name, t.name)
+    args = [_subst_type_node(a, mapping) for a in (t.args or [])]
+    return TypeNode(name, args)
+
+
+def _mangle_generic(name: str, type_args: list) -> str:
+    parts = [_type_node_name(a) if not isinstance(a, str) else a for a in type_args]
+    safe = [p.replace('[', '').replace(']', '').replace(',', '_') for p in parts]
+    return name + '__' + '_'.join(safe) if safe else name
+
+
+
 class TypeChecker:
     def __init__(self):
         self.funcs = {}
@@ -1330,14 +1412,16 @@ class TypeChecker:
         return t.name
 
     def compute_satisfaction(self, prog):
-        """Determine which (trait, struct) pairs are satisfied by structural matching."""
-        self.sigs = {
-            sig.name: [
+        """Structural trait satisfaction. Generic traits: subst type params with concrete type."""
+        self.generic_traits = {sig.name: sig for sig in prog.sigs if getattr(sig, 'type_params', None)}
+        self.sigs = {}
+        for sig in prog.sigs:
+            if getattr(sig, 'type_params', None):
+                continue  # specialized views filled below
+            self.sigs[sig.name] = [
                 (m[0], [self._type_name(p.typ) for p in m[1]], self._type_name(m[2]))
                 for m in sig.methods
             ]
-            for sig in prog.sigs
-        }
         self.methods = {
             (m.receiver, m.name): (
                 [self._type_name(p.typ) for p in m.params],
@@ -1345,30 +1429,71 @@ class TypeChecker:
             )
             for m in prog.methods
         }
-        self.satisfied = set()
+        self.satisfied = set()  # (trait_name, struct) or (trait_name, (args...), struct)
+
+        def matches(struct_name, sig_methods):
+            for mname, mparams, mret in sig_methods:
+                key = (struct_name, mname)
+                if key not in self.methods:
+                    return False
+                mp, mr = self.methods[key]
+                if mp != mparams or mr != mret:
+                    return False
+            return True
+
+        concrete_recs = [r for r in prog.recs if not getattr(r, 'type_params', None)]
+        # Non-generic traits
         for sig_name, sig_methods in self.sigs.items():
-            for rec in prog.recs:
-                struct_name = rec.name
-                ok = True
-                for mname, mparams, mret in sig_methods:
-                    key = (struct_name, mname)
-                    if key not in self.methods:
-                        ok = False
-                        break
-                    mp, mr = self.methods[key]
-                    if mp != mparams or mr != mret:
-                        ok = False
-                        break
-                if ok:
-                    self.satisfied.add((sig_name, struct_name))
+            for rec in concrete_recs:
+                if matches(rec.name, sig_methods):
+                    self.satisfied.add((sig_name, rec.name))
+
+        # Generic traits: for each concrete type C, try Eq[C] etc.
+        for sig in prog.sigs:
+            tps = getattr(sig, 'type_params', None) or []
+            if not tps:
+                continue
+            for rec in concrete_recs:
+                # Default: all type params map to the candidate type (Eq[T] for T=Point)
+                if len(tps) == 1:
+                    mapping = {tps[0]: rec.name}
+                else:
+                    # Multi-param traits: only auto-try when all params equal candidate
+                    mapping = {tp: rec.name for tp in tps}
+                sig_methods = []
+                for mname, params, ret in sig.methods:
+                    ps = []
+                    for p in params:
+                        if p.typ is not None:
+                            ps.append(self._type_name(_subst_type_node(p.typ, mapping)))
+                        else:
+                            ps.append('i64')
+                    rt = self._type_name(_subst_type_node(ret, mapping)) if ret else 'i64'
+                    sig_methods.append((mname, ps, rt))
+                if matches(rec.name, sig_methods):
+                    args = tuple(mapping[tp] for tp in tps)
+                    mangled = _mangle_generic(sig.name, list(args))
+                    self.sigs[mangled] = sig_methods
+                    self.satisfied.add((sig.name, args, rec.name))
+                    self.satisfied.add((mangled, rec.name))  # also as specialized name
 
     def check_program(self, prog):
+        self.prog = prog
         self.compute_satisfaction(prog)
-        self.recs = {r.name: {n: (self._type_name(t) if t else 'i64') for n, t in r.fields} for r in prog.recs}
-        self.enums = {
-            e.name: {v.name: [self._type_name(t) for t in v.fields] for v in e.variants}
-            for e in prog.enums
-        }
+        self.recs = {}
+        self.generic_recs = {}
+        for r in prog.recs:
+            if getattr(r, 'type_params', None):
+                self.generic_recs[r.name] = r
+            else:
+                self.recs[r.name] = {n: (self._type_name(t) if t else 'i64') for n, t in r.fields}
+        self.enums = {}
+        self.generic_enums = {}
+        for e in prog.enums:
+            if getattr(e, 'type_params', None):
+                self.generic_enums[e.name] = e
+            else:
+                self.enums[e.name] = {v.name: [self._type_name(t) for t in v.fields] for v in e.variants}
         self.fixes = {}
         for c in getattr(prog, 'fixes', []) or []:
             if c.typ is not None:
@@ -1376,7 +1501,18 @@ class TypeChecker:
             else:
                 self.fixes[c.name] = self.check(c.value)
         self.overloads = {}  # name -> [(param_types, ret)]
+        self.generic_fns = {}  # name -> FnDecl with type_params
+        # generic_recs / generic_enums already filled above from prog
+        if not hasattr(self, 'generic_recs'):
+            self.generic_recs = {}
+        if not hasattr(self, 'generic_enums'):
+            self.generic_enums = {}
+        self.specialized = {}  # mangled -> FnDecl / rec / en
         for f in prog.funcs:
+            if getattr(f, 'type_params', None):
+                self.generic_fns[f.name] = f
+                # Template: do not register concrete overload yet
+                continue
             ats = [_norm_type_name(p.typ) if p.typ else 'i64' for p in f.params]
             ret = _norm_type_name(f.ret) if f.ret else 'i64'
             existing = self.overloads.setdefault(f.name, [])
@@ -1390,6 +1526,8 @@ class TypeChecker:
                 existing.append((ats, ret))
             self.funcs[f.name] = (ats, ret)  # last wins for simple lookup
         for f in prog.funcs:
+            if getattr(f, 'type_params', None):
+                continue  # check specialized clones on demand
             self.current_fn = f.name
             self.current_ret = _norm_type_name(f.ret) if f.ret else 'i64'
             self.env = {
@@ -1408,6 +1546,168 @@ class TypeChecker:
             self.current_ret = None
             self.check(prog.toplevel)
         return self.errors
+    def _type_arg_from_expr(self, e):
+        """Type argument written as id[i64] or id[str] — Var name is the type."""
+        if isinstance(e, Var):
+            return e.name
+        if isinstance(e, ListLit):
+            return [_type_node_name(self._type_arg_from_expr(x)) for x in e.items]
+        if isinstance(e, StrLit):
+            return 'str'
+        return 'i64'
+
+    def specialize_generic(self, name: str, type_args: list, prog=None):
+        """Clone generic fn with type_params substituted; register and typecheck."""
+        g = self.generic_fns.get(name)
+        if not g:
+            return None
+        if len(type_args) != len(g.type_params):
+            self.errors.append(
+                f"type error: '{name}' expects {len(g.type_params)} type arg(s), got {len(type_args)}"
+            )
+            return None
+        mapping = {tp: _type_node_name(ta) for tp, ta in zip(g.type_params, type_args)}
+        mangled = _mangle_generic(name, list(mapping.values()))
+        if mangled in self.funcs:
+            return mangled
+        # Deep-copy declaration and substitute TypeNodes
+        nf = copy.deepcopy(g)
+        nf.name = mangled
+        nf.type_params = []
+        for p in nf.params:
+            if p.typ is not None:
+                p.typ = _subst_type_node(p.typ, mapping)
+        if nf.ret is not None:
+            nf.ret = _subst_type_node(nf.ret, mapping)
+        # Walk body TypeNodes on annotations (LetExpr.typ etc.) — best effort
+        def walk(e):
+            if e is None:
+                return
+            if isinstance(e, LetExpr) and e.typ is not None:
+                e.typ = _subst_type_node(e.typ, mapping)
+            for attr in ('body', 'value', 'cond', 'then', 'els', 'left', 'right', 'expr', 'subject'):
+                if hasattr(e, attr):
+                    walk(getattr(e, attr))
+            if hasattr(e, 'stmts'):
+                for st in e.stmts:
+                    walk(st)
+            if hasattr(e, 'args'):
+                for a in e.args:
+                    walk(a)
+            if hasattr(e, 'items'):
+                for it in e.items:
+                    walk(it)
+        walk(nf.body)
+        ats = [_norm_type_name(p.typ) if p.typ else 'i64' for p in nf.params]
+        ret = _norm_type_name(nf.ret) if nf.ret else 'i64'
+        self.funcs[mangled] = (ats, ret)
+        self.overloads.setdefault(mangled, []).append((ats, ret))
+        self.specialized[mangled] = nf
+        if prog is not None and not any(f.name == mangled for f in prog.funcs):
+            prog.funcs.append(nf)
+        # Typecheck specialized body
+        old_fn, old_ret, old_env = self.current_fn, self.current_ret, self.env
+        self.current_fn = mangled
+        self.current_ret = ret
+        self.env = {p.name: (_norm_type_name(p.typ) if p.typ else 'i64') for p in nf.params}
+        body_t = self.check(nf.body)
+        if body_t and not _types_compatible(ret, body_t):
+            self.errors.append(
+                f"type error: function '{mangled}' returns '{ret}' but body yields '{body_t}'"
+            )
+        self.current_fn, self.current_ret, self.env = old_fn, old_ret, old_env
+        return mangled
+
+    def specialize_rec(self, name: str, type_args: list, prog=None):
+        g = self.generic_recs.get(name)
+        if not g:
+            return None
+        if len(type_args) != len(g.type_params):
+            self.errors.append(
+                f"type error: '{name}' expects {len(g.type_params)} type arg(s), got {len(type_args)}"
+            )
+            return None
+        mapping = {tp: _type_node_name(ta) for tp, ta in zip(g.type_params, type_args)}
+        mangled = _mangle_generic(name, list(mapping.values()))
+        if mangled in self.recs:
+            return mangled
+        nr = copy.deepcopy(g)
+        nr.name = mangled
+        nr.type_params = []
+        fields = []
+        for fname, ft in nr.fields:
+            fields.append((fname, _subst_type_node(ft, mapping)))
+        nr.fields = fields
+        self.recs[mangled] = {n: (self._type_name(t) if t else 'i64') for n, t in nr.fields}
+        self.specialized[mangled] = nr
+        if prog is not None and not any(r.name == mangled for r in prog.recs):
+            prog.recs.append(nr)
+        return mangled
+
+    def specialize_enum(self, name: str, type_args: list, prog=None):
+        g = self.generic_enums.get(name)
+        if not g:
+            return None
+        if len(type_args) != len(g.type_params):
+            self.errors.append(
+                f"type error: '{name}' expects {len(g.type_params)} type arg(s), got {len(type_args)}"
+            )
+            return None
+        mapping = {tp: _type_node_name(ta) for tp, ta in zip(g.type_params, type_args)}
+        mangled = _mangle_generic(name, list(mapping.values()))
+        if mangled in self.enums:
+            return mangled
+        ne = copy.deepcopy(g)
+        ne.name = mangled
+        ne.type_params = []
+        for v in ne.variants:
+            v.fields = [_subst_type_node(t, mapping) for t in v.fields]
+        self.enums[mangled] = {v.name: [self._type_name(t) for t in v.fields] for v in ne.variants}
+        self.specialized[mangled] = ne
+        if prog is not None and not any(e.name == mangled for e in prog.enums):
+            prog.enums.append(ne)
+        return mangled
+
+
+    def _infer_generic_args(self, g, arg_types):
+        mapping = {}
+        def bind(tp, concrete):
+            if tp not in g.type_params:
+                return True
+            if tp in mapping and mapping[tp] != concrete:
+                self.errors.append(
+                    f"type error: cannot infer '{tp}' as both '{mapping[tp]}' and '{concrete}'"
+                )
+                return False
+            mapping[tp] = concrete
+            return True
+        for p, at in zip(g.params, arg_types):
+            if p.typ is None:
+                continue
+            t = p.typ
+            if isinstance(t, TypeNode) and t.name == 'list' and t.args:
+                inner = _type_node_name(t.args[0])
+                atn = at[5:] if isinstance(at, str) and at.startswith('list_') else ('i64' if at in ('list', 'List', 'list_i64') else at)
+                if at in ('list', 'List', 'list_i64'):
+                    atn = 'i64'
+                elif isinstance(at, str) and at.startswith('list_'):
+                    atn = at[5:]
+                if not bind(inner, atn):
+                    return None
+            else:
+                tn = _type_node_name(t)
+                if not bind(tn, at):
+                    return None
+        if len(mapping) != len(g.type_params):
+            # incomplete inference
+            missing = [t for t in g.type_params if t not in mapping]
+            self.errors.append(
+                f"type error: cannot infer type args for '{g.name}' (need explicit {g.name}[{', '.join(g.type_params)}](...); missing {missing})"
+            )
+            return None
+        return [mapping[t] for t in g.type_params]
+
+
     def check(self, e):
         if isinstance(e, (IntLit,)): return 'i64'
         if isinstance(e, BoolLit): return 'bool'
@@ -1438,8 +1738,22 @@ class TypeChecker:
             return 'list_i64'
         if isinstance(e, RecordLit):
             for _, v in e.fields: self.check(v)
+            # Box[i64] { ... } — Index ctor
+            if isinstance(e.ctor, Index) and isinstance(e.ctor.coll, Var):
+                n = e.ctor.coll.name
+                if n in getattr(self, 'generic_recs', {}):
+                    raw = self._type_arg_from_expr(e.ctor.idx)
+                    targs = raw if isinstance(raw, list) else [raw]
+                    mangled = self.specialize_rec(n, targs, getattr(self, 'prog', None))
+                    if mangled:
+                        e.ctor = Var(mangled)
+                        return mangled
             if isinstance(e.ctor, Var) and e.ctor.name in self.recs:
                 return e.ctor.name
+            if isinstance(e.ctor, Var) and e.ctor.name in getattr(self, 'generic_recs', {}):
+                self.errors.append(
+                    f"type error: '{e.ctor.name}' is generic; use {e.ctor.name}[T] {{ ... }}"
+                )
             return 'i64'
         if isinstance(e, Var):
             if e.name in self.env: return self.env[e.name]
@@ -1455,6 +1769,15 @@ class TypeChecker:
             self.errors.append(f"unknown name '{e.name}'")
             return 'i64'
         if isinstance(e, Member):
+            # Opt[i64].None / Opt[i64].Some — specialize generic enum
+            if isinstance(e.obj, Index) and isinstance(e.obj.coll, Var):
+                n = e.obj.coll.name
+                if n in getattr(self, 'generic_enums', {}):
+                    raw = self._type_arg_from_expr(e.obj.idx)
+                    targs = raw if isinstance(raw, list) else [raw]
+                    mangled = self.specialize_enum(n, targs, getattr(self, 'prog', None))
+                    if mangled:
+                        e.obj = Var(mangled)
             if isinstance(e.obj, Var) and e.obj.name in self.enums:
                 if e.field in self.enums[e.obj.name]:
                     return e.obj.name
@@ -1530,19 +1853,52 @@ class TypeChecker:
                     f"type error: bare ret is i64 but function '{fn}' returns '{self.current_ret}'"
                 )
             return 'i64'
-        if isinstance(e, Call) and isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name in self.enums:
-            for a in e.args:
-                self.check(a)
-            return e.func.obj.name
+        if isinstance(e, Call) and isinstance(e.func, Member):
+            # Opt[i64].Some(x)
+            if isinstance(e.func.obj, Index) and isinstance(e.func.obj.coll, Var):
+                n = e.func.obj.coll.name
+                if n in getattr(self, 'generic_enums', {}):
+                    raw = self._type_arg_from_expr(e.func.obj.idx)
+                    targs = raw if isinstance(raw, list) else [raw]
+                    mangled = self.specialize_enum(n, targs, getattr(self, 'prog', None))
+                    if mangled:
+                        e.func.obj = Var(mangled)
+                        for a in e.args:
+                            self.check(a)
+                        return mangled
+            if isinstance(e.func.obj, Var) and e.func.obj.name in self.enums:
+                for a in e.args:
+                    self.check(a)
+                return e.func.obj.name
         if isinstance(e, Call):
             # Resolve callee before checking args for better messages
             if isinstance(e.func, Var):
                 n = e.func.name
                 builtins = {'pr','len','json','env','str','push','substr','arg','keys','values',
-                            'has','up','low','trim','split','join','parse','starts','ends','map'}
-                if n not in self.funcs and n not in builtins and n not in self.env:
+                            'has','up','low','trim','split','join','parse','starts','ends','map','fmt'}
+                if (n not in self.funcs and n not in builtins and n not in self.env
+                        and n not in getattr(self, 'generic_fns', {})):
                     self.errors.append(f"unknown function '{n}'")
             arg_types = [self.check(a) for a in e.args]
+            # Generic call: id[i64](x) or id[A,B](…) via Index, or infer id(x)
+            if isinstance(e.func, Index) and isinstance(e.func.coll, Var):
+                n = e.func.coll.name
+                if n in getattr(self, 'generic_fns', {}):
+                    raw = self._type_arg_from_expr(e.func.idx)
+                    targs = raw if isinstance(raw, list) else [raw]
+                    mangled = self.specialize_generic(n, targs, getattr(self, "prog", None))
+                    if mangled:
+                        e.func = Var(mangled)  # rewrite for codegen
+                        n = mangled
+            elif isinstance(e.func, Var):
+                n = e.func.name
+                if n in getattr(self, 'generic_fns', {}):
+                    targs = self._infer_generic_args(self.generic_fns[n], arg_types)
+                    if targs:
+                        mangled = self.specialize_generic(n, targs, getattr(self, "prog", None))
+                        if mangled:
+                            e.func = Var(mangled)
+                            n = mangled
             if isinstance(e.func, Var):
                 n = e.func.name
                 overs = getattr(self, 'overloads', {}).get(n) or []
@@ -1558,7 +1914,18 @@ class TypeChecker:
                     return resolved[2]
                 if n in self.funcs:
                     return self.funcs[n][1]
+                # Builtins handled without treating the name as a value binding
+                if n == 'fmt':
+                    return 'str'
+                if n == 'pr':
+                    return 'i64'
             self.check(e.func)
+            # Method call: recv.meth(...) — return type from method table
+            if isinstance(e.func, Member):
+                recv_t = self.check(e.func.obj)
+                key = (recv_t, e.func.field)
+                if key in getattr(self, 'methods', {}):
+                    return self.methods[key][1]
             if isinstance(e.func, Var) and e.func.name == 'push' and e.args:
                 return self.check(e.args[0])
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
@@ -1874,7 +2241,11 @@ static List list_new(int64_t n) {
   return L;
 }
 static int64_t list_get(List L, int64_t i) {
-  if (i < 0 || i >= L.n) { fprintf(stderr, "index out of bounds\n"); exit(1); }
+  if (i < 0 || i >= L.n) {
+    fprintf(stderr, "index out of bounds: index %lld len %lld\n",
+            (long long)i, (long long)L.n);
+    exit(1);
+  }
   return L.d[i];
 }
 static int64_t list_len(List L) { return L.n; }
@@ -2072,7 +2443,11 @@ static List_str list_push_str(List_str L, const char* v) {
 }
 static int64_t list_len_str(List_str L) { return L.n; }
 static const char* list_get_str(List_str L, int64_t i) {
-  if (i < 0 || i >= L.n) { fprintf(stderr, "index out of bounds\n"); exit(1); }
+  if (i < 0 || i >= L.n) {
+    fprintf(stderr, "index out of bounds: index %lld len %lld\n",
+            (long long)i, (long long)L.n);
+    exit(1);
+  }
   return L.d[i] ? L.d[i] : "";
 }
 
@@ -2098,7 +2473,9 @@ static List_##Name list_push_##Name(List_##Name L, CType v) { \
 } \
 static int64_t list_len_##Name(List_##Name L) { return L.n; } \
 static CType list_get_##Name(List_##Name L, int64_t i) { \
-  if (i < 0 || i >= L.n) { fprintf(stderr, "index out of bounds\n"); exit(1); } \
+  if (i < 0 || i >= L.n) { \
+    fprintf(stderr, "index out of bounds: index %lld len %lld\n", (long long)i, (long long)L.n); \
+    exit(1); } \
   return L.d[i]; \
 } \
 static List_##Name list_concat_##Name(List_##Name a, List_##Name b) { \
@@ -3139,6 +3516,25 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     item_type = collection_type[5:]
                     return f"list_push_{item_type}({collection}, {value})", collection_type
                 return f"list_push_i64({collection}, {value})", 'list_i64'
+            if isinstance(e.func, Var) and e.func.name == 'fmt':
+                # fmt(a, b, ...) — concatenate with auto-stringify (minimal format helper)
+                if not e.args:
+                    return '""', 'str'
+                parts = []
+                for a in e.args:
+                    code, t = self.gen_expr(a)
+                    if t == 'str':
+                        parts.append(code)
+                    elif t == 'bool':
+                        parts.append(f'str_from_bool({code})')
+                    elif t in ('f32', 'float', 'f64', 'double'):
+                        parts.append(f'str_from_i64((int64_t)({code}))')  # coarse; prefer i64 path
+                    else:
+                        parts.append(f'str_from_i64((int64_t)({code}))')
+                expr = parts[0]
+                for p2 in parts[1:]:
+                    expr = f'str_concat({expr}, {p2})'
+                return expr, 'str'
             if isinstance(e.func, Var) and e.func.name == 'pr':
                 a, at = self.gen_expr(e.args[0])
                 if at == 'str':
@@ -3821,23 +4217,33 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         self.emit()
 
     def generate(self, prog: Program, source_path: Optional[str] = None, as_lib: bool = False, skip_runtime: bool = False) -> str:
-        self.record_field_types = {r.name: {n: self.type_name(t) for n, t in r.fields} for r in prog.recs}
-        # enum_values: name -> {variant: (tag, [field_type_names])}
+        # Skip generic templates; specialized clones (Box__i64) are concrete
+        self.record_field_types = {
+            r.name: {n: self.type_name(t) for n, t in r.fields}
+            for r in prog.recs if not getattr(r, 'type_params', None)
+        }
         self.enum_values = {
             e.name: {
                 v.name: (i, [self.type_name(t) for t in v.fields])
                 for i, v in enumerate(e.variants)
             }
-            for e in prog.enums
+            for e in prog.enums if not getattr(e, 'type_params', None)
         }
         self.enum_has_data = {
             e.name: any(len(v.fields) > 0 for v in e.variants)
-            for e in prog.enums
+            for e in prog.enums if not getattr(e, 'type_params', None)
         }
         self.method_names = {}
         self.method_returns = {}
-        self.interface_methods = {sig.name: [m[0] for m in sig.methods] for sig in prog.sigs}
-        self.interface_method_returns = {(sig.name, m[0]): self.type_name(m[2]) if m[2] else 'i64' for sig in prog.sigs for m in sig.methods}
+        self.interface_methods = {
+            sig.name: [m[0] for m in sig.methods]
+            for sig in prog.sigs if not getattr(sig, 'type_params', None)
+        }
+        self.interface_method_returns = {
+            (sig.name, m[0]): self.type_name(m[2]) if m[2] else 'i64'
+            for sig in prog.sigs if not getattr(sig, 'type_params', None)
+            for m in sig.methods
+        }
         # Top-level fix constants: register types in env for later expressions
         self.const_decls = list(getattr(prog, 'fixes', []) or [])
         for c in self.const_decls:
@@ -3872,6 +4278,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         self.func_return_types = {}
         self.overloads = {}  # name -> [(param_types, cname, ret)]
         for f in funcs:
+            if getattr(f, 'type_params', None):
+                continue
             pts = [_norm_type_name(p.typ) if p.typ else 'i64' for p in f.params]
             ret = _norm_type_name(f.ret) if f.ret else 'i64'
             if name_counts[f.name] > 1:
@@ -3908,6 +4316,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 out.append(f'static {self.c_type(vt)} {c.name} = {val_c};')
             out.append('')
         for sig in prog.sigs:
+            if getattr(sig, 'type_params', None):
+                continue
             fields = ["  void* value;"]
             for name, _, _ in sig.methods:
                 fields.append(f"  void* (*{name})(void*);")
@@ -3928,6 +4338,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         }
         satisfied = set()
         for sig in prog.sigs:
+            if getattr(sig, 'type_params', None):
+                continue
             sig_methods = [
                 (m[0], [type_name(p.typ) for p in m[1]], type_name(m[2]))
                 for m in sig.methods
@@ -3969,9 +4381,11 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                         f"  return out;\n"
                         f"}}\n"
                     )
-        for rec in prog.recs:
+        concrete_recs = [r for r in prog.recs if not getattr(r, 'type_params', None)]
+        concrete_enums = [e for e in prog.enums if not getattr(e, 'type_params', None)]
+        for rec in concrete_recs:
             out.append(f"typedef struct {rec.name} {rec.name};")
-        for en in prog.enums:
+        for en in concrete_enums:
             has_data = any(len(v.fields) > 0 for v in en.variants)
             if not has_data:
                 out.append(f"typedef enum {{")
@@ -3996,11 +4410,11 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 out.append(f"  }} u;")
                 out.append(f"}};")
                 out.append("")
-        for rec in prog.recs:
+        for rec in concrete_recs:
             out.append(f"typedef struct {{ {rec.name} *d; int64_t n; int64_t cap; }} List_{rec.name};")
-        if prog.recs:
+        if concrete_recs:
             out.append("")
-        for rec in prog.recs:
+        for rec in concrete_recs:
             fields = []
             for name, typ in rec.fields:
                 fields.append(f"  {self.c_type(self.type_name(typ))} {name};")
@@ -4009,13 +4423,17 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 out.extend(fields)
                 out.append("};")
                 out.append("")
-        for rec in prog.recs:
+        for rec in concrete_recs:
             out.append(self.typed_db_code(rec))
             out.append(self.record_print_code(rec))
             out.append(self.record_json_code(rec))
         # emit generated fit methods after record declarations so their receiver type is known
         for f in funcs:
-            cname = getattr(f, '_c_name', None) or self.known[f.name]
+            if getattr(f, 'type_params', None):
+                continue
+            cname = getattr(f, '_c_name', None) or self.known.get(f.name)
+            if not cname:
+                continue
             pcs = []
             for p in f.params:
                 tn = self.type_name(p.typ) if p.typ else 'i64'
@@ -4032,6 +4450,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         for f in funcs:
             if getattr(f, 'external_lib', False):
                 continue
+            if getattr(f, 'type_params', None):
+                continue  # generic template — only specialized clones are emitted
             self.gen_fn(f)
         out.extend(self.extra)
         out.extend(self.lines)
@@ -4775,7 +5195,16 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
                  "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value", "-Wno-parentheses"],
                 capture_output=True, text=True)
             if r.returncode != 0:
-                print("C compile failed:", file=sys.stderr); print(r.stderr, file=sys.stderr); return 1
+                print("C compile failed:", file=sys.stderr)
+                err = (r.stderr or r.stdout or "").strip()
+                if err:
+                    # First real error line for quicker scan
+                    for line in err.splitlines():
+                        if "error:" in line.lower():
+                            print(line, file=sys.stderr)
+                            break
+                    print(err, file=sys.stderr)
+                return 1
             cmd_l = [cc, "-O0", "-std=c11", "-o", gcc_out, main_obj] + link_objs
             if sys.platform == "win32":
                 cmd_l.extend(["-lws2_32", "-mconsole"])
@@ -4792,7 +5221,16 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
                 cmd.extend(["-lws2_32", "-mconsole"])
             r = subprocess.run(cmd, capture_output=True, text=True)
             if r.returncode != 0:
-                print("C compile failed:", file=sys.stderr); print(r.stderr, file=sys.stderr); return 1
+                print("C compile failed:", file=sys.stderr)
+                err = (r.stderr or r.stdout or "").strip()
+                if err:
+                    # First real error line for quicker scan
+                    for line in err.splitlines():
+                        if "error:" in line.lower():
+                            print(line, file=sys.stderr)
+                            break
+                    print(err, file=sys.stderr)
+                return 1
 
         if sys.platform == "win32" and gcc_out != out_bin and os.path.exists(gcc_out):
             shutil.copy2(gcc_out, out_bin)
@@ -4801,6 +5239,10 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
         if not keep_c:
             try: os.remove(c_file)
             except OSError: pass
+        try:
+            os.chmod(out_bin, 0o755)
+        except OSError:
+            pass
         if verbose: print(f"Compiled -> {out_bin}")
         return 0
     except SyntaxError as e:

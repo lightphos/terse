@@ -1,0 +1,21 @@
+// Stranger quickstart: values, loop, list, function, print
+//   python3 compiler/tersec.py build src/quickstart.te -o out/quickstart && ./out/quickstart
+
+fn sum(xs: [i64]) -> i64 {
+  var total = 0
+  lp i = 0; i < len(xs); i = i + 1 {
+    total = total + xs[i]
+  }
+  ret total
+}
+
+go {
+  val xs = [10, 20, 30]
+  pr(fmt("len=", len(xs), " sum=", sum(xs)))
+  if sum(xs) > 50 {
+    pr("big enough")
+    ret 0
+  } 
+
+  pr("small")
+}

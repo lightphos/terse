@@ -1,0 +1,7 @@
+use std.tst
+use gen
+
+fn t_generic_first() {
+  val xs = [10, 20, 30]
+  tst.eq(gen.first(xs), 10)
+}

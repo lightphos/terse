@@ -1,0 +1,27 @@
+// Generic rec + en (monomorphized)
+//   python3 compiler/tersec.py build src/generic_rec_en.te -o out/generic_rec_en
+
+rec Box[T] {
+  value: T
+}
+
+en Opt[T] {
+  Some(T),
+  None
+}
+
+fn id[T](x: T) -> T = x
+
+go {
+  val b = Box[i64] { value: 7 }
+  pr(fmt("box=", b.value))
+
+  val o = Opt[i64].Some(3)
+  // specialized name is Opt__i64 after monomorphize
+  if o {
+    Opt__i64.Some(x) => pr(fmt("some=", x))
+    Opt__i64.None => pr("none")
+  }
+
+  pr(id(42))
+}

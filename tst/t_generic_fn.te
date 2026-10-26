@@ -1,0 +1,18 @@
+use std.tst
+
+fn id[T](x: T) -> T = x
+
+fn first[T](xs: [T]) -> T = xs[0]
+
+fn t_id_i64() {
+  tst.eq(id(42), 42)
+}
+
+fn t_id_str() {
+  tst.eq(id[str]("hi"), "hi")
+}
+
+fn t_first() {
+  val xs = [10, 20, 30]
+  tst.eq(first(xs), 10)
+}

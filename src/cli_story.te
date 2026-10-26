@@ -1,0 +1,15 @@
+// Small CLI story: argv + env + fmt
+//   python3 compiler/tersec.py build src/cli_story.te -o out/cli_story
+//   ./out/cli_story Alice
+//   GREETING=Hi ./out/cli_story Bob
+//
+// arg(0) = program name, arg(1) = first user argument.
+// env("KEY") reads the process environment ("" if missing).
+
+go {
+  val who = arg(1)
+  val name = len(who) > 0 ? who : "world"
+  val greet = env("GREETING")
+  val prefix = len(greet) > 0 ? greet : "hello"
+  pr(fmt(prefix, ", ", name))
+}
