@@ -1,0 +1,30 @@
+// Demo: HTTP server via lib/http on sock.*
+//   python3 compiler/tersec.py build src/http_srv_demo.te -o out/http_srv_demo -f
+//   ./out/http_srv_demo
+//
+// Checks:
+//   curl -s http://127.0.0.1:8765/
+//   curl -s http://127.0.0.1:8765/api
+//   curl -s -X POST -d 'hello' http://127.0.0.1:8765/echo
+//   curl -s -X POST -H 'Content-Type: application/json' -d '{"n":1}' http://127.0.0.1:8765/echo
+
+use http
+
+fn handle(r: Req) -> Res {
+  if r.method == "GET" && r.path == "/" {
+    ret http.success("hello world\n", "text/plain; charset=utf-8")
+  }
+  if r.method == "GET" && r.path == "/api" {
+    ret http.success("{\"ok\":true}\n", "application/json; charset=utf-8")
+  }
+  // POST /echo — return the request body
+  if r.method == "POST" && r.path == "/echo" {
+    ret http.success(r.body + "\n", "text/plain; charset=utf-8")
+  }
+  ret http.fail(Status.not_found, "not found\n", "text/plain; charset=utf-8")
+}
+
+go {
+  pr("starting on :8765 (GET /, /api  POST /echo)")
+  http.srv(8765, handle)
+}

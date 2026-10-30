@@ -76,7 +76,7 @@ class Lexer:
         while self.p() not in '"\0':
             if self.p()=='\\':
                 self.adv(); e=self.adv()
-                s += {'n':'\n','t':'\t','"':'"','\\':'\\'}.get(e, e)
+                s += {'n':'\n','r':'\r','t':'\t','"':'"','\\':'\\'}.get(e, e)
             else: s+=self.adv()
         if self.p()=='"': self.adv()
         return Tok(TT.STRING, s, ln, cl)
@@ -261,6 +261,7 @@ class RecordLit(Expr):
 class EnumVariantDecl:
     name: str
     fields: List[TypeNode] = field(default_factory=list)  # empty = tag-only
+    value: Optional[int] = None  # explicit discriminant, e.g. ok = 200
 
 @dataclass
 class EnumDecl:
@@ -1063,13 +1064,18 @@ class Parser:
         while not self.match(TT.RBRACE):
             vname = self.expect(TT.IDENT).v
             fields = []
-            if self.match(TT.LPAREN):
+            disc = None
+            if self.match(TT.ASSIGN):
+                self.adv()
+                tok = self.expect(TT.INT)
+                disc = int(tok.v)
+            elif self.match(TT.LPAREN):
                 self.adv()
                 while not self.match(TT.RPAREN):
                     fields.append(self.parse_type())
                     if self.match(TT.COMMA): self.adv()
                 self.expect(TT.RPAREN)
-            variants.append(EnumVariantDecl(vname, fields))
+            variants.append(EnumVariantDecl(vname, fields, value=disc))
             if self.match(TT.COMMA): self.adv()
         self.expect(TT.RBRACE)
         return EnumDecl(name, variants, type_params=type_params)
@@ -1254,6 +1260,30 @@ _TYPE_ALIASES = {
     'float': 'f32', 'double': 'f64',
     'List': 'list', 'String': 'str',
 }
+
+def _fn_type_tag(t) -> str:
+    """Encode TypeNode fn(A,B)->R as fn:A,B>R for env / codegen."""
+    if t is None:
+        return 'i64'
+    if isinstance(t, str):
+        return t
+    if getattr(t, 'name', None) == 'fn':
+        args = list(t.args or [])
+        if not args:
+            return 'fn:>i64'
+        if len(args) == 1:
+            params, ret = [], args[0]
+        else:
+            params, ret = args[:-1], args[-1]
+        def _nm(x):
+            if isinstance(x, str):
+                return x
+            return x.name if hasattr(x, 'name') else 'i64'
+        ps = ",".join(_nm(p) for p in params)
+        return f"fn:{ps}>{_nm(ret)}"
+    if hasattr(t, 'name'):
+        return t.name
+    return 'i64'
 
 def _norm_type_name(t) -> str:
     """Normalize a TypeNode or type name string for overload matching."""
@@ -1531,7 +1561,11 @@ class TypeChecker:
             self.current_fn = f.name
             self.current_ret = _norm_type_name(f.ret) if f.ret else 'i64'
             self.env = {
-                p.name: (_norm_type_name(p.typ) if p.typ else 'i64') for p in f.params
+                p.name: (
+                    _fn_type_tag(p.typ) if p.typ and getattr(p.typ, 'name', None) == 'fn'
+                    else (_norm_type_name(p.typ) if p.typ else 'i64')
+                )
+                for p in f.params
             }
             body_t = self.check(f.body)
             if body_t and not _types_compatible(self.current_ret, body_t):
@@ -1764,7 +1798,7 @@ class TypeChecker:
                 'keys','values','has','up','low','trim','split','join',
                 'parse','starts','ends','map'
             ): return 'fn'
-            if e.name in ('http','db','tst','fs','gcc','io','str'): return 'mod'
+            if e.name in ('http','db','tst','fs','gcc','io','str','sock'): return 'mod'
             # Unknown identifier — report so host fails before C compile
             self.errors.append(f"unknown name '{e.name}'")
             return 'i64'
@@ -1946,6 +1980,15 @@ class TypeChecker:
                     return 'i64'
                 if f == 'len':
                     return 'i64'
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'http' and e.func.field == 'serve':
+                return 'i64'
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'sock':
+                if e.func.field in ('listen', 'accept', 'send', 'close'):
+                    return 'i64'
+                if e.func.field == 'recv':
+                    return 'str'
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'gcc' and e.func.field == 'compile':
                 return 'i64'
@@ -2233,6 +2276,100 @@ typedef struct sqlite3_stmt sqlite3_stmt;
   static void sock_init(void) {}
   static void sock_fini(void) {}
 #endif
+
+/* --- basic TCP sockets (host surface; HTTP lives in lib/http.te) --- */
+static int64_t sock_listen(int64_t port) {
+  sock_init();
+#ifndef _WIN32
+  signal(SIGPIPE, SIG_IGN);
+#endif
+  sock_t srv = socket(AF_INET, SOCK_STREAM, 0);
+  if (srv == (sock_t)SOCK_ERR) { fprintf(stderr, "sock.listen: socket failed\n"); exit(1); }
+  int yes = 1;
+  setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes));
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  addr.sin_port = htons((uint16_t)port);
+  if (bind(srv, (struct sockaddr*)&addr, sizeof(addr)) == SOCK_ERR) {
+    fprintf(stderr, "sock.listen: bind failed on :%lld\n", (long long)port); exit(1);
+  }
+  if (listen(srv, 64) == SOCK_ERR) {
+    fprintf(stderr, "sock.listen: listen failed\n"); exit(1);
+  }
+  fprintf(stderr, "sock.listen on :%lld\n", (long long)port);
+  return (int64_t)(intptr_t)srv;
+}
+static int64_t sock_accept(int64_t listen_fd) {
+  sock_t srv = (sock_t)(intptr_t)listen_fd;
+  sock_t cli = accept(srv, NULL, NULL);
+  if (cli == (sock_t)SOCK_ERR) return INT64_C(-1);
+  return (int64_t)(intptr_t)cli;
+}
+static char* sock_recv(int64_t fd) {
+  sock_t s = (sock_t)(intptr_t)fd;
+  /* short timeouts so a stalled client cannot hang the accept loop forever */
+#ifdef _WIN32
+  DWORD tv = 5000;
+  setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+  setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+#else
+  struct timeval tv;
+  tv.tv_sec = 5; tv.tv_usec = 0;
+  setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+  setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+#endif
+  char buf[65536];
+  int n = 0;
+  /* read until end of HTTP headers (\r\n\r\n) or buffer full */
+  while (n < (int)sizeof(buf) - 1) {
+    int got = (int)recv(s, buf + n, sizeof(buf) - 1 - n, 0);
+    if (got <= 0) break;
+    n += got;
+    buf[n] = 0;
+    if (strstr(buf, "\r\n\r\n")) break;
+  }
+  if (n <= 0) { char* e = (char*)malloc(1); e[0]=0; return e; }
+  buf[n] = 0;
+  char* sep = strstr(buf, "\r\n\r\n");
+  int content_length = 0;
+  char* cl = strstr(buf, "Content-Length:");
+  if (cl) sscanf(cl, "Content-Length: %d", &content_length);
+  int header_length = sep ? (int)(sep - buf) + 4 : n;
+  while (sep && n < header_length + content_length && n < (int)sizeof(buf) - 1) {
+    int got = (int)recv(s, buf + n, sizeof(buf) - 1 - n, 0);
+    if (got <= 0) break;
+    n += got;
+    buf[n] = 0;
+  }
+  char* out = (char*)malloc((size_t)n + 1);
+  memcpy(out, buf, (size_t)n);
+  out[n] = 0;
+  return out;
+}
+static int64_t sock_send(int64_t fd, const char* data) {
+  sock_t s = (sock_t)(intptr_t)fd;
+  if (!data) data = "";
+  int n = (int)strlen(data);
+  int sent = 0;
+  while (sent < n) {
+    int k = (int)send(s, data + sent, (size_t)(n - sent), 0);
+    if (k <= 0) break;
+    sent += k;
+  }
+  return (int64_t)sent;
+}
+static int64_t sock_close(int64_t fd) {
+  sock_t s = (sock_t)(intptr_t)fd;
+#ifdef _WIN32
+  shutdown(s, SD_BOTH);
+#else
+  shutdown(s, SHUT_RDWR);
+#endif
+  CLOSESOCK(s);
+  return INT64_C(0);
+}
 
 typedef struct { int64_t *d; int64_t n; } List;
 
@@ -2913,12 +3050,73 @@ typedef const char* (*route_fn)(const char* method, const char* path, const char
 static void http_send(sock_t fd, int code, const char* ctype, const char* body) {
   char hdr[512];
   int blen = body ? (int)strlen(body) : 0;
-  const char* msg = code==200 ? "OK" : code==404 ? "Not Found" : "Error";
+  const char* msg =
+    code==200 ? "OK" : code==201 ? "Created" : code==204 ? "No Content" :
+    code==400 ? "Bad Request" : code==401 ? "Unauthorized" : code==403 ? "Forbidden" :
+    code==404 ? "Not Found" : code==405 ? "Method Not Allowed" : code==409 ? "Conflict" :
+    code==500 ? "Internal Server Error" : "Error";
   int n = snprintf(hdr, sizeof(hdr),
     "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
     code, msg, ctype, blen);
   send(fd, hdr, n, 0);
   if (body && blen) send(fd, body, blen, 0);
+}
+
+/* Handler returning status + body + content-type (for http.serve(port, fn)) */
+typedef struct { int64_t status; const char* body; const char* ctype; } HttpResC;
+typedef HttpResC (*http_res_fn)(const char* method, const char* path, const char* query, const char* body);
+
+static void http_serve_fn(int64_t port, http_res_fn handler) {
+  sock_init();
+#ifndef _WIN32
+  signal(SIGPIPE, SIG_IGN);
+#endif
+  sock_t srv = socket(AF_INET, SOCK_STREAM, 0);
+  if (srv == (sock_t)SOCK_ERR) { fprintf(stderr, "socket failed\n"); exit(1); }
+  int yes = 1;
+  setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes));
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  addr.sin_port = htons((uint16_t)port);
+  if (bind(srv, (struct sockaddr*)&addr, sizeof(addr)) == SOCK_ERR) {
+    fprintf(stderr, "bind failed\n"); exit(1);
+  }
+  if (listen(srv, 64) == SOCK_ERR) { fprintf(stderr, "listen failed\n"); exit(1); }
+  fprintf(stderr, "terse http listening on :%lld\n", (long long)port);
+  for (;;) {
+    sock_t cli = accept(srv, NULL, NULL);
+    if (cli == (sock_t)SOCK_ERR) continue;
+    char buf[65536];
+    int n = (int)recv(cli, buf, sizeof(buf)-1, 0);
+    if (n <= 0) { CLOSESOCK(cli); continue; }
+    buf[n] = 0;
+    char method[16] = {0}, path[2048] = {0};
+    sscanf(buf, "%15s %2047s", method, path);
+    char* q = strchr(path, '?');
+    char query[2048] = {0};
+    if (q) { strncpy(query, q + 1, sizeof(query)-1); *q = 0; }
+    char* sep = strstr(buf, "\r\n\r\n");
+    int content_length = 0;
+    char* content_header = strstr(buf, "Content-Length:");
+    if (content_header) sscanf(content_header, "Content-Length: %d", &content_length);
+    int header_length = sep ? (int)(sep - buf) + 4 : n;
+    while (sep && n < header_length + content_length && n < (int)sizeof(buf) - 1) {
+      int received = (int)recv(cli, buf + n, sizeof(buf) - 1 - n, 0);
+      if (received <= 0) break;
+      n += received;
+      buf[n] = 0;
+    }
+    const char* body = "";
+    if (sep) body = sep + 4;
+    HttpResC resp = handler(method, path, query, body);
+    int code = (int)resp.status;
+    const char* ctype = resp.ctype ? resp.ctype : "text/plain";
+    const char* rbody = resp.body ? resp.body : "";
+    http_send(cli, code, ctype, rbody);
+    CLOSESOCK(cli);
+  }
 }
 
 static void http_serve_run(int64_t port, route_fn handler) {
@@ -3155,6 +3353,16 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
 '''
 
     def c_type(self, t):
+        if isinstance(t, str) and t.startswith('fn:'):
+            # fn:Arg1,Arg2>Ret  →  Ret(*)(Arg1, Arg2)
+            try:
+                mid, ret = t[3:].rsplit('>', 1)
+                args = [a for a in mid.split(',') if a]
+                if args:
+                    return f"{self.c_type(ret)}(*)({', '.join(self.c_type(a) for a in args)})"
+                return f"{self.c_type(ret)}(*)(void)"
+            except ValueError:
+                return 'void*'
         if t.startswith('list_'):
             inner = t[5:]
             if inner == 'int':
@@ -3274,7 +3482,7 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         if isinstance(e, BoolLit):
             return ("true" if e.value else "false"), "bool"
         if isinstance(e, StrLit):
-            s = e.value.replace('\\','\\\\').replace('"','\\"').replace('\n','\\n').replace('\t','\\t')
+            s = e.value.replace('\\','\\\\').replace('"','\\"').replace('\r','\\r').replace('\n','\\n').replace('\t','\\t')
             return f'"{s}"', "str"
         if isinstance(e, RecordLit):
             rec_name = e.ctor.name if isinstance(e.ctor, Var) else 'record'
@@ -3690,6 +3898,27 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     text, _ = self.gen_expr(e.args[1])
                     return f"fs_append_text({path}, {text})", "i64"
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'http' and e.func.field == 'serve' and len(e.args) >= 2:
+                return self.gen_http_serve_fn(e)
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'sock':
+                f = e.func.field
+                if f == 'listen' and e.args:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"sock_listen({a})", "i64"
+                if f == 'accept' and e.args:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"sock_accept({a})", "i64"
+                if f == 'recv' and e.args:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"sock_recv({a})", "str"
+                if f == 'send' and len(e.args) >= 2:
+                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                    return f"sock_send({a}, {b})", "i64"
+                if f == 'close' and e.args:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"sock_close({a})", "i64"
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'gcc' and e.func.field == 'compile':
                 source, _ = self.gen_expr(e.args[0])
                 output, _ = self.gen_expr(e.args[1])
@@ -3837,11 +4066,27 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                     args = [self.gen_expr(a)[0] for a in e.args]
                 args_str = ", ".join(args)
                 return f"{cname}({args_str})", self.func_return_types.get(cname, self.func_return_types.get(e.func.name, "i64"))
-            fptr, _ = self.gen_expr(e.func)
-            args = ", ".join(self.gen_expr(a)[0] for a in e.args)
-            n = len(e.args)
-            arg_ts = ", ".join(["int64_t"] * n) if n else "void"
-            return f"((int64_t(*)({arg_ts}))({fptr}))({args})", "i64"
+            fptr, ft = self.gen_expr(e.func)
+            typed = [self.gen_expr(a) for a in e.args]
+            args = ", ".join(c for c, _ in typed)
+            # ft may be 'fn' or 'fn:Req>Res' style from env
+            ret_ty = "i64"
+            arg_cs = []
+            if isinstance(ft, str) and ft.startswith("fn:"):
+                # fn:Arg1,Arg2>Ret
+                try:
+                    mid, ret_ty = ft[3:].rsplit(">", 1)
+                    parts = [x for x in mid.split(",") if x]
+                    for i, (c, at) in enumerate(typed):
+                        arg_cs.append(self.c_type(parts[i] if i < len(parts) else at))
+                except ValueError:
+                    arg_cs = [self.c_type(at) for _, at in typed]
+            else:
+                arg_cs = [self.c_type(at) for _, at in typed]
+                # Heuristic: if arg is a known record, keep it
+            arg_ts = ", ".join(arg_cs) if arg_cs else "void"
+            ret_c = self.c_type(ret_ty)
+            return f"(({ret_c}(*)({arg_ts}))({fptr}))({args})", ret_ty
         if isinstance(e, IfExpr):
             # Statement if/else (not C ternary) avoids pointer/integer mismatches when
             # branches have different C types (str assign vs bool assign vs list assign).
@@ -4118,6 +4363,68 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             return "({ " + "; ".join(parts) + "; " + last + "; })", lt
         return "INT64_C(0)", "i64"
 
+
+    def gen_http_serve_fn(self, e: Call):
+        """http.serve(port, handler) — handler is Lambda, named fn, or fn-param."""
+        if len(e.args) < 2:
+            return "INT64_C(0)", "i64"
+        port_c, _ = self.gen_expr(e.args[0])
+        handler = e.args[1]
+        self.lam_n += 1
+        wrap = f"__http_fn_{self.lam_n}"
+        empty = '""'
+
+        def adapter_body(call_line: str, req_name: str = "req") -> str:
+            return (
+                f"  Req {req_name} = (Req){{ "
+                f".method = method ? method : {empty}, "
+                f".path = path ? path : {empty}, "
+                f".query = query ? query : {empty}, "
+                f".body = body ? body : {empty} }};\n"
+                f"  {call_line}\n"
+                f"  HttpResC out;\n"
+                f"  out.status = (int64_t)(_r.status);\n"
+                f"  out.body = _r.body ? _r.body : {empty};\n"
+                f"  out.ctype = _r.ctype ? _r.ctype : \"text/plain\";\n"
+                f"  return out;\n"
+            )
+
+        header = (
+            f"static HttpResC {wrap}(const char* method, const char* path, "
+            f"const char* query, const char* body)"
+        )
+
+        if isinstance(handler, Lambda):
+            pname = handler.params[0].name if handler.params else "req"
+            old = self.env.copy()
+            self.env[pname] = "Req"
+            body_c, _bt = self.gen_expr(handler.body)
+            self.env = old
+            self.extra.append(
+                header + " {\n" + adapter_body(f"Res _r = {body_c};", pname) + "}\n"
+            )
+            return f"(http_serve_fn({port_c}, {wrap}), INT64_C(0))", "i64"
+
+        if isinstance(handler, Var) and handler.name in self.known:
+            hn = self.known[handler.name]
+            self.extra.append(
+                header + " {\n" + adapter_body(f"Res _r = {hn}(req);") + "}\n"
+            )
+            return f"(http_serve_fn({port_c}, {wrap}), INT64_C(0))", "i64"
+
+        # Parameter or expression: function pointer Res(*)(Req)
+        hc, _ = self.gen_expr(handler)
+        slot = f"{wrap}_user"
+        self.extra.append(f"static Res (*{slot})(Req);\n")
+        self.extra.append(
+            header + " {\n" + adapter_body(f"Res _r = {slot}(req);") + "}\n"
+        )
+        return (
+            f"({{ {slot} = (Res(*)(Req))({hc}); "
+            f"http_serve_fn({port_c}, {wrap}); INT64_C(0); }})",
+            "i64",
+        )
+
     def gen_http_serve(self, e: HttpServe) -> Tuple[str, str]:
         port_c, _ = self.gen_expr(e.port)
         self.lam_n += 1
@@ -4197,14 +4504,28 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
         cname = getattr(f, '_c_name', None) or self.known[f.name]
         pcs = []
         for p in f.params:
-            tn = self.type_name(p.typ) if p.typ else 'i64'
-            pcs.append(f"{self.c_type(tn)} {p.name}")
+            if p.typ and getattr(p.typ, 'name', None) == 'fn':
+                tn = _fn_type_tag(p.typ)
+                # C needs: Ret (*name)(Args)  not  Ret(*)(Args) name
+                try:
+                    mid, ret = tn[3:].rsplit('>', 1)
+                    args = [a for a in mid.split(',') if a]
+                    args_c = ', '.join(self.c_type(a) for a in args) if args else 'void'
+                    pcs.append(f"{self.c_type(ret)} (*{p.name})({args_c})")
+                except ValueError:
+                    pcs.append(f"void* {p.name}")
+            else:
+                tn = self.type_name(p.typ) if p.typ else 'i64'
+                pcs.append(f"{self.c_type(tn)} {p.name}")
         ret = self.type_name(f.ret) if f.ret else 'i64'
         crt = self.c_type(ret)
         pstr = ", ".join(pcs) if pcs else "void"
         old_env = self.env.copy()
         for p in f.params:
-            self.env[p.name] = self.type_name(p.typ) if p.typ else 'i64'
+            if p.typ and getattr(p.typ, 'name', None) == 'fn':
+                self.env[p.name] = _fn_type_tag(p.typ)
+            else:
+                self.env[p.name] = self.type_name(p.typ) if p.typ else 'i64'
         if f.params and f.params[0].name == 'self':
             self.env['self'] = self.type_name(f.params[0].typ) if f.params[0].typ else 'i64'
         body, _ = self.gen_expr(f.body)
@@ -4222,13 +4543,15 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             r.name: {n: self.type_name(t) for n, t in r.fields}
             for r in prog.recs if not getattr(r, 'type_params', None)
         }
-        self.enum_values = {
-            e.name: {
-                v.name: (i, [self.type_name(t) for t in v.fields])
-                for i, v in enumerate(e.variants)
-            }
-            for e in prog.enums if not getattr(e, 'type_params', None)
-        }
+        self.enum_values = {}
+        for e in prog.enums:
+            if getattr(e, 'type_params', None):
+                continue
+            m = {}
+            for i, v in enumerate(e.variants):
+                tag = v.value if getattr(v, 'value', None) is not None else i
+                m[v.name] = (tag, [self.type_name(t) for t in v.fields])
+            self.enum_values[e.name] = m
         self.enum_has_data = {
             e.name: any(len(v.fields) > 0 for v in e.variants)
             for e in prog.enums if not getattr(e, 'type_params', None)
@@ -4390,7 +4713,8 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
             if not has_data:
                 out.append(f"typedef enum {{")
                 for i, variant in enumerate(en.variants):
-                    out.append(f"    {en.name}_{variant.name.upper()} = {i},")
+                    tag = variant.value if getattr(variant, 'value', None) is not None else i
+                    out.append(f"    {en.name}_{variant.name.upper()} = {tag},")
                 out.append(f"}} {en.name};")
                 out.append("")
             else:
@@ -4436,7 +4760,10 @@ static List_{name} db_query_{name}(const char* sql, int argc, DbValue* args) {{
                 continue
             pcs = []
             for p in f.params:
-                tn = self.type_name(p.typ) if p.typ else 'i64'
+                if p.typ and getattr(p.typ, 'name', None) == 'fn':
+                    tn = _fn_type_tag(p.typ)
+                else:
+                    tn = self.type_name(p.typ) if p.typ else 'i64'
                 pcs.append(self.c_type(tn))
             ret = self.type_name(f.ret) if f.ret else 'i64'
             crt = self.c_type(ret)
