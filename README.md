@@ -34,7 +34,6 @@ Compile:
 
 ```
 Ctrl+Shift+P
-
 Terse: Compile
 ```
 
@@ -100,14 +99,15 @@ python3 compiler/tersec.py build src/quickstart.te -o out/quickstart && ./out/qu
 
 | File | Shows |
 |------|--------|
-| `src/hello.te` | smallest `go` + `pr` |
-| `src/fmt_demo.te` | string `+` and `fmt(...)` |
+| `src/hi.te` | smallest `go` + `pr` |
+| `src/fmt.te` | string `+` and `fmt(...)` |
 | `src/quickstart.te` | list, `lp`, `fn`, `fmt` |
 | `src/cli_story.te` | `arg`, `env`, `fmt` mini-CLI |
-| `src/generic_demo.te` | `fn id[T]` / `first[T]` generics |
-| `src/generic_rec_en.te` | `rec Box[T]`, `en Opt[T]` |
+| `src/gen.te` | `fn id[T]` / `first[T]` generics |
+| `src/gen_rec_en.te` | `rec Box[T]`, `en Opt[T]` |
+| `src/gen_trait.te` | `Eq[T]`, `Show[T]` |
 
-Strings: use `"a" + b` or `fmt("a=", b, " c=", d)` (no `{x}` interpolation yet).
+Strings: use `"a" + b` or `fmt("a=", b, " c=", d)`.
 
 ### Pipe operator `|>`
 
@@ -234,16 +234,8 @@ Not yet implemented (but specified):
 - Ownership/borrowing system
 - Native `tc.te` feature parity with the host compiler
 - Richer package system beyond path `use`
-- HTTP beyond minimal `http.serve`
+- HTTP beyond minimal `http.srv`
 
-## Examples
-
-| File | Description | Output |
-|------|-------------|--------|
-| `src/arith.te` | add + mult | 42, 30 |
-| `src/fact.te` | Recursion | 3628800 |
-| `src/hof.te` | Higher-order + lambda | 149 |
-| `src/ifelse.te` | if + else | 59 |
 
 ## Architecture
 
@@ -302,41 +294,28 @@ make bootstrap
 
 ## TODO: HTTP and DB Library Extraction
 
-`std.http` and `std.db` are not ordinary Terse modules yet. HTTP routes are
-recognized as a special AST form and emitted by compiler code; DB calls are
-lowered by compiler-specific code. The socket and SQLite operations they depend
-on currently live in the generated C runtime. A Terse library therefore needs
-stable host primitives before those implementations can leave the compiler.
+`lib.http` and `lib.db` are not ordinary Terse modules yet.
 
 - [ ] Define a standard-library package layout and resolver for compiler-provided
-  low-level modules, such as `std.net` and `std.sqlite`.
-- [ ] Expose the minimum socket and SQLite host APIs through a generic native
+  low-level modules.
+- [ ] Expose the minimum socket and db host APIs through a generic native
   module/ABI boundary; keep protocol routing and database convenience APIs out
   of that boundary.
 - [ ] Implement HTTP routing/server behavior and DB connection/query helpers in
   Terse library modules. Replace the special route-block syntax and typed
   `db.query[Record]` lowering with core-language API forms where possible.
-- [ ] Migrate the consumers below and test them against the library APIs before
-  removing the compiler's `HttpServe` parser/codegen, DB call lowering, and
-  high-level HTTP/SQLite runtime code.
 - [ ] Keep platform-specific socket/SQLite bindings only as low-level runtime
   support if the language still has no FFI or external native-module mechanism.
 
-Migration TODOs for current consumers:
-- [ ] `src/serve.te` uses both `std.http` and `std.db`.
-- [ ] `src/db.te` uses compiler-provided `db.*` operations.
-- [ ] HTTP integration tests in `compiler/test_compiler.py` currently validate
-  compiler-backed route handling; move/add coverage for the library API.
-
-
 ## TODO
 
-- tc -> terse compiler
+- tc -> native terse compiler
 - tp -> package manager
 - tb -> bld and test
 
+> 
 > Now you can't get more `terse` than that!
-
+> 
 
 ## License
 

@@ -3,8 +3,8 @@
 
 fn sum(xs: [i64]) -> i64 {
   var total = 0
-  lp i = 0; i < len(xs); i = i + 1 {
-    total = total + xs[i]
+  lp x : xs {
+    total += x
   }
   ret total
 }

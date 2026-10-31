@@ -6,7 +6,7 @@ tr Eq[T] {
 }
 
 tr Show[T] {
-  fn str() -> str
+  fn str() -> T
 }
 
 rec Point {
@@ -23,9 +23,13 @@ fn Point.str() -> str =
 fn same(a: Point, b: Point) -> bool =
   a.eq(b)
 
+fn show(a: Point) {
+  pr("showing " + a.str())
+}
+
 go {
   val a = Point { x: 1, y: 2 }
   val b = Point { x: 1, y: 2 }
   pr(same(a, b) ? 1 : 0)
-  pr(a.str())
+  show(a)
 }

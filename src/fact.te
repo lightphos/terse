@@ -1,5 +1,5 @@
 // Recursion
-fn fact(n: i64) -> i64 =
+fn fact(n: int) -> int =
   if n <= 1 { 1 } else { n * fact(n - 1) }
 
 go fact(10)
