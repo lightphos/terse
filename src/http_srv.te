@@ -11,9 +11,11 @@
 use http
 
 fn handle(r: Req) -> Res {
-  if r.method == "GET" && r.path == "/" {
-    ret http.success("hello world\n", "text/plain; charset=utf-8")
+
+  if r.get() {
+    "/" => ret http.success("hello world\n", "text/plain; charset=utf-8")
   }
+
   if r.method == "GET" && r.path == "/api" {
     ret http.success("{\"ok\":true}\n", "application/json; charset=utf-8")
   }
