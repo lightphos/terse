@@ -1,0 +1,31 @@
+use std.err
+
+fn error() {
+    err("this is an error")
+}
+
+fn trapper() {
+    error()
+    trap e: {
+        pr("caught: " + e)
+    }
+}
+
+fn next(s: bool) {
+
+    if (s) {
+        trapper()
+        trap e: {
+            pr("caught in condition: " + e)
+        }
+    }
+
+    trap e: {
+        pr("caught in next: " + e)
+}
+
+go {
+    trapper()
+    next(true)
+    next(false)
+}

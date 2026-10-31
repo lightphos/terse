@@ -8,23 +8,23 @@
 //   curl -s -X POST -d 'hello' http://127.0.0.1:8765/echo
 //   curl -s -X POST -H 'Content-Type: application/json' -d '{"n":1}' http://127.0.0.1:8765/echo
 
-use http
+use cnx.http
 
 fn handle(r: Req) -> Res {
 
   if r.get() {
-    "/" => ret http.success("hello world\n", "text/plain; charset=utf-8")
-    "/api" => ret http.success("{\"ok\":true}\n", "application/json; charset=utf-8")
+    "/" => ret cnx.http.success("hello world\n", "text/plain; charset=utf-8")
+    "/api" => ret cnx.http.success("{\"ok\":true}\n", "application/json; charset=utf-8")
   }
 
   if r.post() {
-    "/echo" => ret http.success(r.body + "\n", "text/plain; charset=utf-8")
+    "/echo" => ret cnx.http.success(r.body + "\n", "text/plain; charset=utf-8")
   }
   
-  ret http.fail(Status.not_found, "not found\n", "text/plain; charset=utf-8")
+  ret cnx.http.fail(Status.not_found, "not found\n", "text/plain; charset=utf-8")
 }
 
 go {
   pr("starting on :8765 (GET /, /api  POST /echo)")
-  http.srv(8765, handle)
+  cnx.http.srv(8765, handle)
 }

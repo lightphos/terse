@@ -1,8 +1,16 @@
 # Terse
 
-A (very) succinct language that compiles to native binaries, with structures, interfaces, first-class higher-order functions, supporting libraries and builtin in test runner.
+A succinct language that compiles to native binaries, with structures, interfaces, first-class higher-order functions, supporting libraries and builtin in test runner.
 
-## Quick Start
+### Hi
+
+```terse
+go {
+    pr("hi!")
+}
+```
+
+## Start
 
 > Requires python3
 
@@ -10,9 +18,7 @@ A (very) succinct language that compiles to native binaries, with structures, in
 ```bash
 # Build program in example directory to a binary
 make run.eg dir=src
-
 make tst.t_eg
-
 make tst (all)
 ```
 
@@ -82,32 +88,53 @@ export TERSE_LIB=/path/to/libs
 export TERSE_HOME=/path/to/.terse
 ```
 
-**Makefile note:** targets that pass `-o out/...` still land under the project `out/` folder, not `~/.terse/out`.
+**Makefile note:** 
 
 - Explicit library build: `python3 compiler/tersec.py lib path/to/mod.te`
 - Auto-link of `~/.terse/out/lib/...` on `use` is **off by default**. Enable with `TERSE_AUTOLIB=1` if you want imports to prefer a fresh `module.o` over inlining.
 
 
-
-## Quick examples (stranger-friendly)
+## Stranger-friendly
 
 ```bash
-python3 compiler/tersec.py build src/hello.te -o out/hello && ./out/hello
-python3 compiler/tersec.py build src/fmt_demo.te -o out/fmt_demo && ./out/fmt_demo
-python3 compiler/tersec.py build src/quickstart.te -o out/quickstart && ./out/quickstart
+python3 compiler/tersec.py build src/hi.te && ~/.terse/out/hi
+
+or 
+
+make run.hi
 ```
+
+Try the following:
 
 | File | Shows |
 |------|--------|
 | `src/hi.te` | smallest `go` + `pr` |
 | `src/fmt.te` | string `+` and `fmt(...)` |
 | `src/quickstart.te` | list, `lp`, `fn`, `fmt` |
-| `src/cli_story.te` | `arg`, `env`, `fmt` mini-CLI |
-| `src/gen.te` | `fn id[T]` / `first[T]` generics |
-| `src/gen_rec_en.te` | `rec Box[T]`, `en Opt[T]` |
-| `src/gen_trait.te` | `Eq[T]`, `Show[T]` |
 
-Strings: use `"a" + b` or `fmt("a=", b, " c=", d)`.
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| Types | `int, long, chr, bool, dbl, flt, str ...` |
+| Variables | `var/val` |
+| Constants | `fix`|
+| Enums | `enum` |
+| Arrays | `a[]`|
+| Lists | `[]` |
+| Maps |`{x:y}`|
+| Struct | `rec` |
+| Traits | `tr`|
+| Loops | `lp` list or indexes |
+| Conditions | `if/else` |
+| Matching | `if "match" => ` |
+| High order functions | pass functions around |
+| Lambda | `\|x\| fn(x)`, closures todo|
+| Pipes | see below |
+| Tuples | todo |
+| Generics | `[T]`, qualified todo |
+| Exceptions | `err` todo |
+
 
 ### Pipe operator `|>`
 
@@ -123,42 +150,22 @@ desugars to:
 sum(map(xs, double))
 ```
 
-**Rules**
-
-| Right-hand side | Rewrite |
-|-----------------|---------|
-| Call, e.g. `map(f)` or `sum()` | Left value becomes the **first** argument: `map(xs, f)`, `sum(xs)` |
-| Bare name / value, e.g. `double` | Treated as a one-arg call: `double(xs)` |
-
-So these are equivalent:
-
-```terse
-pr(xs |> map(double) |> sum())
-pr(sum(map(xs, double)))
-```
-
-Pipes chain left-associatively:
-
-```terse
-a |> f() |> g(x) |> h()
-// → h(g(f(a), x))
-```
 
 Built-ins like `map` expect `(collection, fn)`; piping puts the collection in the first slot, which is why `xs |> map(double)` works.
 
-## Optional packages (`lib/`)
+## Library packages (`lib/`)
 
 
-Ship optional libraries next to the compiler tree (not frozen std):
+Optional libraries sit next to the compiler tree:
 
 ```text
 lib/math.te      →  use math       →  math.fact(5), math.abs(x)
-lib/std/tst.te   →  use std.tst    →  tst.eq(...)
+lib/std/tst.te   →  use std/tst    →  tst.eq(...)
 src/arith.te     →  use arith      →  app modules
 ```
 
 ```terse
-use std.tst
+use tst
 use math
 
 fn t_fact5() {
@@ -171,6 +178,21 @@ fn t_fact5() {
 - No registry yet — packages are files in `lib/` (or on the module search path)  
 - Precompile: `python3 compiler/tersec.py lib lib/math.te` → `~/.terse/out/lib/math/module.o`
 
+
+| Libs | Function |
+| -----| ---------|
+| std.io  | file i/o |
+| std.out | pr/*con?* - assumed, no use needed |
+| lib.tst | testing |
+| lib.http | http *client*/server |
+| lib.db | todo, *plugin* mechanism |
+| lib.msg | *todo* |
+| lib.ai | *todo* |
+| lib.maths | *todo*, rnd |
+| lib.process | *todo*, env, calls |
+| lib.loom | concurrency *todo* |
+
+
 ## Language Spec
 
 See [spec/TERSE_BNF.md](spec/TERSE_BNF.md) and [spec/SPEC.md](spec/SPEC.md) for the full language specification.
@@ -180,7 +202,6 @@ See [spec/TERSE_BNF.md](spec/TERSE_BNF.md) and [spec/SPEC.md](spec/SPEC.md) for 
 - Built in print out
 - Basic arithmetic
 - If else
-
 
 ## Compiler Status (0.2)
 
@@ -208,7 +229,7 @@ The reference compiler (`compiler/tersec.py`, now split into the `compiler/terse
 
 - Lexer (`lexer.py`), recursive-descent parser (`parser.py`), type checker with generic specialization and overload resolution (`typecheck.py`), C codegen (`codegen.py`), plus shared type helpers (`utils.py`)
 - C code generation + gcc/clang backend → native binary; C runtime extracted to `compiler/runtime.c`
-- Integers (`i64`), booleans, arithmetic & comparisons
+- Integers (`long/int`), booleans, arithmetic & comparisons
 - `if`/`else` expressions, ternary, blocks, `ret`, `val`/`var` bindings
 - Named functions + recursion
 - `fix` / `pub fix` constants; `pub` visibility
@@ -292,29 +313,17 @@ make bootstrap
   to the extraction plan below, keeping limited HTTP features distinct from
   documented future middleware and request-decoding support.
 
-## TODO: HTTP and DB Library Extraction
-
-`lib.http` and `lib.db` are not ordinary Terse modules yet.
-
-- [ ] Define a standard-library package layout and resolver for compiler-provided
-  low-level modules.
-- [ ] Expose the minimum socket and db host APIs through a generic native
-  module/ABI boundary; keep protocol routing and database convenience APIs out
-  of that boundary.
-- [ ] Implement HTTP routing/server behavior and DB connection/query helpers in
-  Terse library modules. Replace the special route-block syntax and typed
-  `db.query[Record]` lowering with core-language API forms where possible.
-- [ ] Keep platform-specific socket/SQLite bindings only as low-level runtime
-  support if the language still has no FFI or external native-module mechanism.
 
 ## TODO
 
 - tc -> native terse compiler
-- tp -> package manager
-- tb -> bld and test
+- tp -> package manager and processor
+  - tp get <module:version> (from github?)
+  - tp bld 
+  - tp tst
 
 > 
-> Now you can't get more `terse` than that!
+> Now you really can't get more `terse` than that, can you?
 > 
 
 ## License

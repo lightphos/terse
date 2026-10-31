@@ -23,7 +23,7 @@ fn Point.str() -> str =
 fn same(a: Point, b: Point) -> bool =
   a.eq(b)
 
-fn show(a: Point) {
+fn show(a: Show[Point]) {
   pr("showing " + a.str())
 }
 
