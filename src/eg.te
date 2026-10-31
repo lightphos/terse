@@ -4,9 +4,9 @@ rec Point {
   y: i64,
 }
 
-fn double(n: i64) -> i64 = n * 2
+pub fn double(n: i64) -> i64 = n * 2
 
-fn sum(xs: [i64]) -> i64 {
+pub fn sum(xs: [i64]) -> i64 {
   var total = 0
   lp x:xs {
     total += x

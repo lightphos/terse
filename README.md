@@ -109,7 +109,45 @@ python3 compiler/tersec.py build src/quickstart.te -o out/quickstart && ./out/qu
 
 Strings: use `"a" + b` or `fmt("a=", b, " c=", d)` (no `{x}` interpolation yet).
 
+### Pipe operator `|>`
+
+`|>` is left-to-right function application (same idea as Elixir / F#). It rewrites at parse time — there is no special runtime opcode.
+
+```terse
+xs |> map(double) |> sum()
+```
+
+desugars to:
+
+```terse
+sum(map(xs, double))
+```
+
+**Rules**
+
+| Right-hand side | Rewrite |
+|-----------------|---------|
+| Call, e.g. `map(f)` or `sum()` | Left value becomes the **first** argument: `map(xs, f)`, `sum(xs)` |
+| Bare name / value, e.g. `double` | Treated as a one-arg call: `double(xs)` |
+
+So these are equivalent:
+
+```terse
+pr(xs |> map(double) |> sum())
+pr(sum(map(xs, double)))
+```
+
+Pipes chain left-associatively:
+
+```terse
+a |> f() |> g(x) |> h()
+// → h(g(f(a), x))
+```
+
+Built-ins like `map` expect `(collection, fn)`; piping puts the collection in the first slot, which is why `xs |> map(double)` works.
+
 ## Optional packages (`lib/`)
+
 
 Ship optional libraries next to the compiler tree (not frozen std):
 
@@ -162,6 +200,41 @@ Not yet implemented (but specified):
 - Full closures with captures
 - Records / structs / pattern matching
 - Generics, ownership system, selective imports, and visibility modifiers
+
+
+## Compiler Status (0.3)
+
+The reference compiler (`compiler/tersec.py`, now split into the `compiler/tersec/` package) implements:
+
+- Lexer (`lexer.py`), recursive-descent parser (`parser.py`), type checker with generic specialization and overload resolution (`typecheck.py`), C codegen (`codegen.py`), plus shared type helpers (`utils.py`)
+- C code generation + gcc/clang backend → native binary; C runtime extracted to `compiler/runtime.c`
+- Integers (`i64`), booleans, arithmetic & comparisons
+- `if`/`else` expressions, ternary, blocks, `ret`, `val`/`var` bindings
+- Named functions + recursion
+- `fix` / `pub fix` constants; `pub` visibility
+- **Higher-order functions**: pass functions as values, simple lambdas (`|x| x*2`)
+- Function pointers under the hood (no environment capture yet)
+- **Parameter overloading** (distinct param type lists)
+- **Records / structs**, **methods**, **enums** (+ payloads), **traits** (implicit satisfaction)
+- **Pattern matching**: `if` / `match` arms
+- **Loops**: for-in, C-style `lp i = 0; ...;`, condition loops; `brk` / `skip`
+- **Lists**: width types `[i64]`/`[str]`/…, `+`, `len`, index, push
+- **Maps**: `{str:i64|str}`, put/get, `has`, `keys`, `len`, for-in keys
+- **Modules**: `use`, `pub`, parallel `tst` ↔ `src` test files
+- Frozen std: `std.str`, `std.io`, `std.tst`; `env` get/set
+- Text file reads and writes through `std.io`
+- `go` entrypoint; `go()`; `pr`; string/int concat
+- Unit-test runner (`tst.check.equals`); hard errors for unknown names/functions
+- Output layout `~/.terse/out` (overridable via `TERSE_OUT`/`TERSE_HOME`); optional `lib` objects (`TERSE_AUTOLIB` for auto-link)
+- **Pipe operator** `|>` (left-to-right function application, desugared at parse time)
+
+Not yet implemented (but specified):
+
+- Full closures with environment capture
+- Ownership/borrowing system
+- Native `tc.te` feature parity with the host compiler
+- Richer package system beyond path `use`
+- HTTP beyond minimal `http.serve`
 
 ## Examples
 

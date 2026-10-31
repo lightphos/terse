@@ -14,15 +14,13 @@ fn handle(r: Req) -> Res {
 
   if r.get() {
     "/" => ret http.success("hello world\n", "text/plain; charset=utf-8")
+    "/api" => ret http.success("{\"ok\":true}\n", "application/json; charset=utf-8")
   }
 
-  if r.method == "GET" && r.path == "/api" {
-    ret http.success("{\"ok\":true}\n", "application/json; charset=utf-8")
+  if r.post() {
+    "/echo" => ret http.success(r.body + "\n", "text/plain; charset=utf-8")
   }
-  // POST /echo — return the request body
-  if r.method == "POST" && r.path == "/echo" {
-    ret http.success(r.body + "\n", "text/plain; charset=utf-8")
-  }
+  
   ret http.fail(Status.not_found, "not found\n", "text/plain; charset=utf-8")
 }
 

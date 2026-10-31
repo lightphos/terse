@@ -2,6 +2,8 @@
 """Terse Type Checker — type checks AST programs."""
 from __future__ import annotations
 
+import copy
+
 from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,

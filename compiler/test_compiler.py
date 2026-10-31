@@ -351,5 +351,24 @@ class TestMaps(unittest.TestCase):
         assert_result(self, src, "3")
 
 
+class TestPipeMap(unittest.TestCase):
+    def test_pipe_map_sum(self):
+        src = textwrap.dedent("""\
+            fn double(n: i64) -> i64 = n * 2
+            fn sum(xs: [i64]) -> i64 {
+              var total = 0
+              lp x:xs {
+                total += x
+              }
+              total
+            }
+            go {
+              val xs = [1, 2, 3]
+              xs |> map(double) |> sum()
+            }
+        """)
+        assert_result(self, src, "12")
+
+
 if __name__ == "__main__":
     unittest.main()

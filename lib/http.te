@@ -28,6 +28,7 @@ pub rec Res {
 }
 
 pub fn Req.get() -> str =  self.method == "GET" ? self.path : ""
+pub fn Req.post() -> str =  self.method == "POST" ? self.path : ""
 
 
 pub fn success(body: str, ctype: str) -> Res {
@@ -37,9 +38,6 @@ pub fn success(body: str, ctype: str) -> Res {
 pub fn fail(status: Status, body: str, ctype: str) -> Res {
   ret Res { status: status, body: body, ctype: ctype }
 }
-
-pub fn get(r: Req, path: str) -> bool =
-  r.method == "GET" && r.path == path
 
 pub fn format_response(r: Res) -> str {
   val code = 500

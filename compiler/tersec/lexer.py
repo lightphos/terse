@@ -149,7 +149,7 @@ class Lexer:
             if self.p() == '\\':
                 self.adv()
                 e = self.adv()
-                s += {'n': '\n', 't': '\t', '"': '"', '\\': '\\'}.get(e, e)
+                s += {'n': '\n', 'r': '\r', 't': '\t', '"': '"', '\\': '\\', '0': '\0'}.get(e, e)
             else:
                 s += self.adv()
         if self.p() == '"':
