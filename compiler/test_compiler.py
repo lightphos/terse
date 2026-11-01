@@ -15,7 +15,7 @@ import unittest
 
 ROOT = os.path.abspath(os.path.dirname(__file__))
 TERSEC = os.path.join(ROOT, "tersec.py")
-SRC = os.path.join(ROOT, "src")
+SRC = os.path.join(ROOT, "..", "src")
 
 
 def compile_src(src: str, name: str = "t"):
@@ -72,10 +72,19 @@ class TestDefaultParameters(unittest.TestCase):
     def test_default_parameters(self):
         test_path = os.path.join(ROOT, "..", "tst", "t_def_param.te")
         with open(test_path, encoding="utf-8") as f:
-            src = f.read()
+            src = f.read() + textwrap.dedent("""\
+                go {
+                  pr(pair(49))
+                  pr(pair(1))
+                  pr(sum(1))
+                  pr(sum(1, 5))
+                  pr(sum(1, 2, 3))
+                  pr(def())
+                }
+            """)
         rc, out, err = compile_and_run(src)
         self.assertEqual(rc, 0, err)
-        self.assertEqual([line for line in out.splitlines() if line], ["99", "3", "6", "12", "6"])
+        self.assertEqual([line for line in out.splitlines() if line], ["99", "3", "6", "12", "6", "4"])
 
     def test_required_parameter_cannot_follow_default(self):
         _, code, log = compile_src(
@@ -333,22 +342,27 @@ class TestModules(unittest.TestCase):
         arith = os.path.join(SRC, "arith.te")
         if not os.path.isfile(arith):
             self.skipTest("src/arith.te missing")
-        tdir = os.path.join(ROOT, "tst")
-        os.makedirs(tdir, exist_ok=True)
-        tpath = os.path.join(tdir, "t_use_arith_unit.te")
-        with open(tpath, "w", encoding="utf-8") as f:
+        tdir = os.path.join(ROOT, "..", "tst")
+        fd, tpath = tempfile.mkstemp(
+            prefix="t_use_arith_unit_", suffix=".te", dir=tdir, text=True
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write("use arith\ngo { pr(add()) }\n")
         tmp = tempfile.mkdtemp(prefix="terse_mod_")
         bin_path = os.path.join(tmp, "t_use_arith")
-        r = subprocess.run(
-            [sys.executable, TERSEC, "build", tpath, "-o", bin_path],
-            capture_output=True,
-            text=True,
-            cwd=ROOT,
-        )
-        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        rc, out, err = run_bin(bin_path)
-        self.assertIn("42", out)
+        try:
+            r = subprocess.run(
+                [sys.executable, TERSEC, "build", tpath, "-o", bin_path],
+                capture_output=True,
+                text=True,
+                cwd=os.path.dirname(ROOT),
+            )
+            self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+            rc, out, err = run_bin(bin_path)
+            self.assertEqual(rc, 0, err)
+            self.assertIn("42", out)
+        finally:
+            os.unlink(tpath)
 
     def test_unknown_import(self):
         _, code, log = compile_src("use no_such_module_xyz\ngo 0")
