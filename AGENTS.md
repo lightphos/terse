@@ -6,8 +6,7 @@ Reference compiler for the **Terse** language, implemented in Python at `compile
 ## Commands
 - Build + run an example: `make terse.<name> dir=src` → `out/<name>`; also `./run.sh <name>` (build+run) or `./cmp.sh <name>` (build only)
 - Direct CLI: `python3 compiler/tersec.py {build|run|check} FILE [-o OUT] [--keep-c] [-v]`. `check` only parses + typechecks and prints `OK`.
-- Tests: `bash compiler/run_tests.sh` (a **shell** script — do not invoke with `python3`). Equivalent to `python3 -m unittest compiler.test_compiler -v`.
-- Git hooks: A `pre-commit` hook in `.git/hooks/` (or via `git config core.hooksPath scripts/`) runs `bash compiler/run_tests.sh` before every commit and aborts the commit if tests fail. See the `scripts/pre-commit` or `.git/hooks/pre-commit` file for details.
+- Tests: `make tst` runs all `tst/t_*.te` programs. The host compiler unit suite can also be run with `python3 -m unittest compiler.test_compiler -v`.
 - Language spec: `spec/SPEC.md`, grammar: `spec/bnf.md` (the README's `docs/SPEC.md` link is stale; `docs/` does not exist).
 
 ## Gotchas
@@ -20,3 +19,11 @@ Reference compiler for the **Terse** language, implemented in Python at `compile
 - Program entry: `go()` for an empty body or `go { ... }` for a program body. `fn main` is not a Terse entrypoint. Generated C `main` prints the go body's i64 result unless `pr()` already produced output (trailing-zero suppression); tests assert stdout accordingly.
 - Requires Python 3.12+. Binaries land in gitignored `out/` (with sibling `.c` files when `--keep-c`).
 - `vscode-terse/` is a separate npm extension compiling the same `tersec.py`; only touch it when working on the extension itself.
+
+## Reference-code workflow
+- Before implementing a compiler or language feature, search the local XERJ indices for relevant Terse code and prior art. Use exact identifiers and concepts, then inspect the cited source files before making changes.
+- Search this project with `~/.local/bin/xerj search --url http://127.0.0.1:9200 --prefix terse-src "<question>"`.
+- Search the closest references with `--prefix ref-airtight` (Python-implemented, statically typed language compiled to C; MIT) and `--prefix ref-prometeo` (Python-to-C transpiler; BSD-2-Clause).
+- The reference checkouts live outside this repository under `~/.xerj/references/terse/`. The project and reference indices are local; keep code and queries on the local node and do not send them to hosted services.
+- Refresh an index after substantial source changes with `~/.local/bin/xerj autoindex <same-folder> --url http://127.0.0.1:9200 --prefix <same-prefix>`.
+- If the local XERJ node is not running, start `~/.local/bin/xerj --insecure --bind 127.0.0.1 --port 9200 --data-dir ~/.xerj/terse-data --disable-feedback` in a separate terminal.

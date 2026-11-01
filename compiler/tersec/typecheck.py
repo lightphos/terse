@@ -8,7 +8,7 @@ from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-    Block, ListLit, MapLit, Index, FnDecl,
+    Block, ListLit, MapLit, Index, FnDecl, TrapExpr,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
     EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
     EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -389,7 +389,7 @@ class TypeChecker:
             if e.name in self.funcs or e.name in (
                 'pr','len','env','str','push','substr','arg',
                 'keys','values','has','up','low','trim','split','join',
-                'parse','starts','ends','map','fmt'
+                'parse','starts','ends','map','fmt','err'
             ): return 'fn'
             if e.name in ('http','db','tst','fs','gcc','io','sock'): return 'mod'
             self.errors.append(f"unknown name '{e.name}'")
@@ -497,11 +497,21 @@ class TypeChecker:
             if isinstance(e.func, Var):
                 n = e.func.name
                 builtins = {'pr','len','env','str','push','substr','arg','keys','values',
-                            'has','up','low','trim','split','join','parse','starts','ends','map','fmt'}
+                            'has','up','low','trim','split','join','parse','starts','ends','map','fmt','err'}
                 if (n not in self.funcs and n not in builtins and n not in self.env
                         and n not in getattr(self, 'generic_fns', {})):
                     self.errors.append(f"unknown function '{n}'")
             arg_types = [self.check(a) for a in e.args]
+            if isinstance(e.func, Var) and e.func.name == 'err':
+                if len(e.args) != 1:
+                    self.errors.append(
+                        f"type error: function 'err' expects 1 argument(s), got {len(e.args)}"
+                    )
+                elif not _types_compatible('str', arg_types[0]):
+                    self.errors.append(
+                        f"type error: argument 1 of 'err' has type '{arg_types[0]}', expected 'str'"
+                    )
+                return 'long'
             if isinstance(e.func, Index) and isinstance(e.func.coll, Var):
                 n = e.func.coll.name
                 if n in getattr(self, 'generic_fns', {}):
@@ -775,6 +785,13 @@ class TypeChecker:
             t = 'long'
             for s in e.stmts: t = self.check(s)
             return t
+        if isinstance(e, TrapExpr):
+            self.check(e.expr)
+            old_env = self.env.copy()
+            self.env[e.name] = 'str'
+            self.check(e.handler)
+            self.env = old_env
+            return 'long'
         return 'long'
 
     def check_pattern(self, pat, subj_type):

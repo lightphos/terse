@@ -14,7 +14,7 @@ try:
         TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
         Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
         RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-        Block, ListLit, MapLit, Index, FnDecl,
+        Block, ListLit, MapLit, Index, FnDecl, TrapExpr,
         RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
         EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
         EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -40,7 +40,7 @@ except ImportError:
         TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
         Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
         RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-        Block, ListLit, MapLit, Index, FnDecl,
+        Block, ListLit, MapLit, Index, FnDecl, TrapExpr,
         RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
         EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
         EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -93,6 +93,9 @@ def _rewrite_module_expr(e, local_functions, imported_modules):
         e.expr = _rewrite_module_expr(e.expr, local_functions, imported_modules)
     elif isinstance(e, RetExpr) and e.value is not None:
         e.value = _rewrite_module_expr(e.value, local_functions, imported_modules)
+    elif isinstance(e, TrapExpr):
+        e.expr = _rewrite_module_expr(e.expr, local_functions, imported_modules)
+        e.handler = _rewrite_module_expr(e.handler, local_functions, imported_modules)
     elif isinstance(e, IfExpr):
         e.cond = _rewrite_module_expr(e.cond, local_functions, imported_modules)
         e.then = _rewrite_module_expr(e.then, local_functions, imported_modules)
@@ -188,12 +191,10 @@ def _project_roots(source_path):
 
 
 def _auto_test_toplevel(program):
-    """Call every zero-arg local test fn; continue after failures; report at end."""
+    """Call zero-arg local t_* functions; continue after failures; report at end."""
     stmts = []
     for f in program.funcs:
-        if f.params:
-            continue
-        if f.name.startswith('__module_'):
+        if f.params or not f.name.startswith('t_') or f.name.startswith('__module_'):
             continue
         stmts.append(Call(Var(f.name), []))
     # tst.report() -> failure count (exit status)

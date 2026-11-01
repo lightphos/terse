@@ -7,7 +7,7 @@ from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-    Block, ListLit, MapLit, Index, FnDecl,
+    Block, ListLit, MapLit, Index, FnDecl, TrapExpr,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
     EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
     EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -608,7 +608,13 @@ class Parser:
     def parse_postfix(self):
         e = self.parse_primary()
         while True:
-            if self.match(TT.DOT):
+            if self.match(TT.IDENT) and self.cur().v == 'trap':
+                self.adv()
+                name = self.expect(TT.IDENT).v
+                self.expect(TT.COLON)
+                handler = self.parse_block()
+                e = TrapExpr(e, name, handler)
+            elif self.match(TT.DOT):
                 self.adv()
                 tok = self.cur()
                 if tok.t == TT.IDENT or (isinstance(tok.v, str) and tok.v.isidentifier()):

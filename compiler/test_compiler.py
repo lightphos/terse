@@ -380,6 +380,93 @@ class TestErrors(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("unknown", log.lower())
 
+    def test_trap_catches_and_rethrows_to_outer_trap(self):
+        src = textwrap.dedent("""\
+            use std.err
+
+            fn error() {
+              err("this is an error")
+            }
+
+            fn trapper() {
+              error()
+              trap e: {
+                pr("caught: " + e)
+              }
+            }
+
+            fn next(s: bool) {
+              if (s) {
+                error()
+                trap e: {
+                  pr("caught in condition: " + e)
+                  err(e)
+                }
+              }
+
+              trap e: {
+                pr("caught in next: " + e)
+              }
+            }
+
+            go {
+              trapper()
+              next(true)
+              next(false)
+            }
+        """)
+        rc, out, err = compile_and_run(src)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(
+            [line for line in out.splitlines() if line],
+            [
+                "caught: this is an error",
+                "caught in condition: this is an error",
+                "caught in next: this is an error",
+            ],
+        )
+
+    def test_uncaught_error_exits_with_message(self):
+        rc, out, err = compile_and_run('use std.err\ngo err("unhandled")')
+        self.assertEqual(rc, 1)
+        self.assertEqual(out, "")
+        self.assertIn("uncaught error: unhandled", err)
+
+    def test_tst_error_helper_is_not_auto_run(self):
+        src = textwrap.dedent("""\
+            use std.err
+            use std.tst
+
+            fn error() {
+              err("this is an error")
+            }
+
+            fn t_error() {
+              error()
+              trap e: {
+                tst.eq("this is an error", e)
+                pr("trap assertion ran")
+              }
+            }
+        """)
+        with tempfile.TemporaryDirectory(prefix="terse_test_") as tmp:
+            test_dir = os.path.join(tmp, "tst")
+            os.makedirs(test_dir)
+            src_path = os.path.join(test_dir, "t_err.te")
+            bin_path = os.path.join(tmp, "t_err")
+            with open(src_path, "w", encoding="utf-8") as f:
+                f.write(src)
+            build = subprocess.run(
+                [sys.executable, TERSEC, "build", src_path, "-o", bin_path],
+                capture_output=True,
+                text=True,
+                cwd=ROOT,
+            )
+            self.assertEqual(build.returncode, 0, build.stdout + build.stderr)
+            rc, out, err = run_bin(bin_path)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(out.strip(), "trap assertion ran")
+
 
 class TestFix(unittest.TestCase):
     def test_fix_local(self):

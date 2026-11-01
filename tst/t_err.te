@@ -1,0 +1,20 @@
+use std.err
+use std.tst
+
+fn error() {
+    err("this is an error")
+}
+
+fn trapper() {
+    error()
+    trap e: {
+        pr("caught: " + e)
+    }
+}
+
+fn t_error() {
+    error()
+    trap e: {
+        tst.eq("this is an error", e)
+    }
+}

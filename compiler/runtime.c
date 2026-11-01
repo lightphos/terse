@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <setjmp.h>
 #ifdef _WIN32
 #include <process.h>
 #else
@@ -16,6 +17,24 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
+
+typedef struct TerseTrap {
+  jmp_buf env;
+  struct TerseTrap *prev;
+} TerseTrap;
+
+static TerseTrap *_terse_trap = NULL;
+static const char *_terse_error_message = NULL;
+
+static void terse_err(const char *message) {
+  if (!message) message = "";
+  if (_terse_trap) {
+    _terse_error_message = message;
+    longjmp(_terse_trap->env, 1);
+  }
+  fprintf(stderr, "uncaught error: %s\n", message);
+  exit(1);
+}
 
 
 #ifdef _WIN32

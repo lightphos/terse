@@ -14,14 +14,16 @@ fn trapper() {
 fn next(s: bool) {
 
     if (s) {
-        trapper()
-        trap e: {
+        error()
+        trap e: { // first trap
             pr("caught in condition: " + e)
+            err(e)
         }
     }
 
-    trap e: {
+    trap e: { // second trap
         pr("caught in next: " + e)
+    }
 }
 
 go {

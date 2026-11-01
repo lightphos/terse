@@ -1,0 +1,4 @@
+
+pub fn err(msg: str) {
+    // raise it
+}

@@ -9,7 +9,7 @@ from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-    Block, ListLit, MapLit, Index, FnDecl,
+    Block, ListLit, MapLit, Index, FnDecl, TrapExpr,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
     EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
     EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -502,6 +502,9 @@ class CodeGen:
                 return f"(({ename}){{ {', '.join(parts)} }})", ename
         if isinstance(e, Call):
             # builtins
+            if isinstance(e.func, Var) and e.func.name == 'err':
+                message, _ = self.gen_expr(e.args[0], 'str')
+                return f"({{ terse_err({message}); INT64_C(0); }})", "long"
             if isinstance(e.func, Var) and e.func.name == 'push':
                 collection, collection_type = self.gen_expr(e.args[0])
                 value, _ = self.gen_expr(e.args[1])
@@ -1190,6 +1193,27 @@ class CodeGen:
                 parts.append(f"(void)({code})")
             last, lt = self.gen_expr(e.stmts[-1])
             return "({ " + "; ".join(parts) + "; " + last + "; })", lt
+        if isinstance(e, TrapExpr):
+            protected, _ = self.gen_expr(e.expr)
+            trap = self.fresh()
+            error = self.fresh()
+            old_env = self.env.copy()
+            old_aliases = self.var_aliases.copy()
+            self.env[e.name] = 'str'
+            self.var_aliases[e.name] = error
+            handler, _ = self.gen_expr(e.handler)
+            self.env = old_env
+            self.var_aliases = old_aliases
+            return (
+                f"({{ TerseTrap {trap}; {trap}.prev = _terse_trap; "
+                f"_terse_trap = &{trap}; "
+                f"if (setjmp({trap}.env) == 0) {{ "
+                f"(void)({protected}); _terse_trap = {trap}.prev; "
+                f"}} else {{ const char *{error} = _terse_error_message; "
+                f"_terse_trap = {trap}.prev; (void)({handler}); }} "
+                f"INT64_C(0); }})",
+                "long",
+            )
         return "INT64_C(0)", "long"
 
 

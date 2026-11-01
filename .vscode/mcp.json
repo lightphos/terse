@@ -1,0 +1,17 @@
+{
+  "servers": {
+    "xerj": {
+      "type": "stdio",
+      "command": "${userHome}/.local/bin/xerj",
+      "args": [
+        "mcp",
+        "--url",
+        "http://127.0.0.1:9200",
+        "--disable-feedback"
+      ],
+      "env": {
+        "XERJ_DISABLE_FEEDBACK": "true"
+      }
+    }
+  }
+}

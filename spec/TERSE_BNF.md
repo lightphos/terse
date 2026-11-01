@@ -131,6 +131,7 @@
 <postfix-op>    ::= "." IDENT
                   | "(" [ <expr> { "," <expr> } [ "," ] ] ")"
                   | "[" <expr> "]"
+                  | "trap" IDENT ":" <block-expr>
                   | "?"
 
 <primary-expr>  ::= INT

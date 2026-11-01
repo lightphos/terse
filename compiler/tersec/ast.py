@@ -69,6 +69,13 @@ class Call(Expr):
 
 
 @dataclass
+class TrapExpr(Expr):
+    expr: Expr
+    name: str
+    handler: Expr
+
+
+@dataclass
 class Member(Expr):
     obj: Expr
     field: str

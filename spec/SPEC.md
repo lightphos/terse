@@ -272,9 +272,15 @@ while cond { ... }
 ret expr                 // return from function (not only the block)
 brk                      // break loop
 skip                     // continue loop
+
+work() trap e: {          // handle err(...) raised by work()
+  pr("failed: " + e)
+}
 ```
 
 **`if` vs `match`:** both support pattern arms (`pat => expr`). Prefer either style consistently; they are equivalent for arm matching. Catch-all is `_ => …` (optional trailing `else` on pattern-`if`).
+
+`trap name: { ... }` attaches to the immediately preceding expression and catches the nearest `err(message)` raised while evaluating it, including errors propagated from called functions. The handler binding is a `str`. A handler may rethrow with `err(name)`; that error propagates to the next enclosing trap. An uncaught error prints to stderr and exits with status 1. A trap expression evaluates to `0`.
 
 Ternary: `cond ? then : else`
 
@@ -388,6 +394,13 @@ Unqualified `has`/`starts`/`ends` prefer `std.str` when the receiver is `str`; m
 io.in(path) -> str       // read text file
 io.out(path, text) -> long
 ```
+
+### `std.err`
+```
+err(message)             // raise a string error; caught by the nearest trap
+```
+
+`use std.err` makes the error API explicit; `err(message)` is also available as a host builtin.
 
 ### `std.tst`
 ```
