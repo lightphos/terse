@@ -20,14 +20,14 @@ Hi, World! This is terse
 ```
 ## Howz
 
-> Requires python3
+> Requires python3 for the compile
 
 ### Run and Test
 ```bash
 # Build program in example directory to a binary
 make run.eg dir=src
 make tst.t_eg
-make tst (all)
+make tst (runs all tests)
 ```
 
 > Tests are detected and run if functions are prefixed by `t_`
@@ -80,16 +80,6 @@ By default the host writes under the Terse home directory:
 - **`-o name` (bare name):** also under `~/.terse/out/name`
 - **`-o path/to/out` or an absolute `-o`:** uses that path as given
 
-```bash
-python3 compiler/tersec.py build src/hi.te
-# → ~/.terse/out/hi
-
-python3 compiler/tersec.py build src/hi.te -o out/hi
-# → out/hi  (relative path that includes a directory)
-
-python3 compiler/tersec.py lib src/utils.te
-# → ~/.terse/out/lib/utils/module.o
-```
 
 Environment overrides:
 
@@ -101,19 +91,10 @@ export TERSE_HOME=/path/to/.terse
 
 **Makefile note:** 
 
-- Explicit library build: `python3 compiler/tersec.py lib path/to/mod.te`
-- Auto-link of `~/.terse/out/lib/...` on `use` is **off by default**. Enable with `TERSE_AUTOLIB=1` if you want imports to prefer a fresh `module.o` over inlining.
+Auto-link of `~/.terse/out/lib/...` on `use` is **off by default**. Enable with `TERSE_AUTOLIB=1` if you want imports to prefer a fresh `module.o` over inlining.
 
 
 ## Stranger-friendly
-
-```bash
-python3 compiler/tersec.py build src/hi.te && ~/.terse/out/hi
-
-or 
-
-make run.hi
-```
 
 Try the following:
 
@@ -121,7 +102,7 @@ Try the following:
 |------|--------|
 | `src/hi.te` | smallest `go` + `pr` |
 | `src/fmt.te` | string `+` and `fmt(...)` |
-| `src/quickstart.te` | list, `lp`, `fn`, `fmt` |
+| `src/quickstart.te` | `lp`, `fn`, `fmt` |
 
 ## Features
 
@@ -146,21 +127,6 @@ Try the following:
 | Generics | `[T]`, qualified todo |
 | Exceptions | `err` todo |
 
-
-### Primitives
-
-Canonical names only (no aliases):
-
-| Name | Meaning |
-|------|---------|
-| `bool` | boolean |
-| `str` | string |
-| `chr` | 8-bit signed |
-| `byte` | 8-bit unsigned |
-| `int` | 32-bit signed |
-| `long` | 64-bit signed (**default** integer) |
-| `flt` | 32-bit float |
-| `dbl` | 64-bit float (**default** float literal) |
 
 ```terse
 fn add(a: long, b: long) -> long = a + b
@@ -192,12 +158,7 @@ Optional libraries sit next to the compiler tree. Dots in `use` map to path
 segments under `lib/` or `src/`:
 
 ```text
-lib/math.te           →  use math          →  math.fact(5)
 lib/calc/math.te      →  use calc.math     →  math.abs(x)   (alias = last segment)
-lib/cnx/http.te       →  use cnx.http      →  http.srv(...)
-lib/std/tst.te        →  use std.tst       →  tst.eq(...)
-src/arith.te          →  use arith         →  app modules
-src/usage/util.te     →  use usage.util    →  util.*
 ```
 
 ```terse
@@ -227,14 +188,14 @@ The import alias is the **last** path segment (`use calc.math` → `math`), so c
 | -----| ---------|
 | std.io  | file i/o |
 | std.out | pr/*con?* - assumed, no use needed |
-| lib.tst | testing |
-| lib.http | http *client*/server |
-| lib.db | todo, *plugin* mechanism |
-| lib.msg | *todo* |
-| lib.ai | *todo* |
-| lib.maths | *todo*, rnd |
-| lib.process | *todo*, env, calls |
-| lib.loom | concurrency *todo* |
+| std.tst | testing |
+| calc.maths | *todo*, rnd |
+| cnx.http | http *client*/server |
+| cnx.db | todo, *plugin* mechanism |
+| cnx.msg | *todo* |
+| run.ai | *todo* |
+| run.prc | *todo*, env, calls |
+| run.loom | concurrency *todo* |
 
 
 ## Language Spec
