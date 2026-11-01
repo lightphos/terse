@@ -293,8 +293,22 @@ native frontend first, and reports when it falls back:
 make bootstrap
 ```
 
+## TODO
+ 
+### Features
 
-## TODO: Native Compiler Parity
+- i++
+- --i
+- ~fn -> async
+- .. method -> await
+- [i * 2] etc
+- arrays examples
+- list push pop
+- queues
+- maps
+- hash free linear lookup
+
+### Native Compiler Parity
 
 - [x] Generalize function declarations and calls: multiple functions, arbitrary
   parameter/argument lists, optional `long`/`bool` parameter and return
@@ -319,7 +333,7 @@ make bootstrap
   documented future middleware and request-decoding support.
 
 
-## TODO
+### Native
 
 - tc -> native terse compiler
 - tp -> package manager and processor

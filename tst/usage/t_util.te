@@ -5,3 +5,13 @@ fn t_util() {
     tst.eq(double(21), 42) 
     tst.eq(add(10, 32), 42) 
 }
+
+fn utilp(acts: [int], exps: [int]) { 
+    lp i=0; i<len(acts); i += 1 {
+        tst.eq(double(acts[i]), exps[i])
+    }
+}
+
+fn t_util_list() { 
+    utilp([1,2,3,4], [2,4,6,8])
+}
