@@ -99,20 +99,34 @@ fn parse_req(raw: str) -> Req {
   ret Req { method: method, path: path, query: query, body: body }
 }
 
-// Blocks forever. handler: fn(Req) -> Res
+// Illustrative API; these poller/connection methods would need runtime support.
 pub fn srv(port: long, handler: fn(Req) -> Res) {
-  val ls = sock.listen(port)
-  lp true {
-    val c = sock.accept(ls)
-    if c < 0 { skip }
-    val raw = sock.recv(c)
-    if len(raw) == 0 {
-      sock.close(c)
-      skip
+  val poll = net.poller()
+  val listener = sock.listen_nonblock(port)
+
+  poll.on_readable(listener, |server| {
+    lp true {
+      val c = sock.accept_nonblock(server)
+      if c == net.AGAIN { brk }
+
+      val conn = http.connection(c, handler)
+      poll.watch(c, conn.events(), |fd, events| {
+        conn.advance(fd, events)
+        if conn.done() { poll.remove(fd); sock.close(fd) }
+      })
     }
-    val rq = parse_req(raw)
+  })
+
+  poll.run()
+}
+
+pub ~fn srv(port: long, handler: fn(Req) -> Res) {
+  val lis = net.listen(port)
+  lp true {
+    val c = .. net.accept(lis)
+    val rq = .. http.read_request(c)
     val rs = handler(rq)
-    sock.send(c, format_response(rs))
-    sock.close(c)
+    .. http.write_response(c, rs)
+    net.close(c)
   }
 }

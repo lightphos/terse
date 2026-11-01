@@ -7,7 +7,7 @@ Reference compiler for the **Terse** language, implemented in Python at `compile
 - Build + run an example: `make terse.<name> dir=src` → `out/<name>`; also `./run.sh <name>` (build+run) or `./cmp.sh <name>` (build only)
 - Direct CLI: `python3 compiler/tersec.py {build|run|check} FILE [-o OUT] [--keep-c] [-v]`. `check` only parses + typechecks and prints `OK`.
 - Tests: `make tst` runs all `tst/t_*.te` programs. The host compiler unit suite can also be run with `python3 -m unittest compiler.test_compiler -v`.
-- Language spec: `spec/SPEC.md`, grammar: `spec/bnf.md` (the README's `docs/SPEC.md` link is stale; `docs/` does not exist).
+- Language spec: `spec/SPEC.md`, grammar: `spec/TERSE_BNF.md`.
 
 ## Gotchas
 - **gcc must be on PATH** and sqlite3 headers present (`-lsqlite3` is linked on non-Windows). Without gcc, every compile/test fails with `FileNotFoundError: 'gcc'`.

@@ -1,7 +1,7 @@
 # Terse Roadmap
 
 Living plan for the next work items.  
-**Reference compiler:** `tersec.py` (host) · **Grammar/spec:** `terse_bnf.md`, `SPEC.md` (0.3) · **Native:** `tc.te` (subset)
+**Reference compiler:** `tersec.py` (host) · **Grammar/spec:** `TERSE_BNF.md`, `SPEC.md` (0.3) · **Native:** `tc.te` (subset)
 
 Status legend: **Done** · **Next** · **Later** · **Parked**
 
@@ -18,7 +18,7 @@ Status legend: **Done** · **Next** · **Later** · **Parked**
 - `std.str`, `std.io`, `std.tst` (`eq` / `ne`)
 - Hard diagnostics: unknown name/function, type mismatch (abort before gcc)
 - Bootstrap path for `tc.te` (stage0 → stage1)
-- Docs: SPEC 0.3, `terse_bnf.md`, unit suite `test_compiler.py`
+- Docs: SPEC 0.3, `TERSE_BNF.md`, unit suite `test_compiler.py`
 
 ---
 
@@ -217,16 +217,8 @@ Update **`tc.te`** at these milestones:
 
 ---
 
-## 5. Explicitly not in the next set
 
-- SQL / DB runtime (removed by design)
-- Matching Python feature parity for every AST node in `tc.te`
-- Changing `val`/`var` back to `let`/`mut`
-- Free Grok API or editor plugins as language requirements
-
----
-
-## 6. Suggested execution order (checklist)
+## 5. Suggested execution order (checklist)
 
 ```
 Host:
@@ -248,7 +240,7 @@ Native (only at triggers in §3.3):
 
 ---
 
-## 7. Definition of “usable”
+## 6. Definition of “usable”
 
 Terse is **usable** when:
 

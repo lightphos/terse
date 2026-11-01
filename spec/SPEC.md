@@ -2,7 +2,7 @@
 
 **Terse** is a succinct, statically typed language that compiles to native binaries. It emphasizes compact syntax, modules, and a small standard surface for I/O and tests.
 
-This document is the **language contract** aligned with `terse_bnf.md` and the **Python reference compiler** (`tersec.py`). The native self-hosting compiler (`tc.te`) is an experimental subset and is **not** the conformance reference.
+This document is the **language contract** aligned with `TERSE_BNF.md` and the **Python reference compiler** (`tersec.py`). The native self-hosting compiler (`tc.te`) is an experimental subset and is **not** the conformance reference.
 
 **Status labels:** **Implemented** (host), **Limited**, **Planned**.
 
