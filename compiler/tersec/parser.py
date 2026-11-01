@@ -539,12 +539,20 @@ class Parser:
     def parse_params(self):
         ps = []
         self.expect(TT.LPAREN)
+        saw_default = False
         while not self.match(TT.RPAREN):
             name = self.expect(TT.IDENT).v
             typ = None
             if self.match(TT.COLON):
                 self.adv(); typ = self.parse_type()
-            ps.append(Param(name, typ))
+            default = None
+            if self.match(TT.ASSIGN):
+                self.adv()
+                default = self.parse_expr()
+                saw_default = True
+            elif saw_default:
+                raise SyntaxError("parameters without defaults cannot follow parameters with defaults")
+            ps.append(Param(name, typ, default))
             if self.match(TT.COMMA): self.adv()
         self.expect(TT.RPAREN)
         return ps
@@ -875,6 +883,8 @@ class Parser:
 
     def parse_method(self, receiver: str, name: str):
         params = self.parse_params()
+        if any(p.default is not None for p in params):
+            raise SyntaxError("default parameters are only supported on functions")
         ret = None
         if self.match(TT.ARROW):
             self.adv(); ret = self.parse_type()

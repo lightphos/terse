@@ -38,6 +38,7 @@ class TypeChecker:
         self.generic_enums = {}
         self.generic_fns = {}  # name -> FnDecl with type_params
         self.overloads = {}  # name -> [(param_types, cname, ret)]
+        self.function_decls = {}  # name -> concrete FnDecl overloads
         self.specialized = {}  # mangled -> FnDecl / rec / en
         self.prog = None
 
@@ -138,10 +139,12 @@ class TypeChecker:
                 self.fixes[c.name] = self.check(c.value)
         self.overloads = {}
         self.generic_fns = {}
+        self.function_decls = {}
         for f in prog.funcs:
             if getattr(f, 'type_params', None):
                 self.generic_fns[f.name] = f
                 continue
+            self.function_decls.setdefault(f.name, []).append(f)
             ats = [_norm_type_name(p.typ) if p.typ else 'long' for p in f.params]
             ret = _norm_type_name(f.ret) if f.ret else 'long'
             existing = self.overloads.setdefault(f.name, [])
@@ -159,13 +162,20 @@ class TypeChecker:
                 continue  # check specialized clones on demand
             self.current_fn = f.name
             self.current_ret = _norm_type_name(f.ret) if f.ret else 'long'
-            self.env = {
-                p.name: (
+            self.env = {}
+            for p in f.params:
+                ptype = (
                     _fn_type_tag(p.typ) if p.typ and getattr(p.typ, 'name', None) == 'fn'
                     else (_norm_type_name(p.typ) if p.typ else 'long')
                 )
-                for p in f.params
-            }
+                if p.default is not None:
+                    default_type = self.check(p.default)
+                    if not _types_compatible(ptype, default_type):
+                        self.errors.append(
+                            f"type error: default for parameter '{p.name}' in function "
+                            f"'{f.name}' has type '{default_type}', expected '{ptype}'"
+                        )
+                self.env[p.name] = ptype
             body_t = self.check(f.body)
             if body_t and not _types_compatible(self.current_ret, body_t):
                 self.errors.append(
@@ -260,6 +270,7 @@ class TypeChecker:
         ret = _norm_type_name(nf.ret) if nf.ret else 'long'
         self.funcs[mangled] = (ats, ret)
         self.overloads.setdefault(mangled, []).append((ats, ret))
+        self.function_decls.setdefault(mangled, []).append(nf)
         self.specialized[mangled] = nf
         if prog is not None and not any(f.name == mangled for f in prog.funcs):
             prog.funcs.append(nf)
@@ -511,6 +522,89 @@ class TypeChecker:
                             n = mangled
             if isinstance(e.func, Var):
                 n = e.func.name
+                declarations = self.function_decls.get(n, [])
+                if declarations:
+                    arity_candidates = []
+                    for fn in declarations:
+                        required = next(
+                            (i for i, p in enumerate(fn.params) if p.default is not None),
+                            len(fn.params),
+                        )
+                        if required <= len(e.args) <= len(fn.params):
+                            pts = [
+                                _norm_type_name(p.typ) if p.typ else 'long'
+                                for p in fn.params[:len(e.args)]
+                            ]
+                            ret = _norm_type_name(fn.ret) if fn.ret else 'long'
+                            arity_candidates.append((fn, pts, ret))
+                    if not arity_candidates:
+                        ranges = []
+                        for fn in declarations:
+                            required = next(
+                                (i for i, p in enumerate(fn.params) if p.default is not None),
+                                len(fn.params),
+                            )
+                            ranges.append(
+                                str(required) if required == len(fn.params)
+                                else f"{required}..{len(fn.params)}"
+                            )
+                        expected = ", ".join(sorted(set(ranges)))
+                        self.errors.append(
+                            f"type error: function '{n}' expects {expected} argument(s), "
+                            f"got {len(e.args)}"
+                        )
+                        return 'long'
+                    if len(arity_candidates) == 1:
+                        selected = [arity_candidates[0][0]]
+                        ret_type = arity_candidates[0][2]
+                    else:
+                        partials = [(pts, fn.name, ret) for fn, pts, ret in arity_candidates]
+                        resolved = _resolve_overload(partials, arg_types)
+                        if resolved is None:
+                            self.errors.append(
+                                f"type error: no overload of '{n}' matches ({', '.join(arg_types)})"
+                            )
+                            return 'long'
+                        ret_type = resolved[2]
+                        selected = [
+                            fn for fn, pts, ret in arity_candidates
+                            if pts == resolved[0]
+                        ]
+                    if len(selected) != 1:
+                        self.errors.append(
+                            f"type error: call to '{n}' is ambiguous with "
+                            f"{len(e.args)} argument(s)"
+                        )
+                        return ret_type
+                    fn = selected[0]
+                    if len(e.args) < len(fn.params):
+                        e.resolved_params = copy.deepcopy(fn.params)
+                        old_env = self.env
+                        self.env = old_env.copy()
+                        for param in fn.params[:len(e.args)]:
+                            self.env[param.name] = (
+                                _norm_type_name(param.typ) if param.typ else 'long'
+                            )
+                        for param in fn.params[len(e.args):]:
+                            default_type = self.check(param.default)
+                            expected_type = _norm_type_name(param.typ) if param.typ else 'long'
+                            if not _types_compatible(expected_type, default_type):
+                                self.errors.append(
+                                    f"type error: default for parameter '{param.name}' in "
+                                    f"function '{n}' has type '{default_type}', "
+                                    f"expected '{expected_type}'"
+                                )
+                            self.env[param.name] = expected_type
+                        self.env = old_env
+                    if len(declarations) > 1:
+                        for i, (actual, param) in enumerate(zip(arg_types, fn.params)):
+                            expected_type = _norm_type_name(param.typ) if param.typ else 'long'
+                            if not _types_compatible(expected_type, actual):
+                                self.errors.append(
+                                    f"type error: argument {i + 1} of '{n}' has type "
+                                    f"'{actual}', expected '{expected_type}'"
+                                )
+                    return ret_type
                 overs = getattr(self, 'overloads', {}).get(n) or []
                 if len(overs) > 1:
                     pack = [(pts, n, ret) for pts, ret in overs]

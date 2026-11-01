@@ -14,6 +14,7 @@ class TypeNode:
 class Param:
     name: str
     typ: Optional[TypeNode] = None
+    default: Optional['Expr'] = None
 
 
 class Expr:
@@ -64,6 +65,7 @@ class Call(Expr):
     args: List[Expr]
     line: int = 0
     col: int = 0
+    resolved_params: Optional[List[Param]] = None
 
 
 @dataclass

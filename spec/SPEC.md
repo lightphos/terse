@@ -167,7 +167,12 @@ Rules:
 - Soft match: if no exact overload, integer widths may match each other (e.g. `int` arg to `long` param) when unique.
 - Each overload is a distinct C symbol: `terse_eq__long_long`, `terse_eq__str_str`, …
 - A single definition of a name still emits `terse_<name>` (no suffix).
-- Arity must match; no default arguments or optional parameters.
+- Parameters may have defaults: `fn f(a: long, b: long = a + 1) = ...`.
+  Defaulted parameters must be trailing. Omitted defaults are evaluated at the
+  call site, with references to earlier parameters substituted from the call.
+  Defaults are supported for functions; methods do not yet support them.
+- Calls must provide every required argument and no more than the declared
+  parameter count.
 - Return type is not part of the overload key (only parameters).
 
 

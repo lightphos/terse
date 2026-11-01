@@ -22,6 +22,9 @@ make tst.t_eg
 make tst (all)
 ```
 
+Tests are detected if prefixed by `t_`
+
+
 ### VS Code Support
 ```bash
 make vscode-terse

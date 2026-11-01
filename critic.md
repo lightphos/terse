@@ -1,6 +1,6 @@
 # Critique of the Terse Language
 
-Based on reviewing `spec/SPEC.md`, `spec/TERSE_BNF.md`, `compiler/tersec.py`, and the test suite, here's my analysis:
+Based on reviewing `spec/SPEC.md`, `spec/TERSE_BNF.md`, the compiler package under `compiler/tersec/`, and the test suite, here's my analysis:
 
 ---
 
@@ -14,7 +14,7 @@ Based on reviewing `spec/SPEC.md`, `spec/TERSE_BNF.md`, `compiler/tersec.py`, an
 
 4. **Explicit Module Resolution** — `use` resolution order is deterministic and documented. The parallel `tst/` ↔ `src/` pairing for tests is elegant.
 
-5. **Host Compiler as Conformance Reference** — The Python `tersec.py` is the truth; `tc.te` is experimental. This avoids bootstrapping circularity.
+5. **Host Compiler as Conformance Reference** — The Python compiler package under `compiler/tersec/` is the truth; `tc.te` is still experimental. This avoids bootstrapping circularity.
 
 6. **Structural Traits (Implicit Satisfaction)** — `rec` satisfies `tr` by having matching methods — no `impl` boilerplate. Keeps code terse.
 
@@ -102,7 +102,7 @@ go {
 
 ## **Compiler Implementation Concerns**
 
-1. **Single 5300-line `tersec.py`** — Lexer, parser, type checker, codegen all in one file. Hard to maintain/test in isolation.
+1. **`tersec.py` Is No Longer a Single 5300-line Monolith** — The compiler has been split into a package (`compiler/tersec/lexer.py`, `parser.py`, `ast.py`, `typecheck.py`, `codegen.py`, `utils.py`), which is a much healthier structure for maintenance and targeted testing. The concern is no longer sheer file size but keeping module boundaries and interfaces disciplined as the compiler grows.
 
 2. **Type Checker Mutates AST** — `specialize_generic` rewrites `Call.func` from `Index` to `Var(mangled)` in-place (line 1890). Makes debugging hard; AST no longer matches source.
 

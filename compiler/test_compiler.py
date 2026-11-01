@@ -68,6 +68,44 @@ class TestArithmetic(unittest.TestCase):
         assert_result(self, src, "720")
 
 
+class TestDefaultParameters(unittest.TestCase):
+    def test_default_parameters(self):
+        test_path = os.path.join(ROOT, "..", "tst", "t_def_param.te")
+        with open(test_path, encoding="utf-8") as f:
+            src = f.read()
+        rc, out, err = compile_and_run(src)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([line for line in out.splitlines() if line], ["99", "3", "6", "12", "6"])
+
+    def test_required_parameter_cannot_follow_default(self):
+        _, code, log = compile_src(
+            "fn invalid(a: long = 1, b: long) -> long = a + b\ngo invalid(2)"
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("cannot follow", log)
+
+    def test_overloaded_default_parameters(self):
+        src = textwrap.dedent("""\
+            fn suffix(value: long, extra: long = 1) -> long = value + extra
+            fn suffix(value: str, extra: str = "!") -> str = value + extra
+            go {
+              pr(suffix(2))
+              pr(suffix("ok"))
+              0
+            }
+        """)
+        rc, out, err = compile_and_run(src)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([line for line in out.splitlines() if line], ["3", "ok!"])
+
+    def test_too_many_arguments_with_defaults(self):
+        _, code, log = compile_src(
+            "fn value(a: long = 1) -> long = a\ngo value(1, 2)"
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("expects 0..1 argument(s), got 2", log)
+
+
 class TestControl(unittest.TestCase):
     def test_if(self):
         src = textwrap.dedent("""\

@@ -46,6 +46,7 @@ class CodeGen:
         self.known = {}
         self.tmp = 0
         self.env = {}
+        self.var_aliases = {}
         self.source_path = source_path or "?"
         self.route_handlers = []  # generated C funcs for routes
         self.record_field_types = {}
@@ -281,6 +282,8 @@ class CodeGen:
                 parts.append(f".{name} = {v}")
             return f"(({rec_name}){{ {', '.join(parts)} }})", rec_name
         if isinstance(e, Var):
+            if e.name in self.var_aliases:
+                return self.var_aliases[e.name], self.env.get(e.name, "long")
             if e.name in self.known:
                 return f"(void*){self.known[e.name]}", "fn"
             if e.name in self.env:
@@ -794,6 +797,58 @@ class CodeGen:
                 e.func.name in self.known or e.func.name in getattr(self, 'overloads', {})
             ):
                 overs = getattr(self, 'overloads', {}).get(e.func.name) or []
+                if e.resolved_params is not None:
+                    params = e.resolved_params
+                    param_types = [
+                        self.type_name(p.typ) if p.typ else 'long'
+                        for p in params
+                    ]
+                    resolved = next(
+                        (
+                            item for item in overs
+                            if len(item[0]) == len(param_types)
+                            and all(
+                                _norm_type_name(actual) == _norm_type_name(expected)
+                                for actual, expected in zip(item[0], param_types)
+                            )
+                        ),
+                        None,
+                    )
+                    cname = resolved[1] if resolved else self.known.get(e.func.name)
+                    ret_type = (
+                        resolved[2] if resolved
+                        else self.func_return_types.get(cname, 'long')
+                    )
+                    old_env = self.env.copy()
+                    old_aliases = self.var_aliases.copy()
+                    declarations = []
+                    arg_names = []
+                    for i, arg in enumerate(e.args):
+                        expected = param_types[i]
+                        code, _ = self.gen_expr(arg, expected)
+                        name = self.fresh()
+                        declarations.append(
+                            f"{self.c_type(expected)} {name} = {code}"
+                        )
+                        arg_names.append(name)
+                    for i, param in enumerate(params[:len(e.args)]):
+                        self.env[param.name] = param_types[i]
+                        self.var_aliases[param.name] = arg_names[i]
+                    for i, param in enumerate(params[len(e.args):], start=len(e.args)):
+                        expected = param_types[i]
+                        code, _ = self.gen_expr(param.default, expected)
+                        name = self.fresh()
+                        declarations.append(
+                            f"{self.c_type(expected)} {name} = {code}"
+                        )
+                        arg_names.append(name)
+                        self.env[param.name] = expected
+                        self.var_aliases[param.name] = name
+                    self.env = old_env
+                    self.var_aliases = old_aliases
+                    call = f"{cname}({', '.join(arg_names)})"
+                    body = "; ".join(declarations + [call])
+                    return f"({{ {body}; }})", ret_type
                 cname = None
                 ret_ty = "long"
                 pts = None
@@ -1094,10 +1149,12 @@ class CodeGen:
             if e.typ is not None:
                 vt = self.type_name(e.typ)
             old = self.env.get(e.name)
+            old_alias = self.var_aliases.pop(e.name, None)
             self.env[e.name] = vt
             body, bt = self.gen_expr(e.body)
             if old is not None: self.env[e.name] = old
             else: self.env.pop(e.name, None)
+            if old_alias is not None: self.var_aliases[e.name] = old_alias
             if e.name == "_":
                 return f"({{ (void)({v}); {body}; }})", bt
             decl = f"{self.c_type(vt)} {e.name} = {v}"
@@ -1113,10 +1170,13 @@ class CodeGen:
             ps = ", ".join(ps_c) or "void"
             # save env params
             old_env = self.env.copy()
+            old_aliases = self.var_aliases.copy()
             for p in e.params:
                 self.env[p.name] = self.type_name(p.typ) if p.typ else 'long'
+                self.var_aliases.pop(p.name, None)
             body, bt = self.gen_expr(e.body)
             self.env = old_env
+            self.var_aliases = old_aliases
             ret_c = self.c_type(bt)
             self.extra.append(f"static {ret_c} {lname}({ps}) {{\n  return {body};\n}}\n")
             return f"(void*){lname}", "fn"
