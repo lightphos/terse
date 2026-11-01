@@ -337,8 +337,9 @@ def _load_source_modules(program, source_path):
             raise SyntaxError(
                 f"module '{use.path}' not found\n"
                 f"  searched: {tried}\n"
-                f"  hint: optional packages in lib/ (use math -> lib/math.te); app modules in src/ "
-                f"(dots map to paths: use usage.util -> src/usage/util.te)"
+                f"  hint: dots map to paths under lib/ or src/ "
+                f"(use calc.math -> lib/calc/math.te; use cnx.http -> lib/cnx/http.te; "
+                f"use usage.util -> src/usage/util.te)"
             )
         try:
             # stay under workspace-ish roots when possible

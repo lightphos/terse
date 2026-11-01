@@ -154,6 +154,37 @@ class TestHigherOrder(unittest.TestCase):
         """)
         assert_result(self, src, "107")
 
+    def test_lambda_mul(self):
+        src = textwrap.dedent("""\
+            fn apply(f: fn, x: i64) -> i64 = f(x)
+            go apply(|n| n * 3, 4)
+        """)
+        assert_result(self, src, "12")
+
+    def test_lambda_nested(self):
+        src = textwrap.dedent("""\
+            fn apply(f: fn, x: i64) -> i64 = f(x)
+            go {
+              val a = apply(|n| n * 2, 5)
+              apply(|n| n + 1, a)
+            }
+        """)
+        assert_result(self, src, "11")
+
+    def test_lambda_map_pipe(self):
+        src = textwrap.dedent("""\
+            fn sum(xs: [i64]) -> i64 {
+              var total = 0
+              lp x:xs { total += x }
+              total
+            }
+            go {
+              val xs = [1, 2, 3]
+              xs |> map(|n| n * 2) |> sum()
+            }
+        """)
+        assert_result(self, src, "12")
+
 
 class TestRecords(unittest.TestCase):
     def test_rec(self):

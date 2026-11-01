@@ -1,0 +1,34 @@
+use std.tst
+
+fn apply(f: fn, x: i64) -> i64 = f(x)
+
+fn sum(xs: [i64]) -> i64 {
+  var total = 0
+  lp x:xs {
+    total += x
+  }
+  total
+}
+
+fn t_lambda_add() {
+  tst.eq(apply(|n| n + 100, 7), 107)
+}
+
+fn t_lambda_mul() {
+  tst.eq(apply(|n| n * 3, 4), 12)
+}
+
+fn t_lambda_nested() {
+  val a = apply(|n| n * 2, 5)
+  tst.eq(apply(|n| n + 1, a), 11)
+}
+
+fn t_lambda_map_pipe() {
+  val xs = [1, 2, 3]
+  tst.eq(xs |> map(|n| n * 2) |> sum(), 12)
+}
+
+fn t_lambda_map_add() {
+  val xs = [10, 20]
+  tst.eq(xs |> map(|n| n + 5) |> sum(), 40)
+}

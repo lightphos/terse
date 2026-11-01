@@ -1,4 +1,4 @@
-// Demo: HTTP server via lib/http on sock.*
+// Demo: HTTP server via lib/cnx/http on sock.*
 //   python3 compiler/tersec.py build src/http_srv_demo.te -o out/http_srv_demo -f
 //   ./out/http_srv_demo
 //
@@ -13,18 +13,18 @@ use cnx.http
 fn handle(r: Req) -> Res {
 
   if r.get() {
-    "/" => ret cnx.http.success("hello world\n", "text/plain; charset=utf-8")
-    "/api" => ret cnx.http.success("{\"ok\":true}\n", "application/json; charset=utf-8")
+    "/" => ret http.success("hello world\n", "text/plain; charset=utf-8")
+    "/api" => ret http.success("{\"ok\":true}\n", "application/json; charset=utf-8")
   }
 
   if r.post() {
-    "/echo" => ret cnx.http.success(r.body + "\n", "text/plain; charset=utf-8")
+    "/echo" => ret http.success(r.body + "\n", "text/plain; charset=utf-8")
   }
   
-  ret cnx.http.fail(Status.not_found, "not found\n", "text/plain; charset=utf-8")
+  ret http.fail(Status.not_found, "not found\n", "text/plain; charset=utf-8")
 }
 
 go {
   pr("starting on :8765 (GET /, /api  POST /echo)")
-  cnx.http.srv(8765, handle)
+  http.srv(8765, handle)
 }

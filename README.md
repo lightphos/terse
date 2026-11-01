@@ -156,27 +156,39 @@ Built-ins like `map` expect `(collection, fn)`; piping puts the collection in th
 ## Library packages (`lib/`)
 
 
-Optional libraries sit next to the compiler tree:
+Optional libraries sit next to the compiler tree. Dots in `use` map to path
+segments under `lib/` or `src/`:
 
 ```text
-lib/math.te      →  use math       →  math.fact(5), math.abs(x)
-lib/std/tst.te   →  use std/tst    →  tst.eq(...)
-src/arith.te     →  use arith      →  app modules
+lib/math.te           →  use math          →  math.fact(5)
+lib/calc/math.te      →  use calc.math     →  math.abs(x)   (alias = last segment)
+lib/cnx/http.te       →  use cnx.http      →  http.srv(...)
+lib/std/tst.te        →  use std.tst       →  tst.eq(...)
+src/arith.te          →  use arith         →  app modules
+src/usage/util.te     →  use usage.util    →  util.*
 ```
 
 ```terse
-use tst
-use math
+use std.tst
+use calc.math
 
 fn t_fact5() {
   tst.eq(math.fact(5), 120)
 }
 ```
 
+**General rule:** `use a.b.c` resolves to the first existing file among:
+
+1. Next to the importing file: `a/b/c.te`
+2. Project `lib/a/b/c.te` (optional packages)
+3. Project `src/a/b/c.te` (app modules)
+4. Project root `a/b/c.te`
+
+The import alias is the **last** path segment (`use calc.math` → `math`), so calls look like `math.fact(...)`. In `tst/` sources, public names are also available unqualified (`fact(5)`).
+
 - **`pub`** functions are the public API of a package  
-- Search order includes **`lib/`** for every `use` (see SPEC §5)  
-- No registry yet — packages are files in `lib/` (or on the module search path)  
-- Precompile: `python3 compiler/tersec.py lib lib/math.te` → `~/.terse/out/lib/math/module.o`
+- No registry yet — packages are files under `lib/` / `src/`  
+- Precompile: `python3 compiler/tersec.py lib lib/calc/math.te` → `~/.terse/out/lib/...`
 
 
 | Libs | Function |

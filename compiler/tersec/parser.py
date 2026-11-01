@@ -795,8 +795,9 @@ class Parser:
                 explicit_alias = True
             if path.startswith('io.') or path in ('io',) or segments[0] == 'io':
                 path = 'std.' + path if not path.startswith('std.') else path
-            glob = (symbol is None and segments[0] != 'std' and segments[0] != 'io'
-                    and len(segments) == 2 and separators == ['.'] and not explicit_alias)
+            # Dotted paths are packages: use calc.math → lib/calc/math.te, alias math
+            # (namespace math.abs). Do not treat 2-segment paths as globs.
+            glob = False
             uses.append(UseDecl(path, alias, symbol, glob))
             if self.match(TT.COMMA):
                 self.adv(); continue

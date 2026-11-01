@@ -1,5 +1,5 @@
 use std.tst
-use http
+use cnx.http
 
 fn t_parse_get() {
   val q = parse_req("GET /hello HTTP/1.1\r\nHost: x\r\n\r\n")
