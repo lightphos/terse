@@ -76,6 +76,18 @@ class TrapExpr(Expr):
 
 
 @dataclass
+class TupleLit(Expr):
+    items: List[Expr]
+
+
+@dataclass
+class TupleLetExpr(Expr):
+    names: List[str]
+    value: Expr
+    body: Expr
+
+
+@dataclass
 class Member(Expr):
     obj: Expr
     field: str

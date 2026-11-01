@@ -90,7 +90,7 @@ Integer types mix freely; int↔float promotes toward float. `str` does not mix 
 | Enum | `en Option { Some(long), None }` | Implemented; payloads ok |
 | Trait | `tr Printable { fn str() -> str }` | Implemented (implicit satisfaction) |
 | Function | `fn(long) -> long` | Limited higher-order |
-| Tuple | `(long, str)` | **Limited** — types/patterns parse; not a full feature yet |
+| Tuple | `(long, str)` | Limited — tuple returns, literals, printing, and local destructuring are implemented; tuple patterns are not |
 
 Inference is local. Annotate non-`long` parameters/returns when needed.
 

@@ -1,3 +1,4 @@
 go {
-    pr("hi!")
+    val a = arg(1) == "" ? "World" : arg(1) 
+    pr("Hi, " + a + "! This is terse!")
 }

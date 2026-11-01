@@ -4,13 +4,21 @@ A succinct language that compiles to native binaries, with structures, interface
 
 ### Hi
 
+> src/hi.te
 ```terse
+
 go {
-    pr("hi!")
+    val a = arg(1) == "" ? "World" : arg(1) 
+    pr("Hi, " + a + "! This is terse!")
 }
+
 ```
 
-## Start
+> make run.hi
+```
+Hi, World! This is terse
+```
+## Howz
 
 > Requires python3
 
@@ -22,7 +30,7 @@ make tst.t_eg
 make tst (all)
 ```
 
-Tests are detected if prefixed by `t_`
+> Tests are detected and run if functions are prefixed by `t_`
 
 
 ### VS Code Support

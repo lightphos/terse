@@ -467,6 +467,22 @@ class TestErrors(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertEqual(out.strip(), "trap assertion ran")
 
+    def test_prefixed_test_with_parameters_is_selected(self):
+        with tempfile.TemporaryDirectory(prefix="terse_test_") as tmp:
+            test_dir = os.path.join(tmp, "tst")
+            os.makedirs(test_dir)
+            src_path = os.path.join(test_dir, "t_param.te")
+            with open(src_path, "w", encoding="utf-8") as f:
+                f.write("fn t_requires_input(value: long) { pr(value) }")
+            build = subprocess.run(
+                [sys.executable, TERSEC, "build", src_path, "-o", os.path.join(tmp, "t_param")],
+                capture_output=True,
+                text=True,
+                cwd=ROOT,
+            )
+        self.assertNotEqual(build.returncode, 0)
+        self.assertIn("expects 1 argument(s), got 0", build.stdout + build.stderr)
+
 
 class TestFix(unittest.TestCase):
     def test_fix_local(self):

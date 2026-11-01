@@ -1,0 +1,15 @@
+
+
+fn pair() -> (int, int) {
+    ret (1, 2)
+}
+
+fn xpair() -> int {
+    val a, b = pair()
+    ret a + b
+}
+
+go {
+    pr(pair())
+    pr(xpair())
+}

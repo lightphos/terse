@@ -8,7 +8,7 @@ from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-    Block, ListLit, MapLit, Index, FnDecl, TrapExpr,
+    Block, ListLit, MapLit, Index, FnDecl, TrapExpr, TupleLit, TupleLetExpr,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
     EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
     EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -340,6 +340,11 @@ class TypeChecker:
         if isinstance(e, IntLit): return 'long'
         if isinstance(e, BoolLit): return 'bool'
         if isinstance(e, StrLit): return 'str'
+        if isinstance(e, TupleLit):
+            e.inferred_type = 'tuple__' + '__'.join(
+                _norm_type_name(self.check(item)) for item in e.items
+            )
+            return e.inferred_type
         if isinstance(e, ListLit):
             item_types = [self.check(it) for it in e.items]
             if not item_types:
@@ -765,6 +770,25 @@ class TypeChecker:
             if old is not None: self.env[e.name] = old
             else: self.env.pop(e.name, None)
             return r
+        if isinstance(e, TupleLetExpr):
+            tuple_type = self.check(e.value)
+            item_types = tuple_type[7:].split('__') if tuple_type.startswith('tuple__') else []
+            if len(item_types) != len(e.names):
+                self.errors.append(
+                    f"type error: tuple destructuring expects {len(e.names)} value(s), "
+                    f"got {len(item_types)}"
+                )
+                item_types = ['long'] * len(e.names)
+            old_values = {name: self.env.get(name) for name in e.names}
+            for name, item_type in zip(e.names, item_types):
+                self.env[name] = item_type
+            result = self.check(e.body)
+            for name, old in old_values.items():
+                if old is None:
+                    self.env.pop(name, None)
+                else:
+                    self.env[name] = old
+            return result
         if isinstance(e, Lambda):
             old = self.env.copy()
             for p in e.params:

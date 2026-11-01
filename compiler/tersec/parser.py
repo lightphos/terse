@@ -7,7 +7,7 @@ from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-    Block, ListLit, MapLit, Index, FnDecl, TrapExpr,
+    Block, ListLit, MapLit, Index, FnDecl, TrapExpr, TupleLit, TupleLetExpr,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
     EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
     EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -239,7 +239,11 @@ class Parser:
 
     def parse_binding(self):
         self.adv()  # consume val/var
-        name = self.expect(TT.IDENT).v
+        names = [self.expect(TT.IDENT).v]
+        while self.match(TT.COMMA):
+            self.adv()
+            names.append(self.expect(TT.IDENT).v)
+        name = names if len(names) > 1 else names[0]
         typ = None
         if self.match(TT.COLON):
             self.adv(); typ = self.parse_type()
@@ -311,7 +315,12 @@ class Parser:
         for kind, *rest in reversed(stmts):
             if kind == 'let':
                 name, val, typ = rest
-                body = LetExpr(name, val, body if body is not None else IntLit(0), typ=typ)
+                if isinstance(name, list):
+                    if typ is not None:
+                        raise SyntaxError("tuple destructuring cannot have a type annotation")
+                    body = TupleLetExpr(name, val, body if body is not None else IntLit(0))
+                else:
+                    body = LetExpr(name, val, body if body is not None else IntLit(0), typ=typ)
             elif kind == 'ret':
                 body = rest[0]
             else:
@@ -503,12 +512,13 @@ class Parser:
                 return IntLit(0)
             e = self.parse_expr()
             if self.match(TT.COMMA):
+                items = [e]
                 while self.match(TT.COMMA):
                     self.adv()
                     if self.match(TT.RPAREN): break
-                    self.parse_expr()
+                    items.append(self.parse_expr())
                 self.expect(TT.RPAREN)
-                return e
+                return TupleLit(items)
             self.expect(TT.RPAREN)
             return e
         if self.match(TT.LBRACK): return self.parse_list()

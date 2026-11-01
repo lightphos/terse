@@ -9,7 +9,7 @@ from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-    Block, ListLit, MapLit, Index, FnDecl, TrapExpr,
+    Block, ListLit, MapLit, Index, FnDecl, TrapExpr, TupleLit, TupleLetExpr,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
     EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
     EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -58,6 +58,8 @@ class CodeGen:
         self.enum_values = {}  # enum name -> {variant: value}
         self.func_param_types = {}
         self.func_return_types = {}
+        self.tuple_types = {}
+        self.current_return_type = None
 
     def emit(self, s=""):
         self.lines.append("  " * self.indent + s)
@@ -83,6 +85,8 @@ class CodeGen:
             return f'({cname}){{NULL,NULL,0,0}}'
         if ty in getattr(self, 'record_field_types', {}) or ty in getattr(self, 'enum_values', {}):
             return f'({self.c_type(ty)}){{0}}'
+        if isinstance(ty, str) and ty.startswith('tuple__'):
+            return f'({self.c_type(ty)}){{0}}'
         return 'INT64_C(0)'
 
     def tst_where(self, e=None):
@@ -98,6 +102,11 @@ class CodeGen:
     def type_name(self, typ):
         if typ is None:
             return 'long'
+        if typ.name == 'tuple':
+            items = [self.type_name(arg) for arg in typ.args]
+            name = 'tuple__' + '__'.join(items)
+            self.tuple_types[name] = items
+            return name
         if typ.name == 'list' and typ.args:
             inner = self.type_name(typ.args[0])
             if inner == 'str':
@@ -132,6 +141,8 @@ class CodeGen:
 
 
     def c_type(self, t):
+        if isinstance(t, str) and t.startswith('tuple__'):
+            return 'Terse_' + t
         if isinstance(t, str) and t.startswith('fn:'):
             # fn:Arg1,Arg2>Ret  →  Ret(*)(Arg1, Arg2)
             try:
@@ -176,6 +187,11 @@ class CodeGen:
             return 'dbl'
         if isinstance(e, BoolLit):
             return 'bool'
+        if isinstance(e, TupleLit):
+            item_types = [self.expr_type(item) for item in e.items]
+            tuple_type = 'tuple__' + '__'.join(item_types)
+            self.tuple_types.setdefault(tuple_type, item_types)
+            return tuple_type
         if isinstance(e, ListLit):
             if e.items:
                 return 'list_' + self.expr_type(e.items[0]) if self.expr_type(e.items[0]) != 'long' else 'list'
@@ -273,6 +289,18 @@ class CodeGen:
         if isinstance(e, StrLit):
             s = e.value.replace('\\','\\\\').replace('"','\\"').replace('\r','\\r').replace('\n','\\n').replace('\t','\\t')
             return f'"{s}"', "str"
+        if isinstance(e, TupleLit):
+            expected_items = self.tuple_types.get(expected_type, [])
+            item_codes = []
+            item_types = []
+            for i, item in enumerate(e.items):
+                expected = expected_items[i] if i < len(expected_items) else None
+                code, item_type = self.gen_expr(item, expected)
+                item_codes.append(f".v{i} = {code}")
+                item_types.append(expected or item_type)
+            tuple_type = expected_type or ('tuple__' + '__'.join(item_types))
+            self.tuple_types.setdefault(tuple_type, item_types)
+            return f"(({self.c_type(tuple_type)}){{ {', '.join(item_codes)} }})", tuple_type
         if isinstance(e, RecordLit):
             rec_name = e.ctor.name if isinstance(e.ctor, Var) else 'record'
             parts = []
@@ -396,7 +424,7 @@ class CodeGen:
             return "({ continue; INT64_C(0); })", "long"
         if isinstance(e, RetExpr):
             if e.value is not None:
-                v, vt = self.gen_expr(e.value)
+                v, vt = self.gen_expr(e.value, self.current_return_type)
                 return f"({{ return {v}; {self.zero_value(vt)}; }})", vt
             return "({ return INT64_C(0); INT64_C(0); })", "long"
         if isinstance(e, ListLit):
@@ -533,6 +561,30 @@ class CodeGen:
                 return expr, 'str'
             if isinstance(e.func, Var) and e.func.name == 'pr':
                 a, at = self.gen_expr(e.args[0])
+                if at.startswith('tuple__'):
+                    fields = self.tuple_types[at]
+                    printers = []
+                    for i, field_type in enumerate(fields):
+                        field = f"({a}).v{i}"
+                        if field_type == 'str':
+                            printers.append(f'printf("%s", {field} ? {field} : "")')
+                        elif field_type == 'bool':
+                            printers.append(f'printf("%s", {field} ? "true" : "false")')
+                        elif field_type in ('dbl', 'flt'):
+                            printers.append(f'printf("%g", (double){field})')
+                        elif field_type == 'int':
+                            printers.append(f'printf("%d", (int){field})')
+                        else:
+                            printers.append(f'printf("%lld", (long long){field})')
+                    inner = ', printf(", "), '.join(printers)
+                    tmp = self.fresh()
+                    return (
+                        f'({{ {self.c_type(at)} {tmp} = {a}; '
+                        f'_terse_did_print = 1; printf("("); '
+                        f'{inner.replace(f"({a}).", f"{tmp}.")}; '
+                        f'printf(")\\n"); INT64_C(0); }})',
+                        "long",
+                    )
                 if at == 'str':
                     return f"(print_str({a}), INT64_C(0))", "long"
                 if at in ('list', 'List', 'list_long'):
@@ -1162,6 +1214,26 @@ class CodeGen:
                 return f"({{ (void)({v}); {body}; }})", bt
             decl = f"{self.c_type(vt)} {e.name} = {v}"
             return f"({{ {decl}; {body}; }})", bt
+        if isinstance(e, TupleLetExpr):
+            value, tuple_type = self.gen_expr(e.value)
+            item_types = self.tuple_types.get(tuple_type, [])
+            if len(item_types) != len(e.names):
+                return f"({{ (void)({value}); INT64_C(0); }})", "long"
+            tmp = self.fresh()
+            old_env = self.env.copy()
+            declarations = []
+            for i, (name, item_type) in enumerate(zip(e.names, item_types)):
+                self.env[name] = item_type
+                declarations.append(
+                    f"{self.c_type(item_type)} {name} = {tmp}.v{i};"
+                )
+            body, body_type = self.gen_expr(e.body)
+            self.env = old_env
+            return (
+                f"({{ {self.c_type(tuple_type)} {tmp} = {value}; "
+                f"{' '.join(declarations)} {body}; }})",
+                body_type,
+            )
         if isinstance(e, Lambda):
             self.lam_n += 1
             lname = f"__lambda_{self.lam_n}"
@@ -1247,7 +1319,10 @@ class CodeGen:
                 self.env[p.name] = self.type_name(p.typ) if p.typ else 'long'
         if f.params and f.params[0].name == 'self':
             self.env['self'] = self.type_name(f.params[0].typ) if f.params[0].typ else 'long'
-        body, _ = self.gen_expr(f.body)
+        old_return_type = self.current_return_type
+        self.current_return_type = ret
+        body, _ = self.gen_expr(f.body, ret)
+        self.current_return_type = old_return_type
         self.env = old_env
         self.emit(f"{crt} {cname}({pstr}) {{")
         self.indent += 1
@@ -1322,8 +1397,8 @@ class CodeGen:
         for f in funcs:
             if getattr(f, 'type_params', None):
                 continue
-            pts = [_norm_type_name(p.typ) if p.typ else 'long' for p in f.params]
-            ret = _norm_type_name(f.ret) if f.ret else 'long'
+            pts = [self.type_name(p.typ) if p.typ else 'long' for p in f.params]
+            ret = self.type_name(f.ret) if f.ret else 'long'
             if name_counts[f.name] > 1:
                 cname = _mangle_overload(f.name, pts)
             else:
@@ -1341,6 +1416,30 @@ class CodeGen:
             self.func_return_types[cname] = ret
             self.func_return_types[f.name] = ret
             self.overloads.setdefault(f.name, []).append((pts, cname, ret))
+
+        def register_tuple_literals(node):
+            if isinstance(node, TupleLit):
+                tuple_type = getattr(node, 'inferred_type', None)
+                item_types = (
+                    tuple_type[7:].split('__') if tuple_type
+                    else [self.expr_type(item) for item in node.items]
+                )
+                tuple_type = tuple_type or ('tuple__' + '__'.join(item_types))
+                self.tuple_types.setdefault(tuple_type, item_types)
+            if hasattr(node, '__dict__'):
+                for value in vars(node).values():
+                    if isinstance(value, Expr) or hasattr(value, '__dict__'):
+                        register_tuple_literals(value)
+                    elif isinstance(value, (list, tuple)):
+                        for item in value:
+                            if isinstance(item, Expr) or hasattr(item, '__dict__'):
+                                register_tuple_literals(item)
+
+        for f in funcs:
+            register_tuple_literals(f.body)
+        if prog.toplevel is not None:
+            register_tuple_literals(prog.toplevel)
+
         out = [get_runtime(), ""]
         # Emit top-level fix constants
         for c in self.const_decls:
@@ -1466,6 +1565,12 @@ class CodeGen:
                 out.extend(fields)
                 out.append("};")
                 out.append("")
+        for tuple_name, item_types in self.tuple_types.items():
+            out.append("typedef struct {")
+            for i, item_type in enumerate(item_types):
+                out.append(f"  {self.c_type(item_type)} v{i};")
+            out.append(f"}} {self.c_type(tuple_name)};")
+            out.append("")
         for rec in concrete_recs:
             out.append(self.record_print_code(rec))
         # emit generated fit methods after record declarations so their receiver type is known

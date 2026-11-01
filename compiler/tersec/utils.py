@@ -87,6 +87,8 @@ def _norm_type_name(t) -> str:
             return 'list_str' if inner == 'str' else f'list_{inner}'
         if name == 'map' and len(args) >= 2:
             return f"map_{_norm_type_name(args[0])}_{_norm_type_name(args[1])}"
+        if name == 'tuple':
+            return 'tuple__' + '__'.join(_norm_type_name(arg) for arg in args)
     return name
 
 
@@ -138,6 +140,13 @@ def _types_compatible(expected, got, strict_list=False) -> bool:
     g = _norm_type_name(got)
     if e == g:
         return True
+    if e.startswith('tuple__') and g.startswith('tuple__'):
+        e_items = e[7:].split('__')
+        g_items = g[7:].split('__')
+        return (
+            len(e_items) == len(g_items)
+            and all(_types_compatible(et, gt, strict_list) for et, gt in zip(e_items, g_items))
+        )
     _intish = {'chr', 'byte', 'int', 'long'}
     if e in _intish and g in _intish:
         return not strict_list

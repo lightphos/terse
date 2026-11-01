@@ -1,0 +1,40 @@
+use std.tst
+
+fn pair() -> (int, int) {
+    ret (1, 2)
+}
+
+fn triple() -> (int, int, int) {
+    ret (1, 2, 3)
+}
+
+fn labeled() -> (str, long) {
+    ret ("answer", 42)
+}
+
+fn t_tuple_return_and_destructure() {
+    val a, b = pair()
+    tst.eq(a, 1)
+    tst.eq(b, 2)
+    tst.eq(a + b, 3)
+}
+
+fn t_three_value_tuple() {
+    val a, b, c = triple()
+    tst.eq(a, 1)
+    tst.eq(b, 2)
+    tst.eq(c, 3)
+    tst.eq(a + b + c, 6)
+}
+
+fn t_tuple_with_different_types() {
+    val label, value = labeled()
+    tst.eq(label, "answer")
+    tst.eq(value, 42)
+}
+
+fn t_tuple_literal_destructure() {
+    val count, label = (7, "items")
+    tst.eq(count, 7)
+    tst.eq(label, "items")
+}

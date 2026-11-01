@@ -142,7 +142,7 @@
                   | IDENT
                   | "(" ")"
                   | "(" <expr> ")"
-                  | "(" <expr> "," <expr> { "," <expr> } [ "," ] ")"
+                  | "(" <expr> "," <expr> { "," <expr> } [ "," ] ")"  (* tuple *)
                   | "[" [ <expr> { "," <expr> } [ "," ] ] "]"
                   | <map-literal>
                   | <record-literal>

@@ -8,7 +8,7 @@ PYTHON   ?= python3
 TERSEC   ?= compiler/tersec.py
 TERSEC_TEST   ?= compiler/test_compiler.py
 TC_SRC   ?= compiler/tc.te
-OUT      ?= out
+OUT      ?= ~/.terse/out
 
 STAGE0   := $(OUT)/tc-stage0
 STAGE1   := $(OUT)/tc-stage1
@@ -30,16 +30,16 @@ help:
 	@echo "  make clean"
 	@echo "CC=$(CC)  (export CC=... to change C compiler used by tc stages)"
 
-verify: tst
-	$(PYTHON) $(TERSEC_TEST)
+all: tst verify
 
+verify:
+	$(PYTHON) $(TERSEC_TEST)
 
 # --- Bootstrap ----------------------------------------------------------
 # Host-generated C for tc.te is ~130KB and fine.
 # Native stage0 emit is much larger (nested statement-exprs) and often OOMs
 # the C compiler on Windows (cc1.exe) when compiling full tc.te.
 # Default tcc1 uses the host again (reliable). Optional: make tcc1-native
-
 tcc:
 	@mkdir -p $(OUT)
 	$(PYTHON) $(TERSEC) build $(TC_SRC) -o $(STAGE0) -f --no-libs
@@ -82,15 +82,17 @@ bootstrap-verify: tcc
 
 # Native compiler: ./out/tc <source.te> <output>
 # (CLI is positional; not -o)
-terse.%:
+te.%:
 	@mkdir -p $(OUT)
 	CC=$(CC) $(TC) $(dir)/$*.te $(OUT)/$*
 	$(OUT)/$*
 
 # Host Python compiler
-run.%:
+bld.%:
 	@mkdir -p $(OUT)
 	$(PYTHON) $(TERSEC) build $(dir)/$*.te -o $(OUT)/$*
+
+run.%: bld.%
 	$(OUT)/$*
 
 tst.%:
@@ -105,9 +107,6 @@ vscode-terse:
 
 install-vscode-terse:
 	cd vscode-terse && code --install-extension vscode-terse-0.0.1.vsix
-
-test:
-	tst/test.sh
 
 tst:
 	@echo "Running all tst/t_*.te tests"
