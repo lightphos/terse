@@ -10,8 +10,8 @@ tr Show[T] {
 }
 
 rec Point {
-  x: i64,
-  y: i64
+  x: long,
+  y: long
 }
 
 fn Point.eq(other: Point) -> bool =

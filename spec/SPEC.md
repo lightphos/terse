@@ -36,8 +36,8 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 
 
 ### Literals
-- Integer: `42`, `-7` → `i64`
-- String: `"hello"` with `\n`, `\t`, `\"`, `\\`
+- Integer: `42`, `-7` → `long`
+- String: `"hello"` with `\n`, `\r`, `\t`, `\"`, `\\`, `\0`
 - Boolean: `true`, `false`
 - Lists: `[1, 2, 3]`, `["a", "b"]`
 - Maps: `{:}`, `{"a": 1}`
@@ -54,38 +54,45 @@ Lambda: `|params| body`
 ### Core Semantics
 - Exactly one `go` entrypoint per executable (`go { ... }` or `go = expr`).
 - `val` = immutable binding; `var` = mutable.
-- Blocks evaluate statements in order; value is the last expression (or `0` if empty).
-- `ret expr` returns from the current function; `ret` returns `0`.
+- Blocks evaluate statements in order; the **block value** is the last expression (or `0` if empty).
+- `ret expr` / `ret` always **return from the enclosing function** (not from the block alone). A bare last expression yields the block value without exiting the function.
 - `pr(x)` prints a line and returns `0`. If `pr` ran, `main` does not print an extra numeric result.
-- `+` on strings concatenates; `str + i64` / `i64 + str` convert the number.
-- `+` on lists: concat (`[str]`/`[i64]`) or push one element (`list + elem`).
+- `+` on strings concatenates; `str + long` / `long + str` convert the number.
+- `+` on lists: concat (`[str]`/`[long]`) or push one element (`list + elem`).
 
 ---
 
 ## 3. Types
 
 ### Primitives
-Primary: `i64`, `bool`, `str`.
 
-Integers (aliases in parentheses):  
-`i8` (`char`), `i16` (`short`), `i32` (`int`), `i64` (`long`),  
-`u8`, `u16`, `u32`, `u64`
+Canonical names only (no aliases):
 
-Floats: `f32` (`float`), `f64` (`double`) — float literals are `f64`.
+| Name | C backend | Notes |
+|------|-----------|--------|
+| `bool` | `bool` | |
+| `str` | `const char*` | |
+| `chr` | `int8_t` | 8-bit signed |
+| `byte` | `uint8_t` | 8-bit unsigned |
+| `int` | `int32_t` | 32-bit signed |
+| `long` | `int64_t` | **default** for unannotated integer literals |
+| `flt` | `float` | 32-bit float |
+| `dbl` | `double` | **default** for float literals |
 
 Integer types mix freely; int↔float promotes toward float. `str` does not mix with numbers (type error).
 
 ### Composite
 | Form | Example | Notes |
 |------|---------|--------|
-| List | `[i64]`, `[str]` | Implemented |
-| Map | `{str: i64}`, `{str: str}` | Implemented |
-| Record | `rec Point { x: i64, y: i64 }` | Implemented |
-| Enum | `en Option { Some(i64), None }` | Implemented; payloads ok |
+| List | `[long]`, `[str]` | Implemented |
+| Map | `{str: long}`, `{str: str}` | Implemented |
+| Record | `rec Point { x: long, y: long }` | Implemented |
+| Enum | `en Option { Some(long), None }` | Implemented; payloads ok |
 | Trait | `tr Printable { fn str() -> str }` | Implemented (implicit satisfaction) |
-| Function | `fn(i64) -> i64` | Limited higher-order |
+| Function | `fn(long) -> long` | Limited higher-order |
+| Tuple | `(long, str)` | **Limited** — types/patterns parse; not a full feature yet |
 
-Inference is local. Annotate non-`i64` parameters/returns when needed.
+Inference is local. Annotate non-`long` parameters/returns when needed.
 
 ---
 
@@ -97,17 +104,19 @@ Parametric functions with **monomorphization** (no runtime dictionaries):
 fn id[T](x: T) -> T = x
 fn first[T](xs: [T]) -> T = xs[0]
 
-id(42)           // infer T=i64
+id(42)           // infer T=long
 id[str]("hi")    // explicit
 first(xs)        // infer T from list element
 ```
 
 - Type params: `[T]` or `[A, B]` after the name.
 - Call with inference or explicit `name[Type](...)` / `name[A,B](...)`.
-- Each concrete use emits a specialized C function (`id__i64`, …).
+- Each concrete use emits a specialized C function (`id__long`, …).
 - Generic **`rec Box[T]`** and **`en Opt[T]`** — monomorphize at use:
-  `Box[i64] { value: 1 }`, `Opt[i64].Some(3)` (specialized names like `Opt__i64` in patterns for now).
-- **Not yet:** constraints (`T: Ord`), generic `tr`, pretty pattern names without `__`.
+  `Box[long] { value: 1 }`, `Opt[long].Some(3)`.
+- **Known limitation:** pattern arms may require specialized names (`Opt__long.Some(x)`) until demangling lands.
+- Generic **`tr Eq[T]`** — structural satisfaction after subst is partial; trait *parameters* like `fn f(p: Show[Point])` are not fully codegen'd yet (use non-generic traits or concrete types).
+- **Not yet:** constraints (`T: Ord`), pretty pattern names without `__`.
 
 ## 4. Declarations & Visibility
 
@@ -131,33 +140,32 @@ Tests under `tst/**/t_*.te` may call non-`pub` fns from a parallel `src/` module
 | `fix` | **private (file-local)** | `pub fix` |
 
 ```
-pub fn add(a: i64, b: i64) -> i64 = a + b
+pub fn add(a: long, b: long) -> long = a + b
 
-pub rec Point { x: i64, y: i64 }
+pub rec Point { x: long, y: long }
 
-en Option { Some(i64), None }     // public by default
+en Option { Some(long), None }     // public by default
 
 fix SECRET = 1                    // file-local only
 pub fix VERSION: str = "0.3"      // exported
 ```
 
-Methods: `fn Point.add() -> i64 { self.x + self.y }`
+Methods: `fn Point.add() -> long { self.x + self.y }`
 
 ### Parameter overloading **Implemented (host)**
 Multiple functions may share a **name** if their **parameter type lists** differ:
 
 ```
-fn eq(got: i64, exp: i64) -> i64 { ... }
-fn eq(got: str, exp: str) -> i64 { ... }
-fn eq(got: long, exp: long) -> i64 { ... }   // long ≡ i64 → same as first; error if identical
+fn eq(got: long, exp: long) -> long { ... }
+fn eq(got: str, exp: str) -> long { ... }
+fn eq(got: int, exp: int) -> long { ... }     // distinct from long overload
 ```
 
 Rules:
 - Resolution is **type-directed** at each call site (argument types after local checking).
-- Identical signatures for the same name (after alias normalization) are a **type error**.
-- Aliases normalize before comparing: `long`≡`i64`, `int`≡`i32`, `short`≡`i16`, `char`≡`i8`, `float`≡`f32`, `double`≡`f64`.
-- Soft match: if no exact overload, integer widths may match each other (e.g. `i32` arg to `i64` param) when unique.
-- Each overload is a distinct C symbol: `terse_eq__i64_i64`, `terse_eq__str_str`, …
+- Identical signatures for the same name are a **type error**.
+- Soft match: if no exact overload, integer widths may match each other (e.g. `int` arg to `long` param) when unique.
+- Each overload is a distinct C symbol: `terse_eq__long_long`, `terse_eq__str_str`, …
 - A single definition of a name still emits `terse_<name>` (no suffix).
 - Arity must match; no default arguments or optional parameters.
 - Return type is not part of the overload key (only parameters).
@@ -198,15 +206,25 @@ Optional libraries that ship with the Terse tree but are **not** part of the fro
 
 | File | Import | Call style |
 |------|--------|------------|
-| `lib/math.te` | `use math` | `math.abs(x)`, `math.fact(5)` |
-| `lib/http.te` | `use http` | (stub / future) |
+| `lib/calc/math.te` | `use calc.math` | `math.abs(x)`, `math.fact(5)` (alias = last segment) |
+| `lib/cnx/http.te` | `use cnx.http` | `http.srv(...)`, `http.success(...)` |
+| `lib/std/tst.te` | `use std.tst` | `tst.eq(...)` |
+
+**Path rule:** `use a.b.c` maps to path segments under `lib/` or `src/` (first hit wins):
+
+1. Next to the importing file  
+2. `lib/a/b/c.te`  
+3. `src/a/b/c.te`  
+4. Project root `a/b/c.te`  
+
+Alias is the **last** segment (`use calc.math` → `math`). In `tst/` sources, public names are also available unqualified.
 
 Rules:
 
 - Export with **`pub fn`** / **`pub rec`** (tests under `tst/` may see non-`pub` too)
-- Prefer **bare** names (`use math`), not `std.math`, unless the API is frozen into §8
-- No package registry yet — “install” means the file is on the search path (`lib/` in the repo or copied next to the project)
-- Optional: `python3 compiler/tersec.py lib lib/math.te` builds `~/.terse/out/lib/math/module.o`
+- Prefer package paths under `lib/` for optional libraries
+- No package registry yet — “install” means the file is on the search path
+- Optional: `python3 compiler/tersec.py lib lib/calc/math.te` builds `~/.terse/out/lib/...`
 
 ### What `use m` imports
 - `pub fn` (and all fns when the importer is a **test** `tst/**/t_*.te`)
@@ -228,8 +246,14 @@ Modules may contain `go` (ignored when imported as a library).
 ```
 if cond { ... } else if ... { ... } else { ... }
 
-// Pattern if (arms with =>)
+// Pattern if (arms with =>) — same arm syntax as match
 if r {
+  Result.Ok(n) => n
+  Result.Err(msg) => 0
+  _ => -1
+}
+
+match r {
   Result.Ok(n) => n
   Result.Err(msg) => 0
   _ => -1
@@ -240,12 +264,16 @@ lp i = 0; i < n; i = i + 1 { ... }
 lp cond { ... }
 while cond { ... }
 
-ret expr
-brk                      // break
-skip                     // continue
+ret expr                 // return from function (not only the block)
+brk                      // break loop
+skip                     // continue loop
 ```
 
+**`if` vs `match`:** both support pattern arms (`pat => expr`). Prefer either style consistently; they are equivalent for arm matching. Catch-all is `_ => …` (optional trailing `else` on pattern-`if`).
+
 Ternary: `cond ? then : else`
+
+**Pipe** `|>` is left-to-right application (parse rewrite): `xs |> map(f) |> sum()` → `sum(map(xs, f))`.
 
 ---
 
@@ -253,28 +281,32 @@ Ternary: `cond ? then : else`
 
 ### Lists
 ```
-var xs: [i64] = []
-xs = xs + 1
-xs = xs + [2, 3]
+var xs: [long] = []
+xs = xs + 1              // push one element (preferred; no separate push())
+xs = xs + [2, 3]         // concat
 len(xs)
 xs[i]
+map(xs, f)               // apply f to each element → new list
+xs |> map(|n| n * 2)     // pipe form
 
 var ss: [str] = []
 ss = ss + ["a"] + "b"
 ```
 
+`map` is part of the host list surface (not “limited”). There is no separate `push` builtin — use `list + elem`.
+
 
 ### Maps — missing keys
 
-- `m[k]` on a missing key returns **`0`** (`{str:i64}`) or **`""`** (`{str:str}`); it does **not** abort.
+- `m[k]` on a missing key returns **`0`** (`{str:long}`) or **`""`** (`{str:str}`); it does **not** abort.
 - Use `has(m, k)` before read when absence is an error.
 - List index OOB still aborts: `index out of bounds: index N len M`.
 
 ### Maps
-Host supports **string keys** and **i64 or str values** (`{str: i64}`, `{str: str}`).
+Host supports **string keys** and **long or str values** (`{str: long}`, `{str: str}`).
 
 ```
-var m: {str: i64} = {:}
+var m: {str: long} = {:}
 m["a"] = 3
 pr(m["a"])
 len(m)
@@ -316,7 +348,7 @@ Names are not keywords — use `use std.*` or call the same names as builtins (h
 
 ### Strings: `+` and `fmt`
 
-**Concatenation** uses `+`. At least one side is `str`; the other may be `str`, `i64`/`long`, or `bool` (converted automatically):
+**Concatenation** uses `+`. At least one side is `str`; the other may be `str`, `long`/`long`, or `bool` (converted automatically):
 
 ```terse
 "hi " + name
@@ -340,16 +372,16 @@ str.starts(s, prefix) -> bool
 str.ends(s, suffix) -> bool
 str.trim(s) -> str
 str.up(s) / str.low(s) -> str
-str.parse(s) -> i64
+str.parse(s) -> long
 str.split(s, sep) -> [str]
 str.join(parts, sep) -> str
 ```
-Unqualified forms (`has(s, sub)`, …) are accepted by the host when not ambiguous with map `has`.
+Unqualified `has`/`starts`/`ends` prefer `std.str` when the receiver is `str`; map `has(m, k)` requires a map as first argument (overload by type).
 
 ### `std.io`
 ```
 io.in(path) -> str       // read text file
-io.out(path, text) -> i64
+io.out(path, text) -> long
 ```
 
 ### `std.tst`
@@ -371,7 +403,7 @@ env("KEY") = "value" // set process env (setenv / _putenv_s)
 ```
 has(m, key) -> bool
 keys(m) -> [str]
-len(m) -> i64
+len(m) -> long
 ```
 
 ### Other core builtins
@@ -417,7 +449,7 @@ The host compiler (`tersec.py`) reports problems before or instead of opaque C e
 |---------|---------|
 | `type error: unknown name 'X'` | Identifier not in scope (locals, `fix`, enums, imports) |
 | `type error: unknown function 'X'` | Call to an undefined function |
-| `type error: type mismatch: ...` | Assign/arg/compare with incompatible types (e.g. `str` vs `i32`) |
+| `type error: type mismatch: ...` | Assign/arg/compare with incompatible types (e.g. `str` vs `int`) |
 | `error: N error(s) — compile aborted` | Summary after one or more hard errors |
 
 Hard errors of the form `unknown …` stop the pipeline **before** gcc/clang, so you should not see `undeclared identifier` from the C compiler for simple name mistakes.
@@ -471,31 +503,33 @@ python3 tersec.py run main.te
 ## 12. Compiler Status (0.3 host)
 
 ### Implemented
-- Arithmetic, comparisons, `val`/`var`, blocks, `ret`, ternary  
+- Arithmetic, comparisons, `val`/`var`, blocks, `ret`, ternary, pipe `|>`  
 - `fix` / `pub fix` (private by default)  
-- Functions, methods, recursion, simple lambdas  
+- Functions, methods, recursion, simple lambdas (no capture)  
 - Parameter overloading (distinct param type lists)  
-- Records, enums (+ payloads), traits (implicit)  
+- Records, enums (+ payloads), non-generic traits (implicit satisfaction)  
 - Pattern `if` / `match`  
 - Loops: for-in, C-style, condition; `brk` / `skip`  
-- Lists width types `[i32]`/`[i64]`/`[f64]`/`[str]`/… (+, len, index, push)  
-- Maps `{str:i64|str}`: put/get, `has`, `keys`, `len`, for-in keys  
-- Modules: `use`, `pub`, parallel `tst`↔`src`  
-- Frozen std: `std.str`, `std.io`, `std.tst`; `env` get/set  
+- Lists width types `[int]`/`[long]`/`[dbl]`/`[str]`/… (+, len, index, `map`)  
+- Maps `{str:long|str}`: put/get, `has`, `keys`, `len`, for-in keys  
+- Modules: `use`, `pub`, nested packages (`use calc.math` → `lib/calc/math.te`), parallel `tst`↔`src`  
+- Frozen std: `std.str`, `std.io`, `std.tst`; `env` get/set; `fmt`  
 - `go` entry; `pr`; string/int concat  
 - Unit-test runner; hard errors for unknown names/functions  
 - Output: `~/.terse/out`; optional `lib` objects (`TERSE_AUTOLIB` for auto-link)  
 
 ### Limited
 - Higher-order / closures with capture  
-- Full generics, tuples  
-- HTTP beyond minimal serve  
+- Generics: monomorphized `fn`/`rec`/`en`; specialized pattern names (`Opt__long`); generic trait *params* incomplete  
+- Tuple types/patterns (parsed; not a polished feature)  
+- HTTP via `lib/cnx/http.te` (blocking single-connection `srv`)  
 - Full structural type errors (beyond unknown names)
 
 ### Planned / not host-complete
 - Ownership/borrowing  
 - Native `tc.te` feature parity with host  
-- Richer package system beyond path `use`  
+- Trait constraints / demangled generic patterns  
+- Async / scalable HTTP  
   
 
 ---

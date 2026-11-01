@@ -13,14 +13,14 @@ en Opt[T] {
 fn id[T](x: T) -> T = x
 
 go {
-  val b = Box[i64] { value: 7 }
+  val b = Box[long] { value: 7 }
   pr(fmt("box=", b.value))
 
-  val o = Opt[i64].Some(3)
-  // specialized name is Opt__i64 after monomorphize
+  val o = Opt[long].Some(3)
+  // specialized name is Opt__long after monomorphize
   if o {
-    Opt__i64.Some(x) => pr(fmt("some=", x))
-    Opt__i64.None => pr("none")
+    Opt__long.Some(x) => pr(fmt("some=", x))
+    Opt__long.None => pr("none")
   }
 
   pr(id(42))

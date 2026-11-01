@@ -5,27 +5,27 @@ en Opt[T] {
   None
 }
 
-fn is_some_i64(o: Opt__i64) -> bool {
+fn is_some_long(o: Opt__long) -> bool {
   // tag-only discrimination via pattern if
   if o {
-    Opt__i64.Some(x) => ret true
-    Opt__i64.None => ret false
+    Opt__long.Some(x) => ret true
+    Opt__long.None => ret false
   }
   ret false
 }
 
 fn t_some_tag() {
-  val o = Opt[i64].Some(9)
-  tst.eq(is_some_i64(o), true)
+  val o = Opt[long].Some(9)
+  tst.eq(is_some_long(o), true)
 }
 
 fn t_none_tag() {
-  val o = Opt[i64].None
-  tst.eq(is_some_i64(o), false)
+  val o = Opt[long].None
+  tst.eq(is_some_long(o), false)
 }
 
 fn t_some_construct() {
-  val o = Opt[i64].Some(42)
+  val o = Opt[long].Some(42)
   // constructing Some is enough; unwrap via match payload when env binds
-  tst.eq(is_some_i64(o), true)
+  tst.eq(is_some_long(o), true)
 }

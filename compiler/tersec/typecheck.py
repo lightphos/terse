@@ -8,7 +8,7 @@ from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-    Block, ListLit, MapLit, Index, Route, HttpServe, FnDecl,
+    Block, ListLit, MapLit, Index, FnDecl,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
     EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
     EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -43,7 +43,7 @@ class TypeChecker:
 
     def _type_name(self, t):
         if t is None:
-            return 'i64'
+            return 'long'
         if t.name == 'list' and t.args:
             return f"list_{self._type_name(t.args[0])}"
         return t.name
@@ -93,8 +93,8 @@ class TypeChecker:
                         if p.typ is not None:
                             ps.append(self._type_name(_subst_type_node(p.typ, mapping)))
                         else:
-                            ps.append('i64')
-                    rt = self._type_name(_subst_type_node(ret, mapping)) if ret else 'i64'
+                            ps.append('long')
+                    rt = self._type_name(_subst_type_node(ret, mapping)) if ret else 'long'
                     sig_methods.append((mname, ps, rt))
                 if self._matches(rec.name, sig_methods):
                     args = tuple(mapping[tp] for tp in tps)
@@ -122,7 +122,7 @@ class TypeChecker:
             if getattr(r, 'type_params', None):
                 self.generic_recs[r.name] = r
             else:
-                self.recs[r.name] = {n: (self._type_name(t) if t else 'i64') for n, t in r.fields}
+                self.recs[r.name] = {n: (self._type_name(t) if t else 'long') for n, t in r.fields}
         self.enums = {}
         self.generic_enums = {}
         for e in prog.enums:
@@ -142,8 +142,8 @@ class TypeChecker:
             if getattr(f, 'type_params', None):
                 self.generic_fns[f.name] = f
                 continue
-            ats = [_norm_type_name(p.typ) if p.typ else 'i64' for p in f.params]
-            ret = _norm_type_name(f.ret) if f.ret else 'i64'
+            ats = [_norm_type_name(p.typ) if p.typ else 'long' for p in f.params]
+            ret = _norm_type_name(f.ret) if f.ret else 'long'
             existing = self.overloads.setdefault(f.name, [])
             for pats, pret in existing:
                 if pats == ats:
@@ -158,11 +158,11 @@ class TypeChecker:
             if getattr(f, 'type_params', None):
                 continue  # check specialized clones on demand
             self.current_fn = f.name
-            self.current_ret = _norm_type_name(f.ret) if f.ret else 'i64'
+            self.current_ret = _norm_type_name(f.ret) if f.ret else 'long'
             self.env = {
                 p.name: (
                     _fn_type_tag(p.typ) if p.typ and getattr(p.typ, 'name', None) == 'fn'
-                    else (_norm_type_name(p.typ) if p.typ else 'i64')
+                    else (_norm_type_name(p.typ) if p.typ else 'long')
                 )
                 for p in f.params
             }
@@ -198,9 +198,9 @@ class TypeChecker:
             t = p.typ
             if isinstance(t, TypeNode) and t.name == 'list' and t.args:
                 inner = _type_node_name(t.args[0])
-                atn = at[5:] if isinstance(at, str) and at.startswith('list_') else ('i64' if at in ('list', 'List', 'list_i64') else at)
-                if at in ('list', 'List', 'list_i64'):
-                    atn = 'i64'
+                atn = at[5:] if isinstance(at, str) and at.startswith('list_') else ('long' if at in ('list', 'List', 'list_long') else at)
+                if at in ('list', 'List', 'list_long'):
+                    atn = 'long'
                 elif isinstance(at, str) and at.startswith('list_'):
                     atn = at[5:]
                 if not bind(inner, atn):
@@ -256,8 +256,8 @@ class TypeChecker:
                 for it in e.items:
                     walk(it)
         walk(nf.body)
-        ats = [_norm_type_name(p.typ) if p.typ else 'i64' for p in nf.params]
-        ret = _norm_type_name(nf.ret) if nf.ret else 'i64'
+        ats = [_norm_type_name(p.typ) if p.typ else 'long' for p in nf.params]
+        ret = _norm_type_name(nf.ret) if nf.ret else 'long'
         self.funcs[mangled] = (ats, ret)
         self.overloads.setdefault(mangled, []).append((ats, ret))
         self.specialized[mangled] = nf
@@ -266,7 +266,7 @@ class TypeChecker:
         old_fn, old_ret, old_env = self.current_fn, self.current_ret, self.env
         self.current_fn = mangled
         self.current_ret = ret
-        self.env = {p.name: (_norm_type_name(p.typ) if p.typ else 'i64') for p in nf.params}
+        self.env = {p.name: (_norm_type_name(p.typ) if p.typ else 'long') for p in nf.params}
         body_t = self.check(nf.body)
         if body_t and not _types_compatible(ret, body_t):
             self.errors.append(
@@ -295,7 +295,7 @@ class TypeChecker:
         for fname, ft in nr.fields:
             fields.append((fname, _subst_type_node(ft, mapping)))
         nr.fields = fields
-        self.recs[mangled] = {n: (self._type_name(t) if t else 'i64') for n, t in nr.fields}
+        self.recs[mangled] = {n: (self._type_name(t) if t else 'long') for n, t in nr.fields}
         self.specialized[mangled] = nr
         if prog is not None and not any(r.name == mangled for r in prog.recs):
             prog.recs.append(nr)
@@ -326,7 +326,7 @@ class TypeChecker:
         return mangled
 
     def check(self, e):
-        if isinstance(e, IntLit): return 'i64'
+        if isinstance(e, IntLit): return 'long'
         if isinstance(e, BoolLit): return 'bool'
         if isinstance(e, StrLit): return 'str'
         if isinstance(e, ListLit):
@@ -335,12 +335,12 @@ class TypeChecker:
                 return 'list'  # empty: inhabits any list_* via annotation
             norms = [_norm_type_name(t) for t in item_types]
             base = norms[0]
-            _intish = {'i8','i16','i32','i64','u8','u16','u32','u64','char'}
+            _intish = {'i8','i16','int','long','u8','u16','u32','u64','char'}
             for i, t in enumerate(norms[1:], start=2):
                 if t == base:
                     continue
                 if base in _intish and t in _intish:
-                    base = 'i64'
+                    base = 'long'
                     continue
                 self.errors.append(
                     f"type error: list element {i} has type '{t}', expected '{base}'"
@@ -350,9 +350,9 @@ class TypeChecker:
                 return 'list_str'
             if base in self.recs:
                 return f'list_{base}'
-            if base in ('i8','i16','i32','u8','u16','u32','u64','char','f32','f64','bool'):
+            if base in ('i8','i16','int','u8','u16','u32','u64','char','f32','dbl','bool'):
                 return f'list_{base}'
-            return 'list_i64'
+            return 'list_long'
         if isinstance(e, RecordLit):
             for _, v in e.fields: self.check(v)
             if isinstance(e.ctor, Index) and isinstance(e.ctor.coll, Var):
@@ -370,19 +370,19 @@ class TypeChecker:
                 self.errors.append(
                     f"type error: '{e.ctor.name}' is generic; use {e.ctor.name}[T] {{ ... }}"
                 )
-            return 'i64'
+            return 'long'
         if isinstance(e, Var):
             if e.name in self.env: return self.env[e.name]
             if hasattr(self, 'fixes') and e.name in self.fixes: return self.fixes[e.name]
             if e.name in self.enums: return e.name
             if e.name in self.funcs or e.name in (
-                'pr','len','json','env','str','push','substr','arg',
+                'pr','len','env','str','push','substr','arg',
                 'keys','values','has','up','low','trim','split','join',
                 'parse','starts','ends','map','fmt'
             ): return 'fn'
             if e.name in ('http','db','tst','fs','gcc','io','sock'): return 'mod'
             self.errors.append(f"unknown name '{e.name}'")
-            return 'i64'
+            return 'long'
         if isinstance(e, Member):
             if isinstance(e.obj, Index) and isinstance(e.obj.coll, Var):
                 n = e.obj.coll.name
@@ -397,15 +397,15 @@ class TypeChecker:
                     return e.obj.name
             base = self.check(e.obj)
             if base in self.recs:
-                return self.recs[base].get(e.field, 'i64')
+                return self.recs[base].get(e.field, 'long')
             if base in self.enums:
                 if e.field in self.enums[base]:
                     return base
-                return 'i64'
+                return 'long'
             if base in ('List', 'list') or (isinstance(base, str) and base.startswith('list_')):
                 if e.field in ('size', 'len'):
-                    return 'i64'
-            return 'i64'
+                    return 'long'
+            return 'long'
         if isinstance(e, Binary):
             lt = self.check(e.left); rt = self.check(e.right)
             if e.op == '=':
@@ -422,7 +422,7 @@ class TypeChecker:
                                 f"type error: cannot concat '{lt}' and '{rt}'"
                             )
                         return lt if lt.startswith('list_') else rt
-                    elem = lt[5:] if lt.startswith('list_') else 'i64'
+                    elem = lt[5:] if lt.startswith('list_') else 'long'
                     if not _types_compatible(elem, rt):
                         self.errors.append(
                             f"type error: cannot push '{rt}' into '{lt}'"
@@ -444,12 +444,12 @@ class TypeChecker:
                     )
                 return 'bool'
             if e.op in ('+','-','*','/','%'):
-                if lt in ('f64','f32') or rt in ('f64','f32'):
-                    if lt == 'f64' or rt == 'f64' or lt == 'double' or rt == 'double':
-                        return 'f64'
+                if lt in ('dbl','f32') or rt in ('dbl','f32'):
+                    if lt == 'dbl' or rt == 'dbl' or lt == 'double' or rt == 'double':
+                        return 'dbl'
                     return 'f32'
-                return 'i64'
-            return 'bool' if e.op in ('==','!=','<','>','<=','>=','&&','||') else 'i64'
+                return 'long'
+            return 'bool' if e.op in ('==','!=','<','>','<=','>=','&&','||') else 'long'
         if isinstance(e, Unary): return self.check(e.expr)
         if isinstance(e, RetExpr):
             if e.value is not None:
@@ -460,12 +460,12 @@ class TypeChecker:
                         f"type error: ret type '{vt}' does not match function '{fn}' return type '{self.current_ret}'"
                     )
                 return vt
-            if self.current_ret is not None and not _types_compatible(self.current_ret, 'i64'):
+            if self.current_ret is not None and not _types_compatible(self.current_ret, 'long'):
                 fn = self.current_fn or '<fn>'
                 self.errors.append(
                     f"type error: bare ret is i64 but function '{fn}' returns '{self.current_ret}'"
                 )
-            return 'i64'
+            return 'long'
         if isinstance(e, Call) and isinstance(e.func, Member):
             if isinstance(e.func.obj, Index) and isinstance(e.func.obj.coll, Var):
                 n = e.func.obj.coll.name
@@ -485,7 +485,7 @@ class TypeChecker:
         if isinstance(e, Call):
             if isinstance(e.func, Var):
                 n = e.func.name
-                builtins = {'pr','len','json','env','str','push','substr','arg','keys','values',
+                builtins = {'pr','len','env','str','push','substr','arg','keys','values',
                             'has','up','low','trim','split','join','parse','starts','ends','map','fmt'}
                 if (n not in self.funcs and n not in builtins and n not in self.env
                         and n not in getattr(self, 'generic_fns', {})):
@@ -519,14 +519,14 @@ class TypeChecker:
                         self.errors.append(
                             f"type error: no overload of '{n}' matches ({', '.join(arg_types)})"
                         )
-                        return 'i64'
+                        return 'long'
                     return resolved[2]
                 if n in self.funcs:
                     return self.funcs[n][1]
                 if n == 'fmt':
                     return 'str'
                 if n == 'pr':
-                    return 'i64'
+                    return 'long'
             if isinstance(e.func, Member):
                 recv_t = self.check(e.func.obj)
                 key = (recv_t, e.func.field)
@@ -537,7 +537,7 @@ class TypeChecker:
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name in ('io', 'fs'):
                 if e.func.field in ('in', 'read_text'): return 'str'
-                if e.func.field in ('out', 'write_text', 'append', 'append_text'): return 'i64'
+                if e.func.field in ('out', 'write_text', 'append', 'append_text'): return 'long'
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'str':
                 f = e.func.field
@@ -548,19 +548,19 @@ class TypeChecker:
                 if f in ('trim', 'up', 'low', 'join'):
                     return 'str'
                 if f == 'parse':
-                    return 'i64'
+                    return 'long'
                 if f == 'len':
-                    return 'i64'
+                    return 'long'
             if isinstance(e.func, Var):
                 n = e.func.name
                 if n == 'pr':
-                    return 'i64'
-                if n in ('json', 'env', 'substr', 'arg', 'trim', 'up', 'low', 'join', 'parse'):
-                    return 'str' if n != 'parse' else 'i64'
+                    return 'long'
+                if n in ( 'env', 'substr', 'arg', 'trim', 'up', 'low', 'join', 'parse'):
+                    return 'str' if n != 'parse' else 'long'
                 if n == 'split':
                     return 'list_str'
                 if n == 'len':
-                    return 'i64'
+                    return 'long'
                 if n == 'has':
                     return 'bool'
                 if n == 'keys':
@@ -571,7 +571,7 @@ class TypeChecker:
                     return 'bool'
                 if n == 'str':
                     return 'str'
-            return 'i64'
+            return 'long'
         if isinstance(e, Index):
             coll_type = self.check(e.coll)
             self.check(e.idx)
@@ -581,18 +581,18 @@ class TypeChecker:
                 return coll_type[5:]
             if isinstance(coll_type, str) and coll_type.startswith('map_'):
                 parts = coll_type.split('_')
-                return '_'.join(parts[2:]) if len(parts) >= 3 else 'i64'
-            return 'i64'
+                return '_'.join(parts[2:]) if len(parts) >= 3 else 'long'
+            return 'long'
         if isinstance(e, MapLit):
             if not e.entries:
-                return 'map_str_i64'
+                return 'map_str_long'
             vt = self.check(e.entries[0][1])
             self.check(e.entries[0][0])
             for k, v in e.entries[1:]:
                 self.check(k); self.check(v)
             if vt == 'str':
                 return 'map_str_str'
-            return 'map_str_i64'
+            return 'map_str_long'
         if isinstance(e, IfExpr):
             self.check(e.cond); t=self.check(e.then)
             if e.els: self.check(e.els)
@@ -618,7 +618,7 @@ class TypeChecker:
             if e.post is not None:
                 self.check(e.post)
             self.env = old_env
-            return 'i64'
+            return 'long'
         if isinstance(e, ForInExpr):
             it = self.check(e.iterable)
             if isinstance(it, str) and it.startswith('map_'):
@@ -628,13 +628,13 @@ class TypeChecker:
             elif isinstance(it, str) and it.startswith('list_'):
                 et = it[5:]
             else:
-                et = 'i64'
+                et = 'long'
             old = self.env.get(e.var)
             self.env[e.var] = et
             self.check(e.body)
             if old is not None: self.env[e.var] = old
             else: self.env.pop(e.var, None)
-            return 'i64'
+            return 'long'
         if isinstance(e, LetExpr):
             vt = self.check(e.value)
             if e.typ is not None:
@@ -645,7 +645,7 @@ class TypeChecker:
                     )
                 else:
                     if t.startswith('list_') or t in ('list', 'List', 'str', 'bool') or t in (
-                        'i8','i16','i32','i64','u8','u16','u32','u64','char','f32','f64'
+                        'i8','i16','int','long','u8','u16','u32','u64','char','f32','dbl'
                     ):
                         vt = t
             store = _norm_type_name(e.typ) if e.typ is not None else vt
@@ -664,7 +664,7 @@ class TypeChecker:
         if isinstance(e, Lambda):
             old = self.env.copy()
             for p in e.params:
-                self.env[p.name] = p.typ.name if p.typ else 'i64'  # body often request body
+                self.env[p.name] = p.typ.name if p.typ else 'long'  # body often request body
             self.check(e.body)
             self.env = old
             return 'fn'
@@ -676,16 +676,12 @@ class TypeChecker:
                     self.check(arm.guard)
                 self.check(arm.value)
             return self.check(e.arms[0].value)
-        if isinstance(e, HttpServe):
-            self.check(e.port)
-            for r in e.routes:
-                self.check(r.handler)
-            return 'i64'
+
         if isinstance(e, Block):
-            t = 'i64'
+            t = 'long'
             for s in e.stmts: t = self.check(s)
             return t
-        return 'i64'
+        return 'long'
 
     def check_pattern(self, pat, subj_type):
         if isinstance(pat, Wildcard):
@@ -700,19 +696,19 @@ class TypeChecker:
             if subj_type in self.enums and pat.variant in self.enums[subj_type]:
                 ftypes = self.enums[subj_type][pat.variant]
                 for i, sub in enumerate(pat.fields):
-                    ft = ftypes[i] if i < len(ftypes) else 'i64'
+                    ft = ftypes[i] if i < len(ftypes) else 'long'
                     self.check_pattern(sub, ft)
             return
         if isinstance(pat, TuplePattern):
-            for p in pat.items: self.check_pattern(p, 'i64')
+            for p in pat.items: self.check_pattern(p, 'long')
             return
         if isinstance(pat, ListPattern):
-            for p in pat.items: self.check_pattern(p, 'i64')
+            for p in pat.items: self.check_pattern(p, 'long')
             return
         if isinstance(pat, RecordPattern):
             for field_name, subpat in pat.fields:
                 if subpat is not None:
-                    self.check_pattern(subpat, 'i64')
+                    self.check_pattern(subpat, 'long')
             return
         raise SyntaxError(f"unsupported pattern type {type(pat).__name__}")
 
@@ -723,4 +719,4 @@ class TypeChecker:
             return [_type_node_name(self._type_arg_from_expr(x)) for x in e.items]
         if isinstance(e, StrLit):
             return 'str'
-        return 'i64'
+        return 'long'

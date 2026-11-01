@@ -1,7 +1,7 @@
 // Stranger quickstart: values, loop, list, function, print
 //   python3 compiler/tersec.py build src/quickstart.te -o out/quickstart && ./out/quickstart
 
-fn sum(xs: [i64]) -> i64 {
+fn sum(xs: [long]) -> long {
   var total = 0
   lp x : xs {
     total += x

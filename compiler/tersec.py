@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Terse Compiler (tersec) 0.1beta
-Native binary via C. Strings, lists, pr, http.serve (minimal socket server).
+Native binary via C. Strings, lists, modules, pr.
 """
 import sys, os, re, shutil, subprocess, argparse, copy
 
@@ -14,7 +14,7 @@ try:
         TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
         Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
         RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-        Block, ListLit, MapLit, Index, Route, HttpServe, FnDecl,
+        Block, ListLit, MapLit, Index, FnDecl,
         RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
         EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
         EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -40,7 +40,7 @@ except ImportError:
         TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
         Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
         RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-        Block, ListLit, MapLit, Index, Route, HttpServe, FnDecl,
+        Block, ListLit, MapLit, Index, FnDecl,
         RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
         EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
         EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -130,10 +130,6 @@ def _rewrite_module_expr(e, local_functions, imported_modules):
         e.ctor = _rewrite_module_expr(e.ctor, local_functions, imported_modules)
         e.fields = [(name, _rewrite_module_expr(value, local_functions, imported_modules))
                     for name, value in e.fields]
-    elif isinstance(e, HttpServe):
-        e.port = _rewrite_module_expr(e.port, local_functions, imported_modules)
-        for route in e.routes:
-            route.handler = _rewrite_module_expr(route.handler, local_functions, imported_modules)
     return e
 
 
@@ -254,7 +250,7 @@ def _load_source_modules(program, source_path):
                     _nc = _Counter(f.name for f in child.funcs)
                     own_functions = {}
                     for f in child.funcs:
-                        pts = [_norm_type_name(p.typ) if p.typ else 'i64' for p in f.params]
+                        pts = [_norm_type_name(p.typ) if p.typ else 'long' for p in f.params]
                         base = f"__module_std_{use.path.replace('.', '_')}_{f.name}"
                         if _nc[f.name] > 1:
                             mangled = base + "__" + "_".join(pts)
@@ -394,7 +390,7 @@ def _load_source_modules(program, source_path):
         _nc2 = _Counter2(function.name for function in child.funcs)
         own_functions = {}
         for function in child.funcs:
-            pts = [_norm_type_name(p.typ) if p.typ else 'i64' for p in function.params]
+            pts = [_norm_type_name(p.typ) if p.typ else 'long' for p in function.params]
             base = f"__module_{prefix}_{function.name}"
             mangled = (base + "__" + "_".join(pts)) if _nc2[function.name] > 1 else base
             own_functions[function.name] = mangled  # last wins for rewrite of simple calls

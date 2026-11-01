@@ -1,6 +1,7 @@
 (* ============================================================
    terse_bnf — Terse 0.3 grammar (canonical; replaces BNF.md)
    Aligned with SPEC.md and tersec.py host
+   String escapes: \\n \\r \\t \\\" \\\\ \\0
    ============================================================ *)
 
 
@@ -27,6 +28,13 @@
                   | <path> "." "*"
 
 <path>          ::= IDENT { "." IDENT }
+
+(* Module resolution (host): path segments map to directories under lib/ or src/.
+   use calc.math  →  lib/calc/math.te  (alias math)
+   use cnx.http   →  lib/cnx/http.te   (alias http)
+   use std.tst    →  lib/std/tst.te    (alias tst)
+   use usage.util →  src/usage/util.te
+   Search: beside importer, then lib/, src/, project root. *)
 
 (* Visibility: optional "pub" before fn / rec / tr / fix.
    Enums (en) are public by default — no pub required to export.
@@ -63,7 +71,7 @@
 <fix-decl>      ::= [<vis>] "fix" IDENT [ ":" <type> ] "=" <expr>
                     (* private/file-local by default; pub fix is exportable *)
 
-<fn-name>       ::= IDENT [ "." IDENT ]   (* Point.method *)
+<fn-name>       ::= IDENT [ "." IDENT ]   (* method: fn Point.add(...) — parsed as IDENT DOT IDENT *)
 
 <params>        ::= "(" [ <param> { "," <param> } [ "," ] ] ")"
 
@@ -82,7 +90,7 @@
                   | "{" <type> ":" <type> "}"
                   | "rec" "{" [ <field> { "," <field> } [ "," ] ] "}"
                   | "(" ")"
-                  | "(" <type> "," <type> { "," <type> } [ "," ] ")"
+                  | "(" <type> "," <type> { "," <type> } [ "," ] ")"   (* tuple — Limited *)
 
 <field>         ::= IDENT ":" <type>
 
@@ -261,7 +269,7 @@ Documented contract only — do not extend without SPEC + tests:
 
 ## Parameter overloading (host)
 
-Multiple `<fn-decl>` may use the same *name* when parameter type sequences differ after alias normalization (`long`≡`i64`, `int`≡`i32`, …).
+Multiple `<fn-decl>` may use the same *name* when parameter type sequences differ (`long` vs `str`, etc.). Canonical primitives only: `bool` `str` `chr` `byte` `int` `long` `flt` `dbl`.
 
 ```
 fn-name-overloads ::= { fn-decl }   (* same Ident, distinct typed-param lists *)
@@ -270,8 +278,3 @@ fn-name-overloads ::= { fn-decl }   (* same Ident, distinct typed-param lists *)
 - Call resolution: match argument types to one overload (exact, then numeric-width soft match).
 - Duplicate identical signatures → error.
 - Codegen mangles symbols: `terse_<name>__<t0>_<t1>_...` when two or more overloads share a name; a single definition keeps `terse_<name>`.
-
-
-
-(* Generics phase 1 *)
-type_params ::= "[" ident ("," ident)* "]"

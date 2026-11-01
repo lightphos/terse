@@ -1,16 +1,16 @@
 // Higher-order functions demo
-fn apply(f: fn, x: i64) -> i64 = f(x)
+fn apply(f: fn, x: long) -> long = f(x)
 
-fn double(n: i64) -> i64 = n * 2
+fn double(n: long) -> long = n * 2
 
-fn add(a: i64, b: i64) -> i64 = a + b
+fn add(a: long, b: long) -> long = a + b
 
-fn useDouble(v: i64) -> i64 {
+fn useDouble(v: long) -> long {
   val d = double
   ret apply(d, v)
 }
 
-fn useAdd(a: i64) -> i64 {
+fn useAdd(a: long) -> long {
   ret apply(|x| x + 100, a)
 }
 

@@ -10,7 +10,7 @@ Based on reviewing `spec/SPEC.md`, `spec/TERSE_BNF.md`, `compiler/tersec.py`, an
 
 2. **Frozen Std Surface (§8)** — Explicit contract prevents scope creep. This is rare and valuable for a young language.
 
-3. **Monomorphization without Runtime Overhead** — Generics via specialization (`id__i64`, `Opt__i64`) avoids vtables/dictionaries. Good fit for C backend.
+3. **Monomorphization without Runtime Overhead** — Generics via specialization (`id__long`, `Opt__long`) avoids vtables/dictionaries. Good fit for C backend.
 
 4. **Explicit Module Resolution** — `use` resolution order is deterministic and documented. The parallel `tst/` ↔ `src/` pairing for tests is elegant.
 
@@ -24,17 +24,17 @@ Based on reviewing `spec/SPEC.md`, `spec/TERSE_BNF.md`, `compiler/tersec.py`, an
 
 ## **Inconsistencies & Gaps**
 
-| Area | Issue | Evidence |
-|------|-------|----------|
-| **BNF vs SPEC drift** | BNF calls generic type params `<type-params>` and type args `<type-args>`; SPEC uses `[T]` notation but BNF doesn't fully cover generic `rec`/`en` syntax | BNF has `type_params ::= "[" ident ("," ident)* "]"` at end but no `<record-decl>` with type params in grammar proper (though parser handles it) |
-| **`fn-name` ambiguity** | BNF: `<fn-name> ::= IDENT [ "." IDENT ]` for methods. But parser also handles `fn Point.add()` via `parse_method` — not a first-class rule | `parse_method` called from `parse_fn` when `IDENT DOT IDENT` seen; not in BNF |
-| **`ret` in block vs expr** | SPEC: "blocks evaluate statements in order; value is the last expression (or 0 if empty). `ret expr` returns from current function". But `ret` inside a block *also* returns from function, not block. The distinction between block value and function return is fuzzy | Parser builds `LetExpr` chain; `RetExpr` can appear anywhere |
-| **Pattern `if` vs `match`** | Two syntaxes for pattern matching: `if expr { arms }` and `match expr { arms }`. Both exist, slightly different semantics (catch-all via `_` vs `else`). Redundant? | SPEC §6, BNF `<if-expr>` has two forms |
-| **Generic enum pattern names** | `Opt[i64].Some(x)` but pattern uses `Opt__i64.Some(x)` — the `__` mangling leaks to user code | Test `t_generic_en.te`: `if o { Opt__i64.Some(x) => ... }` |
-| **No tuple syntax in SPEC** | BNF has `TypeNode('tuple', args)` and tuple patterns, but SPEC §3 doesn't document tuples | `tersec.py` line 407-418 parses `(T1, T2, ...)` as tuple type; no examples in SPEC |
-| **`map` builtin listed as "limited"** | SPEC §8: "`json` (limited), list `map`, minimal `http.serve` (limited)." But `map` is a core list operation — should be in frozen surface or removed | `test_compiler.py` has no tests for `map` |
-| **`push` not in std** | `xs = xs + elem` works for push, but `push(xs, elem)` is mentioned in type checker builtins list. Inconsistent | TypeChecker line 1763: `'push'` in builtins; no SPEC entry |
-| **`std.str` unqualified forms** | SPEC: "Unqualified forms accepted when not ambiguous with map `has`" — but `has` is ambiguous! Map `has(m, k)` vs `str.has(s, sub)` | SPEC §8 line 347: "accepted ... when not ambiguous" — but it *is* ambiguous |
+| Area | Status | Notes |
+|------|--------|-------|
+| **BNF vs SPEC drift** | **Done** | BNF `<record-decl>` / `<enum-decl>` / `<trait-decl>` already take `[ <type-params> ]`; orphan trailing `type_params` removed; SPEC §3b documents `[T]` + monomorphization |
+| **`fn-name` / methods** | **Done** | BNF `<fn-name> ::= IDENT [ "." IDENT ]` documents `fn Point.add(...)`; matches host parser |
+| **`ret` in block vs expr** | **Done** | SPEC §2 clarifies: block value = last expr; `ret` always returns from the **function** |
+| **Pattern `if` vs `match`** | **Done** | SPEC §6 documents both as equivalent arm syntax; catch-all `_ =>` |
+| **Generic enum pattern names** | **Open** | Still need `Opt__long.Some(x)` in patterns — listed under SPEC Limited |
+| **Tuple syntax in SPEC** | **Done** | SPEC §3 table + BNF tuple type form; status **Limited** |
+| **`map` builtin** | **Done** | SPEC lists `map` / pipe under Implemented; tests in `t_lambda` / `t_eg` / unit tests |
+| **`push` not in std** | **Done** | SPEC: push is `list + elem` only; no separate `push` in the language contract |
+| **`std.str` vs map `has`** | **Done** | SPEC: overload by first-arg type (`str` vs map) |
 
 ---
 
@@ -42,18 +42,18 @@ Based on reviewing `spec/SPEC.md`, `spec/TERSE_BNF.md`, `compiler/tersec.py`, an
 
 ### 1. **No Ownership/Borrowing — But Mutable Aliasing Exists**
 ```terse
-var xs: [i64] = [1, 2]
+var xs: [long] = [1, 2]
 var ys = xs       // alias
 xs[0] = 99        // mutates ys too?
 ```
 SPEC says lists are values, but C codegen likely uses heap allocation with refcount or copy-on-write. Not specified. This is a soundness hole.
 
-### 2. **`str + i64` Auto-Conversion but No `i64 + str` Symmetry Guarantee**
-SPEC: "`str + i64` / `i64 + str` convert the number." But `42 + "hello"` — is that `"42hello"`? Type checker allows both (line 1819), but semantic order matters for concatenation.
+### 2. **`str + long` Auto-Conversion but No `long + str` Symmetry Guarantee**
+SPEC: "`str + long` / `long + str` convert the number." But `42 + "hello"` — is that `"42hello"`? Type checker allows both (line 1819), but semantic order matters for concatenation.
 
 ### 3. **Map Missing Key Returns `0`/`""` Silently**
 ```terse
-var m: {str: i64} = {:}
+var m: {str: long} = {:}
 m["missing"]  // returns 0 — is this 0 or absent?
 ```
 SPEC: "does **not** abort". But this conflates "key exists with value 0" vs "key missing". `has(m, k)` required to distinguish. Footgun.
@@ -66,8 +66,8 @@ SPEC: "does **not** abort". But this conflates "key exists with value 0" vs "key
 fn sort[T](xs: [T]) -> [T] = ...  // T needs Ord
 ```
 Phase 1 explicitly excludes `T: Ord`. This means either:
-- `sort` only works on `i64`/`str` via overloading, or
-- Users write `sort_i64`, `sort_str` manually
+- `sort` only works on `long`/`str` via overloading, or
+- Users write `sort_long`, `sort_str` manually
 
 ### 6. **Lambda Capture Not Fully Implemented**
 SPEC: "Limited — Higher-order / closures with capture". Parser accepts `|x| x + y` but codegen may not capture `y` correctly.
@@ -91,11 +91,11 @@ go {
 }
 ```
 **Open questions:**
-- **Setter vs getter**: `env("K") = "v"` is a statement (returns `i64`?) vs `env("K")` is expression (returns `str`). No syntax distinction.
+- **Setter vs getter**: `env("K") = "v"` is a statement (returns `long`?) vs `env("K")` is expression (returns `str`). No syntax distinction.
 - **Scope**: Is `env` per-process (uses `setenv`/`_putenv_s` at C runtime)? SPEC §8 says "builtins" but `env` isn't in the frozen list explicitly.
 - **Persistence**: Does `env("K") = "v"` affect child processes? Parent? Subsequent calls in same program?
 - **Shadowing**: If `MYENV` was set before program start, does the setter override for this process only?
-- **Type**: Getter returns `str`, setter returns `i64` (success)? Not in SPEC.
+- **Type**: Getter returns `str`, setter returns `long` (success)? Not in SPEC.
 - **Thread safety**: Not specified — relevant when async tasks are added.
 
 ---
@@ -118,16 +118,17 @@ go {
 
 ## **Missing from SPEC (but Implemented)**
 
-| Feature | In Code | In SPEC |
-|---------|---------|---------|
-| `fmt(...)` multi-arg concat | ✅ TypeChecker lines 1918-1919 | ✅ §8 |
-| `env("KEY") = "val"` setter | ✅ TypeChecker line 1944 | ✅ §8 |
-| `db.*` (SQLite) | ✅ Runtime + TypeChecker | ❌ "disabled in lean builds" only |
-| `http.serve` routes | ✅ Parser + Runtime | ❌ "limited" |
-| `json` | ✅ Runtime + builtin | ❌ "limited" |
-| Tuple types/patterns | ✅ Parser + TypeChecker | ❌ Not documented |
-| `while` loop | ✅ Parser | ✅ §6 |
-| `brk` with value | ✅ Parser (`JumpExpr.value`) | ❌ Not documented |
+| Feature | In Code | In SPEC | Status |
+|---------|---------|---------|--------|
+| `fmt(...)` multi-arg concat | ✅ | ✅ §8 / status | Done |
+| `env("KEY") = "val"` setter | ✅ | ✅ §8 | Done |
+| `db.*` (SQLite) | ✅ Runtime | Still lean-build only | Open (optional surface) |
+| HTTP | ✅ `lib/cnx/http.te` | ✅ Limited + package table | Done |
+| `json` | ✅ Runtime | Still limited | Open |
+| Tuple types/patterns | ✅ Parser | ✅ §3 Limited | Done |
+| `while` loop | ✅ | ✅ §6 | Done |
+| Pipe `\|>` | ✅ | ✅ §2 / §6 | Done |
+| Nested `use a.b` packages | ✅ | ✅ module path rule | Done |
 
 ---
 
@@ -136,7 +137,7 @@ go {
 ### Current: Single-Threaded Blocking
 ```terse
 // lib/http.te — the current srv is blocking, one connection at a time
-pub fn srv(port: i64, handler: fn(Req) -> Res) {
+pub fn srv(port: long, handler: fn(Req) -> Res) {
   val ls = sock.listen(port)
   lp true {
     val c = sock.accept(ls)   // blocks
@@ -163,7 +164,7 @@ pub fn srv(port: i64, handler: fn(Req) -> Res) {
 
 **1. `async fn` → state machine (codegen)**
 ```terse
-fn fetch(id: i64) -> Future[User] = ...
+fn fetch(id: long) -> Future[User] = ...
 val u = await fetch(id)   // suspends, yields to event loop
 ```
 Codegen transforms each `await` into a yield point: save locals to heap, suspend stackless coroutine, resume when future resolves.
@@ -221,4 +222,6 @@ Terse is a **coherent, opinionated language** with a clear niche: *small, fast, 
 
 The main risks are **underspecified semantics** (list aliasing, trait dispatch, tuple support) and **spec/implementation drift**. The frozen std surface is a strong guardrail — if maintained, it prevents the "kitchen sink" problem that kills many young languages.
 
-**Best path forward**: Finish SPEC coverage for what's already implemented, resolve the `Opt__i64` pattern leak, and decide on trait dispatch before adding more features.
+**Progress (2026-11):** SPEC/BNF drift items above marked **Done** (generics grammar, methods, `ret` semantics, `if`/`match`, tuples Limited, `map`/`push`/`has`, nested packages, HTTP under `cnx.http`).
+
+**Best path forward**: Resolve the remaining `Opt__long` pattern leak, finish generic trait parameters / decide trait dispatch, then ownership — before large new features (async HTTP, etc.).

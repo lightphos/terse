@@ -61,7 +61,7 @@ class TestArithmetic(unittest.TestCase):
 
     def test_fact(self):
         src = textwrap.dedent("""\
-            fn fact(n: i64) -> i64 =
+            fn fact(n: long) -> long =
               if n <= 1 { 1 } else { n * fact(n - 1) }
             go fact(6)
         """)
@@ -71,7 +71,7 @@ class TestArithmetic(unittest.TestCase):
 class TestControl(unittest.TestCase):
     def test_if(self):
         src = textwrap.dedent("""\
-            fn abs(x: i64) -> i64 = if x < 0 { 0 - x } else { x }
+            fn abs(x: long) -> long = if x < 0 { 0 - x } else { x }
             go abs(0 - 7) + abs(3)
         """)
         assert_result(self, src, "10")
@@ -141,29 +141,29 @@ class TestControl(unittest.TestCase):
 class TestHigherOrder(unittest.TestCase):
     def test_apply(self):
         src = textwrap.dedent("""\
-            fn apply(f: fn, x: i64) -> i64 = f(x)
-            fn double(n: i64) -> i64 = n * 2
+            fn apply(f: fn, x: long) -> long = f(x)
+            fn double(n: long) -> long = n * 2
             go apply(double, 21)
         """)
         assert_result(self, src, "42")
 
     def test_lambda(self):
         src = textwrap.dedent("""\
-            fn apply(f: fn, x: i64) -> i64 = f(x)
+            fn apply(f: fn, x: long) -> long = f(x)
             go apply(|n| n + 100, 7)
         """)
         assert_result(self, src, "107")
 
     def test_lambda_mul(self):
         src = textwrap.dedent("""\
-            fn apply(f: fn, x: i64) -> i64 = f(x)
+            fn apply(f: fn, x: long) -> long = f(x)
             go apply(|n| n * 3, 4)
         """)
         assert_result(self, src, "12")
 
     def test_lambda_nested(self):
         src = textwrap.dedent("""\
-            fn apply(f: fn, x: i64) -> i64 = f(x)
+            fn apply(f: fn, x: long) -> long = f(x)
             go {
               val a = apply(|n| n * 2, 5)
               apply(|n| n + 1, a)
@@ -173,7 +173,7 @@ class TestHigherOrder(unittest.TestCase):
 
     def test_lambda_map_pipe(self):
         src = textwrap.dedent("""\
-            fn sum(xs: [i64]) -> i64 {
+            fn sum(xs: [long]) -> long {
               var total = 0
               lp x:xs { total += x }
               total
@@ -189,7 +189,7 @@ class TestHigherOrder(unittest.TestCase):
 class TestRecords(unittest.TestCase):
     def test_rec(self):
         src = textwrap.dedent("""\
-            rec Point { x: i64, y: i64 }
+            rec Point { x: long, y: long }
             go {
               val p = Point { x: 3, y: 4 }
               p.x + p.y
@@ -199,8 +199,8 @@ class TestRecords(unittest.TestCase):
 
     def test_method(self):
         src = textwrap.dedent("""\
-            Point { x: i64, y: i64 }
-            fn Point.add() -> i64 { self.x + self.y }
+            Point { x: long, y: long }
+            fn Point.add() -> long { self.x + self.y }
             go {
               val p = Point { x: 3, y: 2 }
               p.add()
@@ -210,7 +210,7 @@ class TestRecords(unittest.TestCase):
 
     def test_record_return(self):
         src = textwrap.dedent("""\
-            Pair { value: i64 }
+            Pair { value: long }
             fn make_pair() -> Pair { Pair { value: 41 } }
             go {
               val pair = make_pair()
@@ -264,7 +264,7 @@ class TestStringsLists(unittest.TestCase):
     def test_list_push_concat(self):
         src = textwrap.dedent("""\
             go {
-              var xs: [i64] = []
+              var xs: [long] = []
               xs = xs + 1
               xs = xs + [2, 3]
               len(xs)
@@ -278,7 +278,7 @@ class TestEntryPoints(unittest.TestCase):
         assert_result(self, "go()", "0")
 
     def test_fn_main_rejected(self):
-        _, code, log = compile_src("fn main() -> i64 = 1")
+        _, code, log = compile_src("fn main() -> long = 1")
         self.assertNotEqual(code, 0)
         self.assertTrue("go" in log.lower() or "main" in log.lower())
 
@@ -332,7 +332,7 @@ class TestErrors(unittest.TestCase):
 class TestFix(unittest.TestCase):
     def test_fix_local(self):
         src = textwrap.dedent("""\
-            fix N: i64 = 7
+            fix N: long = 7
             go N + 1
         """)
         assert_result(self, src, "8")
@@ -342,10 +342,10 @@ class TestEnums(unittest.TestCase):
     def test_option_pattern(self):
         src = textwrap.dedent("""\
             en Option {
-              Some(i64),
+              Some(long),
               None
             }
-            fn unwrap(o: Option) -> i64 =
+            fn unwrap(o: Option) -> long =
               if o {
                 Option.Some(n) => n
                 Option.None => 0
@@ -374,7 +374,7 @@ class TestMaps(unittest.TestCase):
     def test_map_put_get(self):
         src = (
             "go {\n"
-            "  var m: {str: i64} = {:}\n"
+            "  var m: {str: long} = {:}\n"
             '  m["a"] = 3\n'
             '  m["a"]\n'
             "}\n"
@@ -385,8 +385,8 @@ class TestMaps(unittest.TestCase):
 class TestPipeMap(unittest.TestCase):
     def test_pipe_map_sum(self):
         src = textwrap.dedent("""\
-            fn double(n: i64) -> i64 = n * 2
-            fn sum(xs: [i64]) -> i64 {
+            fn double(n: long) -> long = n * 2
+            fn sum(xs: [long]) -> long {
               var total = 0
               lp x:xs {
                 total += x

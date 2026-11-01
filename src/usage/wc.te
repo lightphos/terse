@@ -1,8 +1,8 @@
 use std.str
 
-pub fn wc(text: str) -> {str:i64} {
+pub fn wc(text: str) -> {str: long} {
   val words = str.split(text, " ")
-  var counts: {str:i64} = {:}
+  var counts: {str: long} = {:}
   lp w:words {
     if has(counts, w) {
       counts[w] += 1

@@ -1,14 +1,14 @@
 // A structure automatically satisfies a trait when it has methods with matching
 // signatures. 
 
-pub Point { x: i64, y: i64 }
+pub Point { x: long, y: long }
 
-fn Point.show() -> i64 { pr(self.x + " " + self.y) }
-fn Point.add() -> i64 { self.x + self.y }
+fn Point.show() -> long { pr(self.x + " " + self.y) }
+fn Point.add() -> long { self.x + self.y }
 fn Point.str() -> str {
   "Point { x: " + self.x + ", y: " + self.y + " }"
 }
-fn Point.cord() -> i64 {
+fn Point.cord() -> long {
   self.x + self.y
 }
 
@@ -17,7 +17,7 @@ tr Printable {
 }
 
 tr Coordinate {
-  fn cord() -> i64
+  fn cord() -> long
 }
 
 pub fn origin() -> Point {

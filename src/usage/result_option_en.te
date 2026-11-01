@@ -1,21 +1,21 @@
 // Result / Option as data (convention, not special runtime)
 en Option {
-  Some(i64),
+  Some(long),
   None
 }
 
 en Result {
-  Ok(i64),
+  Ok(long),
   Err(str)
 }
 
-fn unwrap(o: Option) -> i64 =
+fn unwrap(o: Option) -> long =
   if o {
     Option.Some(n) => n
     Option.None => 0
   }
 
-fn orElse(r: Result, fallback: i64) -> i64 =
+fn orElse(r: Result, fallback: long) -> long =
   if r {
     Result.Ok(n) => n
     Result.Err(msg) => fallback

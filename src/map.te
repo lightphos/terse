@@ -2,7 +2,7 @@
 // type {K: V}   empty {:}   literal {k: v, ...}
 
 go {
-  var scores: {str: i64} = {:}
+  var scores: {str: long} = {:}
   scores["alice"] = 10
   scores["bob"] = 20
   scores["alice"] = 15

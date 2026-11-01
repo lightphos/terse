@@ -100,7 +100,7 @@ pub fn parse_req(raw: str) -> Req {
 }
 
 // Blocks forever. handler: fn(Req) -> Res
-pub fn srv(port: i64, handler: fn(Req) -> Res) {
+pub fn srv(port: long, handler: fn(Req) -> Res) {
   val ls = sock.listen(port)
   lp true {
     val c = sock.accept(ls)

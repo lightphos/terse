@@ -116,10 +116,10 @@ Try the following:
 
 | Feature | Description |
 |---------|-------------|
-| Types | `int, long, chr, bool, dbl, flt, str ...` |
+| Primitives | `int, long, chr, bool, dbl, flt, str ...` |
 | Variables | `var/val` |
 | Constants | `fix`|
-| Enums | `enum` |
+| Enums | `en` |
 | Arrays | `a[]`|
 | Lists | `[]` |
 | Maps |`{x:y}`|
@@ -135,6 +135,27 @@ Try the following:
 | Generics | `[T]`, qualified todo |
 | Exceptions | `err` todo |
 
+
+### Primitives
+
+Canonical names only (no aliases):
+
+| Name | Meaning |
+|------|---------|
+| `bool` | boolean |
+| `str` | string |
+| `chr` | 8-bit signed |
+| `byte` | 8-bit unsigned |
+| `int` | 32-bit signed |
+| `long` | 64-bit signed (**default** integer) |
+| `flt` | 32-bit float |
+| `dbl` | 64-bit float (**default** float literal) |
+
+```terse
+fn add(a: long, b: long) -> long = a + b
+var xs: [long] = [1, 2, 3]
+var m: {str: long} = {:}
+```
 
 ### Pipe operator `|>`
 
@@ -221,7 +242,7 @@ The reference compiler (`compiler/tersec.py`) implements:
 
 - Lexer, recursive-descent parser, minimal type checker
 - C code generation + gcc/clang backend → native binary
-- Integers (`i64`), booleans, arithmetic & comparisons
+- Integers (`long`/`int`/`chr`/`byte`), booleans, arithmetic & comparisons
 - `if` expressions, `let` bindings, blocks
 - Named functions + recursion
 - **Higher-order functions**: pass functions as values, simple lambdas (`|x| x*2`)
@@ -251,8 +272,8 @@ The reference compiler (`compiler/tersec.py`, now split into the `compiler/terse
 - **Records / structs**, **methods**, **enums** (+ payloads), **traits** (implicit satisfaction)
 - **Pattern matching**: `if` / `match` arms
 - **Loops**: for-in, C-style `lp i = 0; ...;`, condition loops; `brk` / `skip`
-- **Lists**: width types `[i64]`/`[str]`/…, `+`, `len`, index, push
-- **Maps**: `{str:i64|str}`, put/get, `has`, `keys`, `len`, for-in keys
+- **Lists**: width types `[long]`/`[int]`/`[str]`/…, `+`, `len`, index, `map`
+- **Maps**: `{str:long|str}`, put/get, `has`, `keys`, `len`, for-in keys
 - **Modules**: `use`, `pub`, parallel `tst` ↔ `src` test files
 - Frozen std: `std.str`, `std.io`, `std.tst`; `env` get/set
 - Text file reads and writes through `std.io`
@@ -290,7 +311,7 @@ Not yet implemented (but specified):
 `compiler/tc.te` is the first compiler frontend written in Terse. It reads a
 source file, builds a token/node arena, emits C, and invokes GCC. Its current
 native subset includes arithmetic and logical expressions, `pr(string)`, and
-multiple named `i64` functions with arbitrary parameters, recursion, and
+multiple named `long` functions with arbitrary parameters, recursion, and
 `if`/`else`. The root
 `tc` launcher bootstraps this frontend with `tersec.py` when needed, tries the
 native frontend first, and reports when it falls back:
@@ -304,7 +325,7 @@ make bootstrap
 ## TODO: Native Compiler Parity
 
 - [x] Generalize function declarations and calls: multiple functions, arbitrary
-  parameter/argument lists, optional `i64`/`bool` parameter and return
+  parameter/argument lists, optional `long`/`bool` parameter and return
   annotations, `pub`, and one validated `go` entrypoint. The parser also accepts
   unused type/record/trait/method declarations and standard imports.
 - [ ] Add semantics for type/record/trait/method declarations and source-module

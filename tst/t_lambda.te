@@ -1,9 +1,9 @@
 use std.tst
 
-fn apply(f: fn, x: i64) -> i64 = f(x)
+fn apply(f: fn, x: int) -> int = f(x)
 
-fn sum(xs: [i64]) -> i64 {
-  var total = 0
+fn sum(xs: [int]) -> int {
+  var total: int = 0
   lp x:xs {
     total += x
   }
@@ -24,11 +24,11 @@ fn t_lambda_nested() {
 }
 
 fn t_lambda_map_pipe() {
-  val xs = [1, 2, 3]
+  val xs: [int] = [1, 2, 3]
   tst.eq(xs |> map(|n| n * 2) |> sum(), 12)
 }
 
 fn t_lambda_map_add() {
-  val xs = [10, 20]
+  val xs: [int] = [10, 20]
   tst.eq(xs |> map(|n| n + 5) |> sum(), 40)
 }

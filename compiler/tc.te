@@ -13,39 +13,39 @@
 
 use std.io
 
-rec Token { kind: i64, text: str }
+rec Token { kind: long, text: str }
 rec Param { name: str, typ: str }
-rec Function { name: str, params: [Param], return_type: str, root: i64, is_public: bool }
-rec Node { kind: i64, text: str, left: i64, right: i64, extra: i64, typ: str }
+rec Function { name: str, params: [Param], return_type: str, root: long, is_public: bool }
+rec Node { kind: long, text: str, left: long, right: long, extra: long, typ: str }
 rec Binding { name: str, typ: str }
 
 rec ParseState {
   tokens: [Token],
   nodes: [Node],
-  pos: i64,
-  root: i64,
-  arg_root: i64,
+  pos: long,
+  root: long,
+  arg_root: long,
   functions: [Function],
   has_entry: bool,
   valid: bool
 }
 
-fn token(kind: i64, text: str) -> Token = Token { kind: kind, text: text }
-fn mk(kind: i64, text: str, left: i64, right: i64) -> Node =
+fn token(kind: long, text: str) -> Token = Token { kind: kind, text: text }
+fn mk(kind: long, text: str, left: long, right: long) -> Node =
   Node { kind: kind, text: text, left: left, right: right, extra: 0, typ: "" }
-fn mkx(kind: i64, text: str, left: i64, right: i64, extra: i64) -> Node =
+fn mkx(kind: long, text: str, left: long, right: long, extra: long) -> Node =
   Node { kind: kind, text: text, left: left, right: right, extra: extra, typ: "" }
-fn mkt(kind: i64, text: str, left: i64, right: i64, typ: str) -> Node =
+fn mkt(kind: long, text: str, left: long, right: long, typ: str) -> Node =
   Node { kind: kind, text: text, left: left, right: right, extra: 0, typ: typ }
 
-fn is_space(ch: i64) -> bool = ch == 32 || ch == 9 || ch == 10 || ch == 13
-fn is_digit(ch: i64) -> bool = ch >= 48 && ch <= 57
-fn is_letter(ch: i64) -> bool =
+fn is_space(ch: long) -> bool = ch == 32 || ch == 9 || ch == 10 || ch == 13
+fn is_digit(ch: long) -> bool = ch >= 48 && ch <= 57
+fn is_letter(ch: long) -> bool =
   (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch == 95
-fn is_ident_char(ch: i64) -> bool = is_letter(ch) || is_digit(ch)
+fn is_ident_char(ch: long) -> bool = is_letter(ch) || is_digit(ch)
 
-fn starts_kw(source: str, pos: i64, word: str) -> bool {
-  var i: i64 = 0
+fn starts_kw(source: str, pos: long, word: str) -> bool {
+  var i: long = 0
   var ok: bool = true
   lp i < len(word) {
     if pos + i >= len(source) { ok = false }
@@ -58,7 +58,7 @@ fn starts_kw(source: str, pos: i64, word: str) -> bool {
   ok
 }
 
-rec ScanState { tokens: [Token], pos: i64 }
+rec ScanState { tokens: [Token], pos: long }
 
 fn scan_skip_line(s: ScanState, source: str) -> ScanState {
   lp s.pos < len(source) && source[s.pos] != 10 { s.pos = s.pos + 1 }
@@ -66,7 +66,7 @@ fn scan_skip_line(s: ScanState, source: str) -> ScanState {
 }
 
 fn scan_string(s: ScanState, source: str) -> ScanState {
-  var begin: i64 = s.pos + 1
+  var begin: long = s.pos + 1
   s.pos = begin
   var closed: bool = false
   lp s.pos < len(source) && closed == false {
@@ -84,7 +84,7 @@ fn scan_string(s: ScanState, source: str) -> ScanState {
   s
 }
 
-fn scan_kw(s: ScanState, word: str, kind: i64) -> ScanState {
+fn scan_kw(s: ScanState, word: str, kind: long) -> ScanState {
   s.tokens = push(s.tokens, token(kind, word))
   s.pos = s.pos + len(word)
   s
@@ -105,12 +105,12 @@ fn scan_try_kw(s: ScanState, source: str) -> ScanState {
   if hit == false && starts_kw(source, s.pos, "lp") { s = scan_kw(s, "lp", 53); hit = true }
   if hit == false && starts_kw(source, s.pos, "rec") { s = scan_kw(s, "rec", 54); hit = true }
   if hit == false && starts_kw(source, s.pos, "use") { s = scan_skip_line(s, source); hit = true }
-  if hit == false && starts_kw(source, s.pos, "i64") { s = scan_kw(s, "i64", 38); hit = true }
+  if hit == false && starts_kw(source, s.pos, "long") { s = scan_kw(s, "long", 38); hit = true }
   if hit == false && starts_kw(source, s.pos, "str") { s = scan_kw(s, "str", 55); hit = true }
   if hit == false && starts_kw(source, s.pos, "bool") { s = scan_kw(s, "bool", 46); hit = true }
   if hit == false && starts_kw(source, s.pos, "pr") { s = scan_kw(s, "pr", 21); hit = true }
   if hit == false {
-    var begin: i64 = s.pos
+    var begin: long = s.pos
     lp s.pos < len(source) && is_ident_char(source[s.pos]) { s.pos = s.pos + 1 }
     s.tokens = push(s.tokens, token(1, substr(source, begin, s.pos - begin)))
   }
@@ -118,13 +118,13 @@ fn scan_try_kw(s: ScanState, source: str) -> ScanState {
 }
 
 fn scan_number(s: ScanState, source: str) -> ScanState {
-  var begin: i64 = s.pos
+  var begin: long = s.pos
   lp s.pos < len(source) && is_digit(source[s.pos]) { s.pos = s.pos + 1 }
   s.tokens = push(s.tokens, token(19, substr(source, begin, s.pos - begin)))
   s
 }
 
-fn scan_two(s: ScanState, source: str, a: i64, b: i64, kind: i64, text: str) -> ScanState {
+fn scan_two(s: ScanState, source: str, a: long, b: long, kind: long, text: str) -> ScanState {
   if s.pos + 1 < len(source) && source[s.pos] == a && source[s.pos + 1] == b {
     s.tokens = push(s.tokens, token(kind, text))
     s.pos = s.pos + 2
@@ -132,13 +132,13 @@ fn scan_two(s: ScanState, source: str, a: i64, b: i64, kind: i64, text: str) -> 
   s
 }
 
-fn scan_one(s: ScanState, kind: i64, text: str) -> ScanState {
+fn scan_one(s: ScanState, kind: long, text: str) -> ScanState {
   s.tokens = push(s.tokens, token(kind, text))
   s.pos = s.pos + 1
   s
 }
 
-fn scan_op(s: ScanState, source: str, ch: i64) -> ScanState {
+fn scan_op(s: ScanState, source: str, ch: long) -> ScanState {
   if ch == 45 && s.pos + 1 < len(source) && source[s.pos + 1] == 62 {
     s.tokens = push(s.tokens, token(27, "->"))
     s.pos = s.pos + 2
@@ -190,7 +190,7 @@ fn scan(source: str) -> [Token] {
   var empty: [Token] = []
   var s: ScanState = ScanState { tokens: empty, pos: 0 }
   lp s.pos < len(source) {
-    var ch: i64 = source[s.pos]
+    var ch: long = source[s.pos]
     if is_space(ch) {
       s.pos = s.pos + 1
     } else if ch == 47 && s.pos + 1 < len(source) && source[s.pos + 1] == 47 {
@@ -209,8 +209,8 @@ fn scan(source: str) -> [Token] {
 }
 
 
-fn ck(state: ParseState) -> i64 {
-  var k: i64 = 0
+fn ck(state: ParseState) -> long {
+  var k: long = 0
   if state.pos < len(state.tokens) {
     k = state.tokens[state.pos].kind
   }
@@ -236,10 +236,10 @@ fn add(state: ParseState, n: Node) -> ParseState {
 }
 
 fn parse_type_name(state: ParseState) -> ParseState {
-  var k: i64 = ck(state)
+  var k: long = ck(state)
   if k == 41 {
     state = bump(state)
-    var inner: str = "i64"
+    var inner: str = "long"
     if ck(state) != 42 {
       state = parse_type_name(state)
       if state.root >= 0 {
@@ -248,17 +248,17 @@ fn parse_type_name(state: ParseState) -> ParseState {
     }
     if ck(state) == 42 { state = bump(state) }
     var name: str = "List_" + inner
-    if inner == "i64" { name = "List_i64" }
+    if inner == "long" { name = "List_i64" }
     state = add(state, mk(100, name, -1, -1))
   } else if k == 38 || k == 55 || k == 46 || k == 1 {
     var name: str = ct(state)
-    if k == 38 { name = "i64" }
+    if k == 38 { name = "long" }
     if k == 55 { name = "str" }
     if k == 46 { name = "bool" }
     state = bump(state)
     state = add(state, mk(100, name, -1, -1))
   } else {
-    state = add(state, mk(100, "i64", -1, -1))
+    state = add(state, mk(100, "long", -1, -1))
   }
   state
 }
@@ -269,10 +269,10 @@ fn parse_assign(state: ParseState) -> ParseState {
   state = parse_or(state)
   // loop to allow chained assigns rare; single is enough
   if ck(state) == 28 {
-    var left: i64 = state.root
+    var left: long = state.root
     state = bump(state)
     state = parse_assign(state)
-    var right: i64 = state.root
+    var right: long = state.root
     state = add(state, mk(2, "=", left, right))
   }
   state
@@ -281,7 +281,7 @@ fn parse_assign(state: ParseState) -> ParseState {
 fn parse_or(state: ParseState) -> ParseState {
   state = parse_and(state)
   lp ck(state) == 17 {
-    var left: i64 = state.root
+    var left: long = state.root
     state = bump(state)
     state = parse_and(state)
     state = add(state, mk(2, "||", left, state.root))
@@ -292,7 +292,7 @@ fn parse_or(state: ParseState) -> ParseState {
 fn parse_and(state: ParseState) -> ParseState {
   state = parse_cmp(state)
   lp ck(state) == 16 {
-    var left: i64 = state.root
+    var left: long = state.root
     state = bump(state)
     state = parse_cmp(state)
     state = add(state, mk(2, "&&", left, state.root))
@@ -304,7 +304,7 @@ fn parse_cmp(state: ParseState) -> ParseState {
   state = parse_add(state)
   lp ck(state) == 10 || ck(state) == 11 || ck(state) == 12 || ck(state) == 13 || ck(state) == 14 || ck(state) == 15 {
     var op: str = ct(state)
-    var left: i64 = state.root
+    var left: long = state.root
     state = bump(state)
     state = parse_add(state)
     state = add(state, mk(2, op, left, state.root))
@@ -316,7 +316,7 @@ fn parse_add(state: ParseState) -> ParseState {
   state = parse_mul(state)
   lp ck(state) == 2 || ck(state) == 3 {
     var op: str = ct(state)
-    var left: i64 = state.root
+    var left: long = state.root
     state = bump(state)
     state = parse_mul(state)
     state = add(state, mk(2, op, left, state.root))
@@ -328,7 +328,7 @@ fn parse_mul(state: ParseState) -> ParseState {
   state = parse_unary(state)
   lp ck(state) == 4 || ck(state) == 5 || ck(state) == 6 {
     var op: str = ct(state)
-    var left: i64 = state.root
+    var left: long = state.root
     state = bump(state)
     state = parse_unary(state)
     state = add(state, mk(2, op, left, state.root))
@@ -360,16 +360,16 @@ fn parse_postfix(state: ParseState) -> ParseState {
       if ck(state) == 7 {
         state = bump(state)
         state = parse_args(state)
-        var args: i64 = state.arg_root
+        var args: long = state.arg_root
         if ck(state) == 8 { state = bump(state) }
         // method/module call: kind 7 with text "__method__", left=args, right=object node
         state = add(state, mk(21, field, args, state.root))
       }
     } else if ck(state) == 41 {
       state = bump(state)
-      var coll: i64 = state.root
+      var coll: long = state.root
       state = parse_expr(state)
-      var idx: i64 = state.root
+      var idx: long = state.root
       if ck(state) == 42 { state = bump(state) }
       state = add(state, mk(15, "idx", coll, idx))
     } else {
@@ -384,8 +384,8 @@ fn parse_args(state: ParseState) -> ParseState {
     state.arg_root = -1
   } else {
     state = parse_expr(state)
-    var first: i64 = state.root
-    var next: i64 = -1
+    var first: long = state.root
+    var next: long = -1
     if ck(state) == 31 {
       state = bump(state)
       state = parse_args(state)
@@ -405,8 +405,8 @@ fn parse_record_fields(state: ParseState) -> ParseState {
     state = bump(state)
     if ck(state) == 26 { state = bump(state) }
     state = parse_expr(state)
-    var vexpr: i64 = state.root
-    var next: i64 = -1
+    var vexpr: long = state.root
+    var next: long = -1
     if ck(state) == 31 {
       state = bump(state)
       state = parse_record_fields(state)
@@ -419,7 +419,7 @@ fn parse_record_fields(state: ParseState) -> ParseState {
 }
 
 fn parse_primary(state: ParseState) -> ParseState {
-  var k: i64 = ck(state)
+  var k: long = ck(state)
   if k == 19 {
     state = add(state, mk(19, ct(state), -1, -1))
     state = bump(state)
@@ -436,7 +436,7 @@ fn parse_primary(state: ParseState) -> ParseState {
     state = bump(state)
     if ck(state) == 7 { state = bump(state) }
     state = parse_expr(state)
-    var arg: i64 = state.root
+    var arg: long = state.root
     if ck(state) == 8 { state = bump(state) }
     state = add(state, mk(5, "pr", arg, -1))
   } else if k == 41 {
@@ -450,14 +450,14 @@ fn parse_primary(state: ParseState) -> ParseState {
     if ck(state) == 7 {
       state = bump(state)
       state = parse_args(state)
-      var args: i64 = state.arg_root
+      var args: long = state.arg_root
       if ck(state) == 8 { state = bump(state) }
       state = add(state, mk(7, name, args, -1))
     } else if ck(state) == 29 && state.pos + 2 < len(state.tokens) && state.tokens[state.pos + 1].kind == 1 && state.tokens[state.pos + 2].kind == 26 {
       // record literal Name { field : ... }  — require field-colon, not block
       state = bump(state)
       state = parse_record_fields(state)
-      var fields: i64 = state.arg_root
+      var fields: long = state.arg_root
       if ck(state) == 30 { state = bump(state) }
       state = add(state, mk(12, name, fields, -1))
     } else {
@@ -467,12 +467,12 @@ fn parse_primary(state: ParseState) -> ParseState {
     // if expr { then } [ else if ... | else { ... } ]
     state = bump(state)
     state = parse_expr(state)
-    var cond: i64 = state.root
+    var cond: long = state.root
     if ck(state) == 29 { state = bump(state) }
     state = parse_block(state)
-    var then_b: i64 = state.root
+    var then_b: long = state.root
     if ck(state) == 30 { state = bump(state) }
-    var else_b: i64 = -1
+    var else_b: long = -1
     if ck(state) == 25 {
       state = bump(state)
       if ck(state) == 24 {
@@ -491,10 +491,10 @@ fn parse_primary(state: ParseState) -> ParseState {
     // lp cond { body }
     state = bump(state)
     state = parse_expr(state)
-    var cond: i64 = state.root
+    var cond: long = state.root
     if ck(state) == 29 { state = bump(state) }
     state = parse_block(state)
-    var body: i64 = state.root
+    var body: long = state.root
     if ck(state) == 30 { state = bump(state) }
     state = add(state, mk(17, "lp", cond, body))
   } else if k == 7 {
@@ -522,7 +522,7 @@ fn parse_block(state: ParseState) -> ParseState {
       state = bump(state)
       var vname: str = ct(state)
       state = bump(state)
-      var vtyp: str = "i64"
+      var vtyp: str = "long"
       if ck(state) == 26 {
         state = bump(state)
         state = parse_type_name(state)
@@ -532,7 +532,7 @@ fn parse_block(state: ParseState) -> ParseState {
       }
       if ck(state) == 28 { state = bump(state) }
       state = parse_expr(state)
-      var vexpr: i64 = state.root
+      var vexpr: long = state.root
       state = add(state, mk(18, vname + ":" + vtyp, vexpr, -1))
       stmts = push(stmts, state.root)
     } else if ck(state) == 52 {
@@ -548,10 +548,10 @@ fn parse_block(state: ParseState) -> ParseState {
       // lp as statement
       state = bump(state)
       state = parse_expr(state)
-      var cond: i64 = state.root
+      var cond: long = state.root
       if ck(state) == 29 { state = bump(state) }
       state = parse_block(state)
-      var body: i64 = state.root
+      var body: long = state.root
       if ck(state) == 30 { state = bump(state) }
       state = add(state, mk(17, "lp", cond, body))
       stmts = push(stmts, state.root)
@@ -572,8 +572,8 @@ fn parse_block(state: ParseState) -> ParseState {
     state = add(state, mk(19, "0", -1, -1))
   } else {
     // fold from end: seq(s0, seq(s1, s2))
-    var i: i64 = len(stmts) - 1
-    var acc: i64 = stmts[i]
+    var i: long = len(stmts) - 1
+    var acc: long = stmts[i]
     lp i > 0 {
       i = i - 1
       state = add(state, mk(20, "seq", stmts[i], acc))
@@ -589,7 +589,7 @@ fn skip_rec(state: ParseState) -> ParseState {
   if ck(state) == 1 { state = bump(state) }
   if ck(state) == 29 {
     state = bump(state)
-    var depth: i64 = 1
+    var depth: long = 1
     lp depth > 0 && ck(state) != 0 {
       if ck(state) == 29 { depth = depth + 1 }
       if ck(state) == 30 { depth = depth - 1 }
@@ -613,17 +613,17 @@ fn parse_fn(state: ParseState) -> ParseState {
         if ck(state) == 1 {
           var pname: str = ct(state)
           state = bump(state)
-          var ptyp: str = "i64"
+          var ptyp: str = "long"
           if ck(state) == 26 {
             state = bump(state)
-            if ck(state) == 38 { ptyp = "i64"; state = bump(state) }
+            if ck(state) == 38 { ptyp = "long"; state = bump(state) }
             else if ck(state) == 55 { ptyp = "str"; state = bump(state) }
             else if ck(state) == 46 { ptyp = "bool"; state = bump(state) }
             else if ck(state) == 41 {
               state = bump(state)
               if ck(state) == 1 || ck(state) == 38 || ck(state) == 55 || ck(state) == 46 {
                 var inn: str = ct(state)
-                if ck(state) == 38 { inn = "i64" }
+                if ck(state) == 38 { inn = "long" }
                 if ck(state) == 55 { inn = "str" }
                 if ck(state) == 46 { inn = "bool" }
                 state = bump(state)
@@ -643,17 +643,17 @@ fn parse_fn(state: ParseState) -> ParseState {
       }
       if ck(state) == 8 { state = bump(state) }
     }
-    var rtype: str = "i64"
+    var rtype: str = "long"
     if ck(state) == 27 {
       state = bump(state)
-      if ck(state) == 38 { rtype = "i64"; state = bump(state) }
+      if ck(state) == 38 { rtype = "long"; state = bump(state) }
       else if ck(state) == 55 { rtype = "str"; state = bump(state) }
       else if ck(state) == 46 { rtype = "bool"; state = bump(state) }
       else if ck(state) == 41 {
         state = bump(state)
         if ck(state) == 1 || ck(state) == 38 || ck(state) == 55 || ck(state) == 46 {
           var inn: str = ct(state)
-          if ck(state) == 38 { inn = "i64" }
+          if ck(state) == 38 { inn = "long" }
           if ck(state) == 55 { inn = "str" }
           if ck(state) == 46 { inn = "bool" }
           state = bump(state)
@@ -708,13 +708,13 @@ fn parse_program(state: ParseState) -> ParseState {
 
 
 fn field_type(obj: str, field: str) -> str {
-  var out: str = "i64"
+  var out: str = "long"
   if obj == "Token" {
-    if field == "kind" { out = "i64" } else if field == "text" { out = "str" }
+    if field == "kind" { out = "long" } else if field == "text" { out = "str" }
   } else if obj == "Param" {
     if field == "name" { out = "str" } else if field == "typ" { out = "str" }
   } else if obj == "Node" {
-    if field == "kind" { out = "i64" } else if field == "text" { out = "str" } else if field == "typ" { out = "str" }
+    if field == "kind" { out = "long" } else if field == "text" { out = "str" } else if field == "typ" { out = "str" }
   } else if obj == "Function" {
     if field == "name" { out = "str" } else if field == "params" { out = "List_Param" } else if field == "return_type" { out = "str" } else if field == "is_public" { out = "bool" }
   } else if obj == "ParseState" {
@@ -724,17 +724,17 @@ fn field_type(obj: str, field: str) -> str {
 }
 
 fn elem_type(list_ty: str) -> str {
-  var out: str = "i64"
+  var out: str = "long"
   if list_ty == "List_Token" { out = "Token" }
   else if list_ty == "List_Node" { out = "Node" }
   else if list_ty == "List_Param" { out = "Param" }
   else if list_ty == "List_Function" { out = "Function" }
-  else if list_ty == "List_i64" { out = "i64" }
+  else if list_ty == "List_i64" { out = "long" }
   out
 }
 
 fn env_get(env: [Binding], name: str) -> str {
-  var i: i64 = 0
+  var i: long = 0
   var found: str = ""
   lp i < len(env) {
     if env[i].name == name {
@@ -751,8 +751,8 @@ fn env_put(env: [Binding], name: str, typ: str) -> [Binding] {
 }
 
 fn fn_return(functions: [Function], name: str) -> str {
-  var i: i64 = 0
-  var rt: str = "i64"
+  var i: long = 0
+  var rt: str = "long"
   lp i < len(functions) {
     if functions[i].name == name {
       rt = functions[i].return_type
@@ -764,7 +764,7 @@ fn fn_return(functions: [Function], name: str) -> str {
   else if name == "mk" { rt = "Node" }
   else if name == "mkx" { rt = "Node" }
   else if name == "mkt" { rt = "Node" }
-  else if name == "len" { rt = "i64" }
+  else if name == "len" { rt = "long" }
   else if name == "substr" { rt = "str" }
   else if name == "env" { rt = "str" }
   else if name == "push" { rt = "" }
@@ -773,9 +773,9 @@ fn fn_return(functions: [Function], name: str) -> str {
 
 fn c_type(t: str) -> str {
   var out: str = t
-  if t == "str" { out = "const char*" }
+  if t == "str" { out = "const chr*" }
   else if t == "bool" { out = "bool" }
-  else if t == "i64" { out = "int64_t" }
+  else if t == "long" { out = "int64_t" }
   else if t == "list" { out = "List_i64" }
   else if t == "list_Token" { out = "List_Token" }
   else if t == "list_Param" { out = "List_Param" }
@@ -787,7 +787,7 @@ fn c_type(t: str) -> str {
 }
 
 
-fn is_name(t: str, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64, j: i64, n: i64) -> bool {
+fn is_name(t: str, a: long, b: long, c: long, d: long, e: long, f: long, g: long, h: long, i: long, j: long, n: long) -> bool {
   // compare t to up to 10 chars given as codepoints; n = length
   var ok: bool = true
   if len(t) != n { ok = false }
@@ -804,7 +804,7 @@ fn is_name(t: str, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i6
   ok
 }
 
-fn emit_args(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str {
+fn emit_args(nodes: [Node], index: long, env: [Binding], functions: [Function]) -> str {
   var out: str = ""
   if index < 0 {
     out = ""
@@ -823,7 +823,7 @@ fn emit_args(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -
   out
 }
 
-fn emit_fields(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str {
+fn emit_fields(nodes: [Node], index: long, env: [Binding], functions: [Function]) -> str {
   var out: str = ""
   if index < 0 {
     out = ""
@@ -838,7 +838,7 @@ fn emit_fields(nodes: [Node], index: i64, env: [Binding], functions: [Function])
   out
 }
 
-fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str {
+fn emit(nodes: [Node], index: long, env: [Binding], functions: [Function]) -> str {
   var out: str = "INT64_C(0)"
   if index < 0 {
     out = "INT64_C(0)"
@@ -911,9 +911,9 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
           var ls: str = emit(nodes, n.left, env, functions)
           var rs: str = emit(nodes, n.right, env, functions)
           if n.text == "==" {
-            out = "({ const char* _l = " + ls + "; const char* _r = " + rs + "; (strcmp(_l ? _l : \"\", _r ? _r : \"\") == 0); })"
+            out = "({ const chr* _l = " + ls + "; const chr* _r = " + rs + "; (strcmp(_l ? _l : \"\", _r ? _r : \"\") == 0); })"
           } else {
-            out = "({ const char* _l = " + ls + "; const char* _r = " + rs + "; (strcmp(_l ? _l : \"\", _r ? _r : \"\") != 0); })"
+            out = "({ const chr* _l = " + ls + "; const chr* _r = " + rs + "; (strcmp(_l ? _l : \"\", _r ? _r : \"\") != 0); })"
           }
         } else {
           out = "(" + emit(nodes, n.left, env, functions) + " " + n.text + " " + emit(nodes, n.right, env, functions) + ")"
@@ -952,7 +952,7 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
     } else if n.kind == 18 {
       var nm: str = n.text
       var tp: str = ""
-      var ci: i64 = 0
+      var ci: long = 0
       lp ci < len(nm) {
         if nm[ci] == 58 {
           tp = substr(nm, ci + 1, len(nm) - ci - 1)
@@ -962,7 +962,7 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
         ci = ci + 1
       }
       if n.left >= 0 && nodes[n.left].kind == 14 {
-        // tp is List_* from annotations or i64 default
+        // tp is List_* from annotations or long default
         var lt: str = "List_i64"
         if len(tp) >= 5 {
           lt = tp
@@ -970,13 +970,13 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
         out = lt + " " + nm + " = (" + lt + "){0}"
       } else if n.left >= 0 && nodes[n.left].kind == 12 {
         out = nodes[n.left].text + " " + nm + " = " + emit(nodes, n.left, env, functions)
-      } else if len(tp) > 0 && tp != "i64" {
+      } else if len(tp) > 0 && tp != "long" {
         out = c_type(tp) + " " + nm + " = " + emit(nodes, n.left, env, functions)
       } else {
         out = "__auto_type " + nm + " = " + emit(nodes, n.left, env, functions)
       }
     } else if n.kind == 16 {
-      // ret is a statement; trailing INT64_C(0) broke str returns (const char* vs i64)
+      // ret is a statement; trailing INT64_C(0) broke str returns (const chr* vs long)
       if n.left < 0 {
         out = "return INT64_C(0)"
       } else {
@@ -988,7 +988,7 @@ fn emit(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str
 }
 
 
-fn emit_stmt(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str {
+fn emit_stmt(nodes: [Node], index: long, env: [Binding], functions: [Function]) -> str {
   var out: str = ""
   if index < 0 {
     out = "((void)0)"
@@ -1009,7 +1009,7 @@ fn emit_stmt(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -
   out
 }
 
-fn emit_fn_body(nodes: [Node], index: i64, env: [Binding], functions: [Function]) -> str {
+fn emit_fn_body(nodes: [Node], index: long, env: [Binding], functions: [Function]) -> str {
   var out: str = ""
   if index < 0 {
     out = "return INT64_C(0);"
@@ -1035,7 +1035,7 @@ fn emit_fn_body(nodes: [Node], index: i64, env: [Binding], functions: [Function]
 }
 
 
-fn emit_params(params: [Param], index: i64) -> str {
+fn emit_params(params: [Param], index: long) -> str {
   var out: str = "void"
   if index >= len(params) {
     out = "void"
@@ -1050,21 +1050,21 @@ fn emit_params(params: [Param], index: i64) -> str {
 fn runtime_a() -> str {
   "#if !defined(_WIN32)\n#define _DEFAULT_SOURCE\n#define _POSIX_C_SOURCE 200112L\n#endif\n" +
   "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <stdbool.h>\n" +
-  "#ifndef _WIN32\n#include <unistd.h>\nint setenv(const char*, const char*, int);\n#endif\n" +
+  "#ifndef _WIN32\n#include <unistd.h>\nint setenv(const chr*, const chr*, int);\n#endif\n" +
   "#pragma GCC diagnostic ignored \"-Wunused-function\"\n" +
   "static int did_print = 0;\n" +
-  "typedef int64_t i64;\n" +
-  "typedef const char* str;\n" +
-  "typedef struct { int64_t kind; const char* text; } Token;\n" +
-  "typedef struct { const char* name; const char* typ; } Param;\n" +
-  "typedef struct { const char* name; const char* typ; } Binding;\n" +
+  "typedef int64_t long;\n" +
+  "typedef const chr* str;\n" +
+  "typedef struct { int64_t kind; const chr* text; } Token;\n" +
+  "typedef struct { const chr* name; const chr* typ; } Param;\n" +
+  "typedef struct { const chr* name; const chr* typ; } Binding;\n" +
   "typedef struct { Binding *d; int64_t n; int64_t cap; } List_Binding;\n" +
-  "typedef struct { int64_t kind; const char* text; int64_t left; int64_t right; int64_t extra; const char* typ; } Node;\n" +
+  "typedef struct { int64_t kind; const chr* text; int64_t left; int64_t right; int64_t extra; const chr* typ; } Node;\n" +
   "typedef struct { Param *d; int64_t n; int64_t cap; } List_Param;\n" +
   "typedef struct { Token *d; int64_t n; int64_t cap; } List_Token;\n" +
   "typedef struct { List_Token tokens; int64_t pos; } ScanState;\n" +
   "typedef struct { Node *d; int64_t n; int64_t cap; } List_Node;\n" +
-  "typedef struct { const char* name; List_Param params; const char* return_type; int64_t root; bool is_public; } Function;\n" +
+  "typedef struct { const chr* name; List_Param params; const chr* return_type; int64_t root; bool is_public; } Function;\n" +
   "typedef struct { Function *d; int64_t n; int64_t cap; } List_Function;\n" +
   "typedef struct { List_Token tokens; List_Node nodes; int64_t pos; int64_t root; int64_t arg_root; List_Function functions; bool has_entry; bool valid; } ParseState;\n" +
   "typedef struct { int64_t *d; int64_t n; int64_t cap; } List_i64;\n" +
@@ -1096,40 +1096,40 @@ fn runtime_b() -> str {
 
 fn runtime_c() -> str {
   "static List_i64 list_push_i64(List_i64 L,int64_t v){if(L.n>=L.cap){L.cap=L.cap?L.cap*2:8;L.d=realloc(L.d,L.cap*sizeof(int64_t));}L.d[L.n++]=v;return L;}\n" +
-  "static char* str_concat(const char* a,const char* b){size_t na=a?strlen(a):0,nb=b?strlen(b):0;char* r=malloc(na+nb+1);if(a)memcpy(r,a,na);if(b)memcpy(r+na,b,nb);r[na+nb]=0;return r;}\n" +
-  "static char* str_from_i64(int64_t x){char* b=malloc(32);snprintf(b,32,\"%lld\",(long long)x);return b;}\n" +
-  "static char* str_concat_si(const char* a,int64_t b){return str_concat(a,str_from_i64(b));}\n" +
-  "static char* str_concat_is(int64_t a,const char* b){return str_concat(str_from_i64(a),b);}\n" +
+  "static chr* str_concat(const chr* a,const chr* b){size_t na=a?strlen(a):0,nb=b?strlen(b):0;chr* r=malloc(na+nb+1);if(a)memcpy(r,a,na);if(b)memcpy(r+na,b,nb);r[na+nb]=0;return r;}\n" +
+  "static chr* str_from_i64(int64_t x){chr* b=malloc(32);snprintf(b,32,\"%lld\",(long long)x);return b;}\n" +
+  "static chr* str_concat_si(const chr* a,int64_t b){return str_concat(a,str_from_i64(b));}\n" +
+  "static chr* str_concat_is(int64_t a,const chr* b){return str_concat(str_from_i64(a),b);}\n" +
   "static int64_t terse_pr_i64(int64_t x){did_print=1;printf(\"%lld\\n\",(long long)x);return 0;}\n" +
-  "static int64_t terse_pr_str(const char* s){did_print=1;printf(\"%s\\n\",s?s:\"\");return 0;}\n" +
-  "#define terse_pr(x) _Generic((x), const char*: terse_pr_str, char*: terse_pr_str, default: terse_pr_i64)(x)\n" +
-  "static int64_t terse_len_str(const char* s){return s?(int64_t)strlen(s):0;}\n" +
-  "static char* terse_substr(const char* s,int64_t start,int64_t len){if(!s)s=\"\";size_t n=strlen(s);if(start<0)start=0;if(start>(int64_t)n)start=n;if(len<0)len=0;if(start+len>(int64_t)n)len=n-start;char* r=malloc(len+1);memcpy(r,s+start,len);r[len]=0;return r;}\n" +
-  "static int64_t terse_str_len(const char* s){return s?(int64_t)strlen(s):0;}\n" +
-  "static int64_t terse_str_at(const char* s,int64_t i){return (s&&i>=0&&i<(int64_t)strlen(s))?(int64_t)(unsigned char)s[i]:0;}\n" +
+  "static int64_t terse_pr_str(const chr* s){did_print=1;printf(\"%s\\n\",s?s:\"\");return 0;}\n" +
+  "#define terse_pr(x) _Generic((x), const chr*: terse_pr_str, chr*: terse_pr_str, default: terse_pr_i64)(x)\n" +
+  "static int64_t terse_len_str(const chr* s){return s?(int64_t)strlen(s):0;}\n" +
+  "static chr* terse_substr(const chr* s,int64_t start,int64_t len){if(!s)s=\"\";size_t n=strlen(s);if(start<0)start=0;if(start>(int64_t)n)start=n;if(len<0)len=0;if(start+len>(int64_t)n)len=n-start;chr* r=malloc(len+1);memcpy(r,s+start,len);r[len]=0;return r;}\n" +
+  "static int64_t terse_str_len(const chr* s){return s?(int64_t)strlen(s):0;}\n" +
+  "static int64_t terse_str_at(const chr* s,int64_t i){return (s&&i>=0&&i<(int64_t)strlen(s))?(int64_t)(unsigned chr)s[i]:0;}\n" +
   "static int64_t list_len_i64(List_i64 L){return L.n;}\n" +
   "static int64_t list_get_i64(List_i64 L,int64_t i){return L.d[i];}\n" +
-  "#define terse_len(x) _Generic((x), const char*: terse_str_len, char*: terse_str_len, List_Token: list_len_Token, List_Node: list_len_Node, List_Param: list_len_Param, List_Function: list_len_Function, List_Binding: list_len_Binding, List_i64: list_len_i64, default: list_len_i64)(x)\n" +
-  "#define terse_at(c,i) _Generic((c), const char*: terse_str_at, char*: terse_str_at, List_Token: list_get_Token, List_Node: list_get_Node, List_Param: list_get_Param, List_Function: list_get_Function, List_Binding: list_get_Binding, List_i64: list_get_i64, default: list_get_i64)(c,i)\n" +
+  "#define terse_len(x) _Generic((x), const chr*: terse_str_len, chr*: terse_str_len, List_Token: list_len_Token, List_Node: list_len_Node, List_Param: list_len_Param, List_Function: list_len_Function, List_Binding: list_len_Binding, List_i64: list_len_i64, default: list_len_i64)(x)\n" +
+  "#define terse_at(c,i) _Generic((c), const chr*: terse_str_at, chr*: terse_str_at, List_Token: list_get_Token, List_Node: list_get_Node, List_Param: list_get_Param, List_Function: list_get_Function, List_Binding: list_get_Binding, List_i64: list_get_i64, default: list_get_i64)(c,i)\n" +
   "static int64_t terse_iadd(int64_t a,int64_t b){return a+b;}\n" +
-  "#define terse_plus(a,b) _Generic((a), const char*: _Generic((b), const char*: str_concat, char*: str_concat, default: str_concat_si), char*: _Generic((b), const char*: str_concat, char*: str_concat, default: str_concat_si), default: _Generic((b), const char*: str_concat_is, char*: str_concat_is, default: terse_iadd))(a,b)\n" +
+  "#define terse_plus(a,b) _Generic((a), const chr*: _Generic((b), const chr*: str_concat, chr*: str_concat, default: str_concat_si), chr*: _Generic((b), const chr*: str_concat, chr*: str_concat, default: str_concat_si), default: _Generic((b), const chr*: str_concat_is, chr*: str_concat_is, default: terse_iadd))(a,b)\n" +
   "#define terse_push(L,v) _Generic((v), Token: list_push_Token, Node: list_push_Node, Param: list_push_Param, Function: list_push_Function, Binding: list_push_Binding, int64_t: list_push_i64, default: list_push_i64)(L,v)\n" +
   "static int terse_argc = 0;\n" +
-  "static char** terse_argv = NULL;\n" +
-  "static const char* terse_arg(int64_t index){if(index<0||index>=terse_argc)return \"\";return terse_argv[index]?terse_argv[index]:\"\";}\n" +
-  "static const char* terse_env(const char* k){const char* v=getenv(k);return v?v:\"\";}\n" +
-  "#ifndef _WIN32\nint setenv(const char*,const char*,int);\n#endif\n" +
-  "static int64_t terse_env_set(const char* k,const char* v){if(!k)return INT64_C(-1);\n" +
+  "static chr** terse_argv = NULL;\n" +
+  "static const chr* terse_arg(int64_t index){if(index<0||index>=terse_argc)return \"\";return terse_argv[index]?terse_argv[index]:\"\";}\n" +
+  "static const chr* terse_env(const chr* k){const chr* v=getenv(k);return v?v:\"\";}\n" +
+  "#ifndef _WIN32\nint setenv(const chr*,const chr*,int);\n#endif\n" +
+  "static int64_t terse_env_set(const chr* k,const chr* v){if(!k)return INT64_C(-1);\n" +
   "#ifdef _WIN32\n" +
   "return (_putenv_s(k,v?v:\"\")==0)?INT64_C(0):INT64_C(-1);\n" +
   "#else\n" +
   "return (setenv(k,v?v:\"\",1)==0)?INT64_C(0):INT64_C(-1);\n" +
   "#endif\n" +
   "}\n" +
-  "static char* fs_read_text(const char* path){FILE* f=fopen(path,\"rb\");if(!f){fprintf(stderr,\"read fail %s\\n\",path);exit(1);}fseek(f,0,SEEK_END);long n=ftell(f);fseek(f,0,SEEK_SET);char* b=malloc(n+1);fread(b,1,n,f);b[n]=0;fclose(f);return b;}\n" +
-  "static int64_t fs_write_text(const char* path,const char* text){FILE* f=fopen(path,\"wb\");if(!f){fprintf(stderr,\"write fail %s\\n\",path);exit(1);}size_t n=text?strlen(text):0;fwrite(text,1,n,f);fclose(f);return (int64_t)n;}\n" +
-  "static int64_t fs_append_text(const char* path,const char* text){FILE* f=fopen(path,\"ab\");if(!f){fprintf(stderr,\"append fail %s\\n\",path);exit(1);}size_t n=text?strlen(text):0;if(n)fwrite(text,1,n,f);fclose(f);return (int64_t)n;}\n" +
-  "static int64_t terse_gcc_compile(const char* src,const char* out){char cmd[4096];const char* cc=getenv(\"CC\");if(!cc||!cc[0])cc=\"gcc\";snprintf(cmd,sizeof(cmd),\"%s -O0 -std=c11 -Wno-unused-function -Wno-unused-parameter -Wno-unused-value -Wno-parentheses %s -o %s\",cc,src,out);return (int64_t)system(cmd);}\n"
+  "static chr* fs_read_text(const chr* path){FILE* f=fopen(path,\"rb\");if(!f){fprintf(stderr,\"read fail %s\\n\",path);exit(1);}fseek(f,0,SEEK_END);long n=ftell(f);fseek(f,0,SEEK_SET);chr* b=malloc(n+1);fread(b,1,n,f);b[n]=0;fclose(f);return b;}\n" +
+  "static int64_t fs_write_text(const chr* path,const chr* text){FILE* f=fopen(path,\"wb\");if(!f){fprintf(stderr,\"write fail %s\\n\",path);exit(1);}size_t n=text?strlen(text):0;fwrite(text,1,n,f);fclose(f);return (int64_t)n;}\n" +
+  "static int64_t fs_append_text(const chr* path,const chr* text){FILE* f=fopen(path,\"ab\");if(!f){fprintf(stderr,\"append fail %s\\n\",path);exit(1);}size_t n=text?strlen(text):0;if(n)fwrite(text,1,n,f);fclose(f);return (int64_t)n;}\n" +
+  "static int64_t terse_gcc_compile(const chr* src,const chr* out){chr cmd[4096];const chr* cc=getenv(\"CC\");if(!cc||!cc[0])cc=\"gcc\";snprintf(cmd,sizeof(cmd),\"%s -O0 -std=c11 -Wno-unused-function -Wno-unused-parameter -Wno-unused-value -Wno-parentheses %s -o %s\",cc,src,out);return (int64_t)system(cmd);}\n"
 }
 
 fn runtime() -> str {
@@ -1137,7 +1137,7 @@ fn runtime() -> str {
 }
 
 
-fn compile_file(source_path: str, output_path: str) -> i64 {
+fn compile_file(source_path: str, output_path: str) -> long {
   var source: str = io.in(source_path)
   var tokens: [Token] = scan(source)
   var empty_nodes: [Node] = []
@@ -1153,7 +1153,7 @@ fn compile_file(source_path: str, output_path: str) -> i64 {
     valid: true
   }
   var parsed: ParseState = parse_program(initial)
-  var result: i64 = 0
+  var result: long = 0
   if parsed.valid == false || parsed.has_entry == false {
     result = 2
   } else {
@@ -1161,7 +1161,7 @@ fn compile_file(source_path: str, output_path: str) -> i64 {
     var c_path: str = output_path + ".c"
     // T7: write .c in chunks. All prototypes first, then bodies (mutual recursion).
     io.out(c_path, runtime())
-    var i: i64 = 0
+    var i: long = 0
     lp i < len(parsed.functions) {
       var f: Function = parsed.functions[i]
       var cn: str = "terse_" + f.name
@@ -1178,7 +1178,7 @@ fn compile_file(source_path: str, output_path: str) -> i64 {
       var ps: str = emit_params(f.params, 0)
       var rt: str = c_type(f.return_type)
       var param_env: [Binding] = []
-      var pi: i64 = 0
+      var pi: long = 0
       lp pi < len(f.params) {
         param_env = env_put(param_env, f.params[pi].name, f.params[pi].typ)
         pi = pi + 1
@@ -1190,7 +1190,7 @@ fn compile_file(source_path: str, output_path: str) -> i64 {
       i = i + 1
     }
     var entry: str = emit_fn_body(parsed.nodes, parsed.root, empty_env, parsed.functions)
-    io.append(c_path, "int main(int argc, char** argv){
+    io.append(c_path, "int main(int argc, chr** argv){
   terse_argc = argc;
   terse_argv = argv;
   " + entry + "
@@ -1220,18 +1220,18 @@ fn default_out_dir() -> str {
 
 fn path_stem(path: str) -> str {
   // basename without final extension
-  var n: i64 = len(path)
-  var i: i64 = n - 1
-  var slash: i64 = -1
-  var dot: i64 = -1
+  var n: long = len(path)
+  var i: long = n - 1
+  var slash: long = -1
+  var dot: long = -1
   lp i >= 0 {
     if slash < 0 && (path[i] == 47 || path[i] == 92) { slash = i }
     if dot < 0 && path[i] == 46 && slash < 0 { dot = i }
     if slash >= 0 { }
     i = i - 1
   }
-  var begin: i64 = slash + 1
-  var end: i64 = n
+  var begin: long = slash + 1
+  var end: long = n
   if dot > begin { end = dot }
   substr(path, begin, end - begin)
 }
@@ -1250,13 +1250,13 @@ go {
   if len(output_path) == 0 && len(source_path) > 0 {
     output_path = default_out_dir() + "/" + path_stem(source_path)
   }
-  var result: i64 = 0
+  var result: long = 0
   if len(source_path) == 0 {
     pr("usage: tc <source.te> [output]")
     pr("  default output: ~/.terse/out/<name> (or $TERSE_OUT)")
     result = 1
   } else {
-    var status: i64 = compile_file(source_path, output_path)
+    var status: long = compile_file(source_path, output_path)
     if status == 0 {
       pr("TC_OK")
       pr(output_path)

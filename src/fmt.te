@@ -3,9 +3,9 @@
 //   ./out/fmt_demo
 
 fix GREETING: str = "Greetings"
-fix ANSWER: i64 = 42
+fix ANSWER: long = 42
 
-fn line(name: str, n: i64) -> str {
+fn line(name: str, n: long) -> str {
   ret fmt(name, " -> ", n)
 }
 

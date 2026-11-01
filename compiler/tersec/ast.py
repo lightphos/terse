@@ -156,19 +156,8 @@ class Index(Expr):
 
 
 @dataclass
-class Route:
-    method: str   # GET, POST, ...
-    path: str
-    handler: Expr
 
 
-@dataclass
-class HttpServe(Expr):
-    port: Expr
-    routes: List[Route]
-
-
-@dataclass
 class FnDecl:
     name: str
     params: List[Param]

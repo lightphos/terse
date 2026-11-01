@@ -1,14 +1,14 @@
-// Numeric helpers — float return types must be annotated
+// Numeric helpers — flt/dbl return types must be annotated
 
-pub fn dbl(x: f64) -> f64 {
+pub fn times2(x: dbl) -> dbl {
   ret x * 2.0
 }
 
-pub fn flt(x: f32) -> f32 {
+pub fn times2f(x: flt) -> flt {
   ret x * 2.0
 }
 
-pub fn add_f64(a: f64, b: f64) -> f64 {
+pub fn add_dbl(a: dbl, b: dbl) -> dbl {
   ret a + b
 }
 

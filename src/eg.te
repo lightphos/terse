@@ -1,12 +1,12 @@
 
 rec Point {
-  x: i64,
-  y: i64,
+  x: long,
+  y: long,
 }
 
-pub fn double(n: i64) -> i64 = n * 2
+pub fn double(n: long) -> long = n * 2
 
-pub fn sum(xs: [i64]) -> i64 {
+pub fn sum(xs: [long]) -> long {
   var total = 0
   lp x:xs {
     total += x
@@ -14,7 +14,7 @@ pub fn sum(xs: [i64]) -> i64 {
   total
 }
 
-pub fn classify(n: i64) -> str =
+pub fn classify(n: long) -> str =
   if n {
     0 => "zero"
     n if n < 0 => "negative"

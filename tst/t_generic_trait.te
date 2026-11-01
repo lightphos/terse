@@ -9,8 +9,8 @@ tr Show[T] {
 }
 
 rec Pt {
-  x: i64,
-  y: i64
+  x: long,
+  y: long
 }
 
 fn Pt.eq(other: Pt) -> bool =

@@ -10,7 +10,7 @@ fn t_str_concat() {
 }
 
 fn t_i64_push() {
-  var xs: [i64] = []
+  var xs: [long] = []
   xs = xs + 10
   xs = xs + [20, 30]
   tst.eq(len(xs), 3)

@@ -1,7 +1,7 @@
 use std.tst
 
 fn t_map_basic() {
-  var scores: {str: i64} = {:}
+  var scores: {str: long} = {:}
   scores["alice"] = 10
   scores["bob"] = 20
   scores["alice"] = 15

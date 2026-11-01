@@ -124,3 +124,14 @@ clean:
 
 wzone:
 	find . -name "*Zone*" -exec rm {} \;
+
+zipit:
+	cd .. && zip -r terse.zip terse -x "terse/.venv/*" -x "terse/.vscode/*" -x "terse/vscode-terse/*" -x "terse/.git*/*" -x "terse/.claude/*"
+
+unzipit:
+	cd .. && unzip -o terse-refactored.zip
+
+srv:
+	@curl -s http://localhost:8765/
+	@curl -s http://localhost:8765/api
+	@curl -s http://localhost:8765/echo -d '{"msg":"hello"}' -H "Content-Type: application/json"

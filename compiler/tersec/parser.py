@@ -7,7 +7,7 @@ from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-    Block, ListLit, MapLit, Index, Route, HttpServe, FnDecl,
+    Block, ListLit, MapLit, Index, FnDecl,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
     EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
     EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -465,30 +465,6 @@ class Parser:
         self.expect(TT.RBRACE)
         return RecordPattern(name, fields)
 
-    def is_http_serve_call(self, e: Expr) -> bool:
-        if not isinstance(e, Call) or not e.args:
-            return False
-        f = e.func
-        return (isinstance(f, Member) and isinstance(f.obj, Var)
-                and f.obj.name == 'http' and f.field == 'serve')
-
-    def parse_routes(self) -> List[Route]:
-        routes = []
-        self.expect(TT.LBRACE)
-        while not self.match(TT.RBRACE):
-            if not self.match(TT.IDENT):
-                t = self.cur()
-                raise SyntaxError(f"expected method at {t.line}:{t.col}")
-            method = self.adv().v.upper()
-            if method not in ('GET','POST','PUT','DELETE','PATCH'):
-                raise SyntaxError(f"unknown method {method}")
-            path_tok = self.expect(TT.STRING)
-            self.expect(TT.FATARROW)
-            handler = self.parse_expr()
-            routes.append(Route(method, path_tok.v, handler))
-            if self.match(TT.SEMI): self.adv()
-        self.expect(TT.RBRACE)
-        return routes
 
     def parse_record_lit(self, ctor: Expr):
         self.expect(TT.LBRACE)
@@ -650,9 +626,6 @@ class Parser:
                     if self.match(TT.COMMA): self.adv()
                 self.expect(TT.RPAREN)
                 e = Call(e, args, line=call_tok.line, col=call_tok.col)
-                if self.is_http_serve_call(e) and self.match(TT.LBRACE):
-                    routes = self.parse_routes()
-                    e = HttpServe(e.args[0], routes)
             elif self.match(TT.LBRACK):
                 self.adv()
                 parts = [self.parse_expr()]

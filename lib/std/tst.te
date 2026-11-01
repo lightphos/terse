@@ -5,9 +5,9 @@
 // Do not print PASS lines. Host runtime tst_report() may print
 // "FAILED k of n" when the failure count is non-zero.
 //
-// Overloads: eq / ne for i64, str, bool (file/line from host sugar).
+// Overloads: eq / ne for long, str, bool (file/line from host sugar).
 
-pub fn eq(got: i64, expected: i64, file: str, line: i64) -> i64 {
+pub fn eq(got: long, expected: long, file: str, line: long) -> long {
   if got != expected {
     pr("FAIL " + file + ":" + line + ": expected " + expected + ", got " + got)
     ret 1
@@ -15,7 +15,7 @@ pub fn eq(got: i64, expected: i64, file: str, line: i64) -> i64 {
   ret 0
 }
 
-pub fn eq(got: str, expected: str, file: str, line: i64) -> i64 {
+pub fn eq(got: str, expected: str, file: str, line: long) -> long {
   if got != expected {
     pr("FAIL " + file + ":" + line + ": expected \"" + expected + "\", got \"" + got + "\"")
     ret 1
@@ -23,7 +23,7 @@ pub fn eq(got: str, expected: str, file: str, line: i64) -> i64 {
   ret 0
 }
 
-pub fn eq(got: bool, expected: bool, file: str, line: i64) -> i64 {
+pub fn eq(got: bool, expected: bool, file: str, line: long) -> long {
   if got != expected {
     if expected {
       pr("FAIL " + file + ":" + line + ": expected true, got false")
@@ -35,7 +35,7 @@ pub fn eq(got: bool, expected: bool, file: str, line: i64) -> i64 {
   ret 0
 }
 
-pub fn ne(got: i64, unexpected: i64, file: str, line: i64) -> i64 {
+pub fn ne(got: long, unexpected: long, file: str, line: long) -> long {
   if got == unexpected {
     pr("FAIL " + file + ":" + line + ": expected not " + unexpected + ", got " + got)
     ret 1
@@ -43,7 +43,7 @@ pub fn ne(got: i64, unexpected: i64, file: str, line: i64) -> i64 {
   ret 0
 }
 
-pub fn ne(got: str, unexpected: str, file: str, line: i64) -> i64 {
+pub fn ne(got: str, unexpected: str, file: str, line: long) -> long {
   if got == unexpected {
     pr("FAIL " + file + ":" + line + ": expected not \"" + unexpected + "\", got \"" + got + "\"")
     ret 1
@@ -51,7 +51,7 @@ pub fn ne(got: str, unexpected: str, file: str, line: i64) -> i64 {
   ret 0
 }
 
-pub fn ne(got: bool, unexpected: bool, file: str, line: i64) -> i64 {
+pub fn ne(got: bool, unexpected: bool, file: str, line: long) -> long {
   if got == unexpected {
     pr("FAIL " + file + ":" + line + ": expected values to differ")
     ret 1
@@ -60,6 +60,6 @@ pub fn ne(got: bool, unexpected: bool, file: str, line: i64) -> i64 {
 }
 
 // No PASS / summary print here — host tst_report() is quiet unless failures > 0.
-pub fn report() -> i64 {
+pub fn report() -> long {
   ret 0
 }

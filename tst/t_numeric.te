@@ -2,16 +2,16 @@ use std.tst
 use numeric
 
 fn t_dbl() {
-  val v = dbl(1.5)
+  val v = times2(1.5)
   tst.eq(v == 3.0, true)
 }
 
 fn t_flt() {
-  val v = flt(1.5)
+  val v = times2f(1.5)
   tst.eq(v == 3.0, true)
 }
 
 fn t_add() {
-  val v = add_f64(1.25, 2.25)
+  val v = add_dbl(1.25, 2.25)
   tst.eq(v == 3.5, true)
 }
