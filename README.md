@@ -100,15 +100,9 @@ Then reload the VS Code window and use the Terse commands from the command palet
 
 ## Status
 
-The compiler is in active development. It supports a growing subset of the language, including native compilation via a C backend, module imports, basic types, conditionals, loops, functions, and higher-order constructs. See [SPEC.md](./SPEC.md) for the current language contract and known limitations.- Function pointers under the hood (no environment capture yet)
-- Text file reads and writes through `std.io`
+The compiler is in active development. It supports a growing subset of the language, including native compilation via a C backend, module imports, basic types, conditionals, loops, functions, and higher-order constructs. See [SPEC.md](./SPEC.md) for the current language contract.
 
-Not yet implemented (but specified):
-
-- Full closures with captures
-- Records / structs / pattern-based conditionals
-- Generics, ownership system, selective imports, and visibility modifiers
-
+For the prioritized next work items and staged native-lift plan, see [roadmap.md](./roadmap.md).
 
 ## Compiler Status (0.3)
 
@@ -174,58 +168,6 @@ native frontend first, and reports when it falls back:
 # Build the bootstrap.
 make bootstrap
 ```
-
-## TODO
- 
-### Features
-
-- i++
-- --i
-- ~fn -> async
-- .. method -> await
-- [i * 2] etc
-- arrays examples
-- list push pop
-- queues
-- maps
-- elastic hashing
-
-### Native Compiler Parity
-
-- [x] Generalize function declarations and calls: multiple functions, arbitrary
-  parameter/argument lists, optional `long`/`bool` parameter and return
-  annotations, `pub`, and one validated `go` entrypoint. The parser also accepts
-  unused type/record/trait/method declarations and standard imports.
-- [ ] Add semantics for type/record/trait/method declarations and source-module
-  imports, including module resolution and visibility enforcement.
-- [ ] Complete lexical and expression coverage: hexadecimal integers, floats,
-  unit, decoded string escapes, block comments, assignment, composition,
-  partial-application `_`, and postfix member/call/index/record/list forms.
-- [ ] Add the documented statement and control forms: general block sequencing,
-  `val`/`var`, assignment, `ret`, both `lp` loop forms, and `if` pattern arms
-  with guards; account for `brk`/`skip` if they are part of the
-  supported language contract.
-- [ ] Implement the type forms and checking promised by the docs: primitive and
-  function types, lists, records, tuples, `Option`/`Result`, annotations and
-  inference, plus useful errors for unknown names, invalid calls, and mismatches.
-- [ ] Port higher-order behavior and data features: function values, lambdas,
-  closure captures, records/traits, lists, string operations, and the supported
-  `fs`, JSON, and environment builtins/runtime. Move HTTP and DB APIs according
-  to the extraction plan below, keeping limited HTTP features distinct from
-  documented future middleware and request-decoding support.
-
-
-### Native
-
-- tc -> native terse compiler
-- tp -> package manager and processor
-  - tp get <module:version> (from github?)
-  - tp bld 
-  - tp tst
-
-> 
-> Now you really can't get more `terse` than that, can you?
-> 
 
 ## License
 

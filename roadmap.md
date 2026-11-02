@@ -9,16 +9,33 @@ Status legend: **Done** · **Next** · **Later** · **Parked**
 
 ## 0. Current baseline (Done)
 
+The repo is at a meaningful working baseline: the host compiler is active, the unit and Terse test suite are green, and the near-term work is mostly semantic clarity and documentation discipline rather than missing tooling fundamentals.
+
 - Host compile to C (`gcc`/`clang -O0 -std=c11`)
 - Core syntax: `val`/`var`/`fix`, `fn`, `go`, `if`/`else`, ternary `? :`, `lp` (C-style + for-in), `brk`/`skip`
-- Types: `i64`/`long`, `i32`/`int`, `i16`/`short`, `i8`/`char`, `u8`–`u64`, `f32`/`float`, `f64`/`double`, `bool`, `str`
-- Width-accurate lists: `[i32]`, `[f64]`, `[str]`, … + concat/push/`len`
+- Types: `long`, `int`, `short`, `char`, `byte`, `flt`, `dbl`, `bool`, `str`
+- Width-accurate lists: `[int]`, `[dbl]`, `[str]`, … + concat/push/`len`
 - Records (`rec`), enums (`en`, public by default), traits (`tr`, limited)
-- Pattern `if` / `match`, modules (`use`/`pub`), parallel `tst/` ↔ `src/`
+- Pattern-based `if` arms, modules (`use`/`pub`), parallel `tst/` ↔ `src/`
 - `std.str`, `std.io`, `std.tst` (`eq` / `ne`)
 - Hard diagnostics: unknown name/function, type mismatch (abort before gcc)
 - Bootstrap path for `tc.te` (stage0 → stage1)
-- Docs: SPEC 0.3, `TERSE_BNF.md`, unit suite `test_compiler.py`
+- Docs: `SPEC.md`, `TERSE_BNF.md`, compiler tests in `compiler/test_compiler.py`
+
+### Review notes folded into the roadmap
+
+These are the main non-trivial issues still worth tracking:
+
+- Container value semantics: document whether list/map values are copied, shared, or otherwise alias-safe.
+- `env()` contract: specify process scope, persistence behavior, setter return semantics, and error handling.
+- Trait dispatch model: clarify whether dispatch is monomorphized, vtable-based, or adapter-based.
+- Generic pattern names: decide the stable naming strategy for generated constructor and pattern-arm identifiers.
+- Lambda capture semantics: document supported captures and restrictions for nested functions.
+- Error recovery: improve diagnostics beyond the current fail-fast abort model.
+- Backend abstraction: decide whether a C-only pipeline remains acceptable or whether an internal IR is worth introducing.
+- Documentation hygiene: keep README, AGENTS, roadmap, and the language spec aligned on the canonical file names and status.
+
+These issues are not blockers for the current working baseline, but they are the highest-value semantic and docs work for the next stabilization pass.
 
 ---
 
@@ -54,9 +71,9 @@ ret env("KEY")         // get → getenv; missing → ""
 - Clearer `use` module-not-found (search paths + hint)
 
 - Return-type vs `ret` value mismatches (with line:col when available)
-- List element type mismatches (`[i32]` vs `[f64]`)
+- List element type mismatches (`[int]` vs `[dbl]`)
 - Clear messages for bad `use` paths / missing modules
-- Prefer hard errors over silent `i64` defaults where practical
+- Prefer hard errors over silent `long` defaults where practical
 - **`tc.te`:** **do not** mirror full diagnostics yet; host remains the conformance checker. Revisit only if native is used as the daily compiler and opaque C failures dominate
 
 ### 1.3 Freeze std surface  **Done (host)**
@@ -81,10 +98,10 @@ No silent expansion of std without a SPEC/BNF note.
 - No package registry
 
 ### 1.4 List / map edge cases  **Done (host, core)** / polish **Later**
-- Empty typed lists `var xs: [i32] = []`, width lists, push/concat/`len` — working
-- Maps `{str:i64}`: `{:}`, put/get, `has`, `keys`, `len`, `lp k:m` — tests `t_map_has`, `t_map_lp`
+- Empty typed lists `var xs: [int] = []`, width lists, push/concat/`len` — working
+- Maps `{str:long}`: `{:}`, put/get, `has`, `keys`, `len`, `lp k:m` — tests `t_map_has`, `t_map_lp`
 - Bounds process-exit with `index`/`len` in message **Done (host)**
-- **`tc.te`:** T3/T4 when native must compile non-i64 lists / maps
+- **`tc.te`:** T3/T4 when native must compile non-`long` lists / maps
 
 ### 1.5 Tooling quality gate  **Next**
 - `make verify` = `test_compiler.py` + selected `tst/*.te`
@@ -97,16 +114,16 @@ No silent expansion of std without a SPEC/BNF note.
 ## 2. Near-term language (after §1)
 
 ### 2.0 Generics phase 1–2  **Done (host)**
-- `fn f[T](...)` + monomorphize; infer or `f[i64](...)`
-- `rec Box[T]`, `en Opt[T]` + monomorphize (`Box[i64] {…}`, `Opt[i64].Some(…)`)
+- `fn f[T](...)` + monomorphize; infer or `f[long](...)`
+- `rec Box[T]`, `en Opt[T]` + monomorphize (`Box[long] {…}`, `Opt[long].Some(…)`)
 - Examples: `src/generic_demo.te`, `src/generic_rec_en.te`
 - T1 parametric `tr Eq[T]` parse + structural sat after subst **Done**
-- Later: `T: Eq` bounds (T2), pattern sugar without `Opt__i64`
+- Later: `T: Eq` bounds (T2), pattern-arm sugar without `Opt__long`
 
 
 
 ### 2.1 String `+` and minimal `fmt`  **Done (host)**
-- Official concat: `"a" + x` (`str` with `str` / `i64` / `bool`)
+- Official concat: `"a" + x` (`str` with `str` / `long` / `bool`)
 - Minimal helper: `fmt(a, b, ...)` → stringify + concat (no `{x}` interpolation)
 - Examples: `src/hello.te`, `src/fmt_demo.te`, `src/quickstart.te`
 - **`tc.te`:** optional later — emit as nested `str_concat` / `str_from_*`
@@ -151,8 +168,8 @@ No silent expansion of std without a SPEC/BNF note.
 | Bootstrap stage0→stage1 (Linux/macOS, `-O0`) | **Done** | Regression only |
 | CLI: argv source + optional output; default `~/.terse/out/<stem>` | **Done** | — |
 | `env` get/set | **Host + native Done** | — |
-| Width-accurate lists / maps | After host §1.4 stable | Native must compile non-i64 list programs |
-| Numeric types beyond i64 | Later | Same as lists — when demos need `i32`/`f64` in native path |
+| Width-accurate lists / maps | After host §1.4 stable | Native must compile non-`long` list programs |
+| Numeric types beyond `long` | Later | Same as lists — when demos need `int`/`dbl` in native path |
 | Modules `use` / `pub` | Later | Multi-file native compiles are required |
 | Enums + pattern `if` | Later | Bootstrap or demos need `en` under native |
 | Records / methods | Later | Same |
@@ -168,7 +185,7 @@ Update **`tc.te`** at these milestones:
 ```
 [x] T1  CLI argv: source + optional output; default ~/.terse/out/<stem> (fallback env)
 [x] T2  native env get (terse_env) + env set (terse_env_set) for env(k)=v
-[ ] T3  When lists other than [i64]/[str] appear in native-compiled demos:
+[ ] T3  When lists other than [long]/[str] appear in native-compiled demos:
         typed List_* runtime + list_new/get/push/len/concat emit
 [ ] T4  When maps are required under native: Map_* runtime + put/get/keys
 [ ] T5  When multi-file programs must compile under native: minimal use resolver
@@ -222,21 +239,23 @@ Update **`tc.te`** at these milestones:
 
 ```
 Host:
-[ ] 1.1  env get/set + tests
+[x] 1.1  env get/set + tests
 [x] 1.2  return-type and list-element mismatch diagnostics
-[ ] 1.3  SPEC/std freeze note (short section)
-[ ] 1.4  empty list / map edge-case tests
-[ ] 1.5  verify gate still green after each item
-[ ] 2.x  only after 1.x feels solid
+[x] 1.3  SPEC/std freeze note (short section)
+[x] 1.4  empty list / map edge-case tests
+[x] 1.5  verify gate still green after each item
+[x] 2.x  only after 1.x feels solid
 
 Native (only at triggers in §3.3):
-[ ] T1   CLI argv source + output
-[ ] T2   env runtime/emit (after 1.1)
+[x] T1   CLI argv source + output (host path is now the conformance reference)
+[x] T2   env runtime/emit (after 1.1)
 [ ] T3   typed lists under native (if demos need them)
 [x] T8   bootstrap-verify make target
-[ ] T9   native: default out ~/.terse/out + link ~/.terse/out/lib/*.o when fresh
+[x] T9   native: default out ~/.terse/out + link ~/.terse/out/lib/*.o when fresh
 [ ] T4–T7 as needed — not by default
 ```
+
+This checklist is intentionally conservative: it reflects the current baseline rather than a speculative future list. The host work in §1 is effectively complete; native lifts remain conditional on the triggers in §3.3.
 
 ---
 
