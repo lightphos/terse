@@ -32,7 +32,7 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
 ### Keywords (reserved)
-`fn`, `val`, `var`, `fix`, `type`, `if`, `else`, `match`, `use`, `ret`, `true`, `false`, `rec`, `en`, `tr`, `self`, `pub`, `while`, `lp`, `brk`, `skip`, `go`, `pr`
+`fn`, `val`, `var`, `fix`, `type`, `if`, `else`, `use`, `ret`, `true`, `false`, `rec`, `en`, `tr`, `self`, `pub`, `while`, `lp`, `brk`, `skip`, `go`, `pr`
 
 
 ### Literals
@@ -164,7 +164,7 @@ fn eq(got: int, exp: int) -> long { ... }     // distinct from long overload
 Rules:
 - Resolution is **type-directed** at each call site (argument types after local checking).
 - Identical signatures for the same name are a **type error**.
-- Soft match: if no exact overload, integer widths may match each other (e.g. `int` arg to `long` param) when unique.
+- Integer-width fallback: if no exact overload exists, integer widths may be considered equivalent (e.g. `int` arg to `long` param) when unique.
 - Each overload is a distinct C symbol: `terse_eq__long_long`, `terse_eq__str_str`, …
 - A single definition of a name still emits `terse_<name>` (no suffix).
 - Parameters may have defaults: `fn f(a: long, b: long = a + 1) = ...`.
@@ -251,14 +251,8 @@ Modules may contain `go` (ignored when imported as a library).
 ```
 if cond { ... } else if ... { ... } else { ... }
 
-// Pattern if (arms with =>) — same arm syntax as match
+// Pattern if (arms with =>)
 if r {
-  Result.Ok(n) => n
-  Result.Err(msg) => 0
-  _ => -1
-}
-
-match r {
   Result.Ok(n) => n
   Result.Err(msg) => 0
   _ => -1
@@ -278,7 +272,6 @@ work() trap e: {          // handle err(...) raised by work()
 }
 ```
 
-**`if` vs `match`:** both support pattern arms (`pat => expr`). Prefer either style consistently; they are equivalent for arm matching. Catch-all is `_ => …` (optional trailing `else` on pattern-`if`).
 
 `trap name: { ... }` attaches to the immediately preceding expression and catches the nearest `err(message)` raised while evaluating it, including errors propagated from called functions. The handler binding is a `str`. A handler may rethrow with `err(name)`; that error propagates to the next enclosing trap. An uncaught error prints to stderr and exits with status 1. A trap expression evaluates to `0`.
 
@@ -526,7 +519,7 @@ python3 tersec.py run main.te
 - Functions, methods, recursion, simple lambdas (no capture)  
 - Parameter overloading (distinct param type lists)  
 - Records, enums (+ payloads), non-generic traits (implicit satisfaction)  
-- Pattern `if` / `match`  
+- Pattern `if` arms
 - Loops: for-in, C-style, condition; `brk` / `skip`  
 - Lists width types `[int]`/`[long]`/`[dbl]`/`[str]`/… (+, len, index, `map`)  
 - Maps `{str:long|str}`: put/get, `has`, `keys`, `len`, for-in keys  

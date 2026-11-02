@@ -366,7 +366,7 @@ class Parser:
                 if self.match(TT.ELSE):
                     self.adv()
                     if self.match(TT.IF):
-                        raise SyntaxError("match-style if cannot use 'else if'; use '_ =>' or a final else block")
+                        raise SyntaxError("pattern-style if cannot use 'else if'; use '_ =>' or a final else block")
                     els = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
                     arms.append(MatchArm(Wildcard(), None, els))
                 return MatchExpr(cond, arms)
@@ -382,24 +382,6 @@ class Parser:
             else:
                 els = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
         return IfExpr(cond, then, els)
-
-    def parse_match(self):
-        self.expect(TT.MATCH)
-        subject = self.parse_expr()
-        self.expect(TT.LBRACE)
-        arms = []
-        while not self.match(TT.RBRACE):
-            pat = self.parse_pattern()
-            guard = None
-            if self.match(TT.IF):
-                self.adv()
-                guard = self.parse_expr()
-            self.expect(TT.FATARROW)
-            value = self.parse_expr()
-            arms.append(MatchArm(pat, guard, value))
-            if self.match(TT.COMMA): self.adv()
-        self.expect(TT.RBRACE)
-        return MatchExpr(subject, arms)
 
     def parse_pattern(self):
         t = self.cur()
@@ -525,7 +507,6 @@ class Parser:
         if self.match(TT.PIPE): return self.parse_lambda()
         if self.match(TT.LBRACE): return self.parse_brace()
         if self.match(TT.IF): return self.parse_if()
-        if self.match(TT.MATCH): return self.parse_match()
         if self.match(TT.WHILE): return self.parse_while()
         if self.match(TT.LP): return self.parse_loop()
         raise SyntaxError(f"unexpected {t.t.name} ('{t.v}') at {t.line}:{t.col}")
@@ -579,7 +560,7 @@ class Parser:
             self.adv()
             return IntLit(0)
         if self.match(TT.VAL, TT.VAR, TT.IF, TT.LP, TT.WHILE, TT.RET, TT.BRK, TT.SKIP,
-                      TT.MATCH, TT.FN, TT.GO, TT.FIX):
+                      TT.FN, TT.GO, TT.FIX):
             self.i = save
             return self.parse_block()
         try:

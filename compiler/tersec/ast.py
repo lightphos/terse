@@ -251,7 +251,7 @@ class FixDecl:
     public: bool = False
 
 
-# Pattern nodes for match
+# Pattern nodes for pattern-based if arms
 @dataclass
 class Wildcard:
     pass

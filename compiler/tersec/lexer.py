@@ -25,7 +25,6 @@ class TT(Enum):
     GO = auto()
     PUB = auto()
     EN = auto()
-    MATCH = auto()
     VAL = auto()
     VAR = auto()
     FIX = auto()
@@ -76,9 +75,8 @@ KW = {
     'fn': TT.FN, 'if': TT.IF, 'else': TT.ELSE, 'lp': TT.LP,
     'true': TT.TRUE, 'false': TT.FALSE, 'return': TT.RETURN, 'ret': TT.RET,
     'use': TT.USE, 'type': TT.TYPE, 'go': TT.GO, 'tr': TT.TR, 'pub': TT.PUB,
-    'en': TT.EN, 'match': TT.MATCH,
-    'val': TT.VAL, 'var': TT.VAR, 'fix': TT.FIX, 'while': TT.WHILE,
-    'rec': TT.REC, 'brk': TT.BRK, 'skip': TT.SKIP,
+    'en': TT.EN,
+    'val': TT.VAL, 'var': TT.VAR, 'fix': TT.FIX, 'while': TT.WHILE,    'rec': TT.REC, 'brk': TT.BRK, 'skip': TT.SKIP,
 }
 
 

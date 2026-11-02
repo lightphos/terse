@@ -1,230 +1,112 @@
 # Terse
 
-A succinct language that compiles to native binaries, with structures, interfaces, first-class higher-order functions, supporting libraries and builtin in test runner.
+Terse is a compact, statically typed language that compiles to native binaries through a C backend. The repo includes the Python host compiler, example programs, test suite, and a small standard library surface.
 
-### Hi
+## Quick start
 
-> src/hi.te
+Prerequisites:
+- Python 3.12+
+- `gcc` or `clang` available on `PATH`
+
+Compile and run the built-in hello example:
+
+```bash
+python3 compiler/tersec.py build src/hi.te -o out/hi
+./out/hi
+```
+
+Or use the Makefile shortcuts:
+
+```bash
+make run.hi dir=src
+make tst
+```
+
+Example source (`src/hi.te`):
+
 ```terse
-
 go {
-    val a = arg(1) == "" ? "World" : arg(1) 
-    pr("Hi, " + a + "! This is terse!")
+  val name = arg(1) == "" ? "World" : arg(1)
+  pr("Hi, " + name + "! This is terse!")
 }
-
 ```
 
-> make run.hi
-```
-Hi, World! This is terse
-```
-## Howz
-
-> Requires python3 for the compile
-
-### Run and Test
-```bash
-# Build program in example directory to a binary
-make run.eg dir=src
-make tst.t_eg
-make tst (runs all tests)
-```
-
-> Tests are detected and run if functions are prefixed by `t_`
-
-
-### VS Code Support
-```bash
-make vscode-terse
-make vconde-install
-```
-In VS Code, reload window:
-
-```
-Ctrl+Shift+P
-Developer: Reload Window
-```
-
-Select a terse file, then
-
-Compile:
-
-```
-Ctrl+Shift+P
-Terse: Compile
-```
-
-Run:
-
-```
-Ctrl+Shift+P
-Terse: Run
-
-or F5
-```
-
-
-## Output layout (`~/.terse/out`)
-
-By default the host writes under the Terse home directory:
-
-| What | Path |
-|------|------|
-| Home | `~/.terse` (override with `$TERSE_HOME`) |
-| Binaries / generated `.c` | `~/.terse/out/<name>` (override with `$TERSE_OUT`) |
-| Libraries | `~/.terse/out/lib/<module>/module.o` (+ `module.meta`) (override with `$TERSE_LIB`) |
-
-### Resolution rules
-
-- **No `-o`:** writes `~/.terse/out/<stem>` from the source file name
-- **`-o name` (bare name):** also under `~/.terse/out/name`
-- **`-o path/to/out` or an absolute `-o`:** uses that path as given
-
-
-Environment overrides:
+## Build commands
 
 ```bash
-export TERSE_OUT=/path/to/out
-export TERSE_LIB=/path/to/libs
-export TERSE_HOME=/path/to/.terse
+# Compile a source file using the Python host compiler
+python3 compiler/tersec.py build src/hi.te -o out/hi
+
+# Run a source file directly
+python3 compiler/tersec.py run src/hi.te -o out/hi
+
+# Parse + typecheck only
+python3 compiler/tersec.py check src/hi.te
+
+# Build the bootstrap compiler from the Terse source frontend
+make tcc
+make tcc1
+make bootstrap
+
+# Compile/run a project example under src/
+make run.NAME dir=src
+
+# Run tests under tst/
+make tst
 ```
 
-**Makefile note:** 
-
-Auto-link of `~/.terse/out/lib/...` on `use` is **off by default**. Enable with `TERSE_AUTOLIB=1` if you want imports to prefer a fresh `module.o` over inlining.
-
-
-## Stranger-friendly
-
-Try the following:
-
-| File | Shows |
-|------|--------|
-| `src/hi.te` | smallest `go` + `pr` |
-| `src/fmt.te` | string `+` and `fmt(...)` |
-| `src/quickstart.te` | `lp`, `fn`, `fmt` |
-
-## Features
-
-| Feature | Description |
-|---------|-------------|
-| Primitives | `int, long, chr, bool, dbl, flt, str ...` |
-| Variables | `var/val` |
-| Constants | `fix`|
-| Enums | `en` |
-| Arrays | `a[]`|
-| Lists | `[]` |
-| Maps |`{x:y}`|
-| Struct | `rec` |
-| Traits | `tr`|
-| Loops | `lp` list or indexes |
-| Conditions | `if/else` |
-| Matching | `if "match" => ` |
-| High order functions | pass functions around |
-| Lambda | `\|x\| fn(x)`, closures todo|
-| Pipes | see below |
-| Tuples | todo |
-| Generics | `[T]`, qualified todo |
-| Exceptions | `err` todo |
-
-
-```terse
-fn add(a: long, b: long) -> long = a + b
-var xs: [long] = [1, 2, 3]
-var m: {str: long} = {:}
-```
-
-### Pipe operator `|>`
-
-`|>` is left-to-right function application (same idea as Elixir / F#). It rewrites at parse time — there is no special runtime opcode.
-
-```terse
-xs |> map(double) |> sum()
-```
-
-desugars to:
-
-```terse
-sum(map(xs, double))
-```
-
-
-Built-ins like `map` expect `(collection, fn)`; piping puts the collection in the first slot, which is why `xs |> map(double)` works.
-
-## Library packages (`lib/`)
-
-
-Optional libraries sit next to the compiler tree. Dots in `use` map to path
-segments under `lib/` or `src/`:
+## Project layout
 
 ```text
-lib/calc/math.te      →  use calc.math     →  math.abs(x)   (alias = last segment)
+compiler/      Host compiler and tests
+src/           Example programs and app modules
+lib/           Optional library modules
+tst/           Test programs (t_*.te)
+SPEC.md        Language specification
+TERSE_BNF.md   Grammar reference
+vscode-terse/  VS Code extension
 ```
 
-```terse
-use std.tst
-use calc.math
+## Testing
 
-fn t_fact5() {
-  tst.eq(math.fact(5), 120)
-}
+```bash
+# Host compiler unit tests
+python3 -m unittest compiler.test_compiler -v
+
+# All Terse test programs
+make tst
 ```
 
-**General rule:** `use a.b.c` resolves to the first existing file among:
+Tests under `tst/` are written as `t_*.te` programs and are compiled by the host compiler.
 
-1. Next to the importing file: `a/b/c.te`
-2. Project `lib/a/b/c.te` (optional packages)
-3. Project `src/a/b/c.te` (app modules)
-4. Project root `a/b/c.te`
+## Language docs
 
-The import alias is the **last** path segment (`use calc.math` → `math`), so calls look like `math.fact(...)`. In `tst/` sources, public names are also available unqualified (`fact(5)`).
+The language design, semantics, and grammar are documented in:
+- [SPEC.md](./SPEC.md)
+- [TERSE_BNF.md](./TERSE_BNF.md)
 
-- **`pub`** functions are the public API of a package  
-- No registry yet — packages are files under `lib/` / `src/`  
-- Precompile: `python3 compiler/tersec.py lib lib/calc/math.te` → `~/.terse/out/lib/...`
+This README intentionally stays concise; implementation details and language rules live in the spec files.
 
+## VS Code support
 
-| Libs | Function |
-| -----| ---------|
-| std.io  | file i/o |
-| std.out | pr/*con?* - assumed, no use needed |
-| std.tst | testing |
-| calc.maths | *todo*, rnd |
-| cnx.http | http *client*/server |
-| cnx.db | todo, *plugin* mechanism |
-| cnx.msg | *todo* |
-| run.ai | *todo* |
-| run.prc | *todo*, env, calls |
-| run.loom | concurrency *todo* |
+```bash
+cd vscode-terse
+npm install
+npm run compile
+npm run package
+```
 
+Then reload the VS Code window and use the Terse commands from the command palette.
 
-## Language Spec
+## Status
 
-See [spec/TERSE_BNF.md](spec/TERSE_BNF.md) and [spec/SPEC.md](spec/SPEC.md) for the full language specification.
-
-## Compiler Status (0.1)
-
-- Built in print out
-- Basic arithmetic
-- If else
-
-## Compiler Status (0.2)
-
-The reference compiler (`compiler/tersec.py`) implements:
-
-- Lexer, recursive-descent parser, minimal type checker
-- C code generation + gcc/clang backend → native binary
-- Integers (`long`/`int`/`chr`/`byte`), booleans, arithmetic & comparisons
-- `if` expressions, `let` bindings, blocks
-- Named functions + recursion
-- **Higher-order functions**: pass functions as values, simple lambdas (`|x| x*2`)
-- Function pointers under the hood (no environment capture yet)
+The compiler is in active development. It supports a growing subset of the language, including native compilation via a C backend, module imports, basic types, conditionals, loops, functions, and higher-order constructs. See [SPEC.md](./SPEC.md) for the current language contract and known limitations.- Function pointers under the hood (no environment capture yet)
 - Text file reads and writes through `std.io`
 
 Not yet implemented (but specified):
 
 - Full closures with captures
-- Records / structs / pattern matching
+- Records / structs / pattern-based conditionals
 - Generics, ownership system, selective imports, and visibility modifiers
 
 
@@ -242,7 +124,7 @@ The reference compiler (`compiler/tersec.py`, now split into the `compiler/terse
 - Function pointers under the hood (no environment capture yet)
 - **Parameter overloading** (distinct param type lists)
 - **Records / structs**, **methods**, **enums** (+ payloads), **traits** (implicit satisfaction)
-- **Pattern matching**: `if` / `match` arms
+- **Pattern guards**: `if` arms
 - **Loops**: for-in, C-style `lp i = 0; ...;`, condition loops; `brk` / `skip`
 - **Lists**: width types `[long]`/`[int]`/`[str]`/…, `+`, `len`, index, `map`
 - **Maps**: `{str:long|str}`, put/get, `has`, `keys`, `len`, for-in keys
@@ -306,7 +188,7 @@ make bootstrap
 - list push pop
 - queues
 - maps
-- hash free linear lookup
+- elastic hashing
 
 ### Native Compiler Parity
 
@@ -320,8 +202,8 @@ make bootstrap
   unit, decoded string escapes, block comments, assignment, composition,
   partial-application `_`, and postfix member/call/index/record/list forms.
 - [ ] Add the documented statement and control forms: general block sequencing,
-  `val`/`var`, assignment, `ret`, both `lp` loop forms, and `if match` with
-  patterns and guards; account for `brk`/`skip` if they are part of the
+  `val`/`var`, assignment, `ret`, both `lp` loop forms, and `if` pattern arms
+  with guards; account for `brk`/`skip` if they are part of the
   supported language contract.
 - [ ] Implement the type forms and checking promised by the docs: primitive and
   function types, lists, records, tuples, `Option`/`Result`, annotations and

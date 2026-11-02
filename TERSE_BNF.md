@@ -148,7 +148,6 @@
                   | <record-literal>
                   | <lambda-expr>
                   | <if-expr>
-                  | <match-expr>
                   | <loop-expr>
                   | <block-expr>
                   | <ret-expr>
@@ -168,15 +167,13 @@
 <if-expr>       ::= "if" <expr> <block-expr>
                     { "else" "if" <expr> <block-expr> }
                     [ "else" <block-expr> ]
-                  | "if" <expr> "{" { <match-arm> } "}"
+                  | "if" <expr> "{" { <pattern-arm> } "}"
                     [ "else" <block-expr> ]
 
-(* Match-style if when body contains => arms.
+(* Pattern-style if when the body contains => arms.
    Catch-all: "_ => expr" or trailing else block. *)
 
-<match-expr>    ::= "match" <expr> "{" { <match-arm> } "}"
-
-<match-arm>     ::= <pattern> [ "if" <expr> ] "=>" <expr>
+<pattern-arm>   ::= <pattern> [ "if" <expr> ] "=>" <expr>
 
 <pattern>       ::= "_"
                   | IDENT
@@ -276,6 +273,6 @@ Multiple `<fn-decl>` may use the same *name* when parameter type sequences diffe
 fn-name-overloads ::= { fn-decl }   (* same Ident, distinct typed-param lists *)
 ```
 
-- Call resolution: match argument types to one overload (exact, then numeric-width soft match).
+- Call resolution: resolve argument types to one overload (exact, then numeric-width fallback).
 - Duplicate identical signatures → error.
 - Codegen mangles symbols: `terse_<name>__<t0>_<t1>_...` when two or more overloads share a name; a single definition keeps `terse_<name>`.
