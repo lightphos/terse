@@ -130,9 +130,11 @@
 
 <postfix-op>    ::= "." IDENT
                   | "(" [ <expr> { "," <expr> } [ "," ] ] ")"
-                  | "[" <expr> "]"
+                  | "[" <expr> [ ".." <expr> ] "]"
                   | "trap" IDENT ":" <block-expr>
                   | "?"
+
+(* String slices use half-open byte ranges: s[start..end]. *)
 
 <primary-expr>  ::= INT
                   | FLOAT
@@ -197,7 +199,6 @@
                   | "lp" IDENT "=" <expr> ";" <expr> ";" [ <expr> ] <block-expr>
                   | "lp" <binding> ";" [ <expr> ] ";" [ <expr> ] <block-expr>
                   | "lp" <expr> <block-expr>
-                  | "while" <expr> <block-expr>
 
 <ret-expr>      ::= "ret" [ <expr> ]
 

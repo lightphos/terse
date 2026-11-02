@@ -1,8 +1,8 @@
 use std.tst
 use loops
 
-fn t_sum_while() {
-  tst.eq(sum_while(), 10)
+fn t_sum_condition() {
+  tst.eq(sum_condition(), 10)
 }
 
 fn t_sum_for() {

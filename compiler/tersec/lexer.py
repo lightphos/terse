@@ -28,7 +28,6 @@ class TT(Enum):
     VAL = auto()
     VAR = auto()
     FIX = auto()
-    WHILE = auto()
     REC = auto()
     BRK = auto()
     SKIP = auto()
@@ -76,7 +75,8 @@ KW = {
     'true': TT.TRUE, 'false': TT.FALSE, 'return': TT.RETURN, 'ret': TT.RET,
     'use': TT.USE, 'type': TT.TYPE, 'go': TT.GO, 'tr': TT.TR, 'pub': TT.PUB,
     'en': TT.EN,
-    'val': TT.VAL, 'var': TT.VAR, 'fix': TT.FIX, 'while': TT.WHILE,    'rec': TT.REC, 'brk': TT.BRK, 'skip': TT.SKIP,
+    'val': TT.VAL, 'var': TT.VAR, 'fix': TT.FIX, 'rec': TT.REC,
+    'brk': TT.BRK, 'skip': TT.SKIP,
 }
 
 

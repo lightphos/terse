@@ -8,7 +8,7 @@ from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-    Block, ListLit, MapLit, Index, FnDecl, TrapExpr, TupleLit, TupleLetExpr,
+    Block, ListLit, MapLit, Index, SliceExpr, FnDecl, TrapExpr, TupleLit, TupleLetExpr,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
     EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
     EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -641,6 +641,34 @@ class TypeChecker:
                 key = (recv_t, e.func.field)
                 if key in getattr(self, 'methods', {}):
                     return self.methods[key][1]
+                if recv_t == 'str':
+                    signatures = {
+                        'len': (0, 'long'),
+                        'has': (1, 'bool'),
+                        'rpl': (2, 'str'),
+                        'split': (1, 'list_str'),
+                        'trim': (0, 'str'),
+                        'up': (0, 'str'),
+                        'low': (0, 'str'),
+                        'start': (1, 'bool'),
+                        'end': (1, 'bool'),
+                        'fnd': (1, 'long'),
+                        'empty': (0, 'bool'),
+                        'rpt': (1, 'str'),
+                    }
+                    signature = signatures.get(e.func.field)
+                    if signature is None:
+                        self.errors.append(
+                            f"type error: unknown string method '{e.func.field}'"
+                        )
+                        return 'long'
+                    expected_count, return_type = signature
+                    if len(e.args) != expected_count:
+                        self.errors.append(
+                            f"type error: string method '{e.func.field}' expects "
+                            f"{expected_count} argument(s), got {len(e.args)}"
+                        )
+                    return return_type
             if isinstance(e.func, Var) and e.func.name == 'push' and e.args:
                 return self.check(e.args[0])
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
@@ -650,10 +678,16 @@ class TypeChecker:
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'str':
                 f = e.func.field
+                if f == 'len':
+                    return 'long'
                 if f == 'split':
                     return 'list_str'
                 if f in ('has', 'starts', 'ends'):
                     return 'bool'
+                if f in ('find', 'fnd'):
+                    return 'long'
+                if f in ('replace', 'repeat', 'rpl', 'rpt', 'empty'):
+                    return 'bool' if f == 'empty' else 'str'
                 if f in ('trim', 'up', 'low', 'join'):
                     return 'str'
                 if f == 'parse':
@@ -692,6 +726,15 @@ class TypeChecker:
                 parts = coll_type.split('_')
                 return '_'.join(parts[2:]) if len(parts) >= 3 else 'long'
             return 'long'
+        if isinstance(e, SliceExpr):
+            coll_type = self.check(e.value)
+            self.check(e.start)
+            self.check(e.end)
+            if coll_type != 'str':
+                self.errors.append(
+                    f"type error: range slicing requires 'str', got '{coll_type}'"
+                )
+            return 'str'
         if isinstance(e, MapLit):
             if not e.entries:
                 return 'map_str_long'

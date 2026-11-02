@@ -1,0 +1,134 @@
+pub fn len(s: str) -> long {
+  ret s.len()
+}
+
+pub fn sub(s: str, start: long, end: long) -> str {
+  ret s[start..end]
+}
+
+pub fn fnd(s: str, sub: str) -> long {
+  val size = s.len()
+  val sub_size = sub.len()
+  if sub_size == 0 {
+    ret 0
+  }
+  lp pos = 0; pos + sub_size <= size; pos += 1 {
+    if s[pos..pos + sub_size] == sub {
+      ret pos
+    }
+  }
+  ret -1
+}
+
+pub fn has(s: str, sub: str) -> bool {
+  ret s.fnd(sub) >= 0
+}
+
+pub fn starts(s: str, prefix: str) -> bool {
+  ret s.fnd(prefix) == 0
+}
+
+pub fn ends(s: str, suffix: str) -> bool {
+  val size = s.len()
+  val suffix_size = suffix.len()
+  if suffix_size > size {
+    ret false
+  }
+  ret s[size - suffix_size..size] == suffix
+}
+
+pub fn empty(s: str) -> bool {
+  ret s.len() == 0
+}
+
+pub fn trim(s: str) -> str {
+  val size = s.len()
+  var start = 0
+  lp start = 0; start < size; start += 1 {
+    val ch = s[start..start + 1]
+    if ch != " " && ch != "\t" && ch != "\n" && ch != "\r" {
+      brk
+    }
+  }
+  var end = size
+  lp end > start {
+    val ch = s[end - 1..end]
+    if ch != " " && ch != "\t" && ch != "\n" && ch != "\r" {
+      brk
+    }
+    end -= 1
+  }
+  ret s[start..end]
+}
+
+pub fn split(s: str, sep: str) -> [str] {
+  var parts: [str] = []
+  val size = s.len()
+  val sep_size = sep.len()
+  if sep_size == 0 {
+    lp pos = 0; pos < size; pos += 1 {
+      parts = parts + [s[pos..pos + 1]]
+    }
+    ret parts
+  }
+  lp pos = 0; pos <= size; {
+    val remaining = s[pos..size]
+    val found = remaining.fnd(sep)
+    if found < 0 {
+      parts = parts + [remaining]
+      ret parts
+    }
+    parts = parts + [remaining[0..found]]
+    pos += found + sep_size
+  }
+  ret parts
+}
+
+pub fn rpl(s: str, old: str, replacement: str) -> str {
+  if old.empty() {
+    ret s
+  }
+  val size = s.len()
+  val old_size = old.len()
+  var result: str = ""
+  lp pos = 0; pos < size; {
+    val remaining = s[pos..size]
+    val found = remaining.fnd(old)
+    if found < 0 {
+      result = result + remaining
+      pos = size
+    } else {
+      result = result + remaining[0..found] + replacement
+      pos += found + old_size
+    }
+  }
+  ret result
+}
+
+pub fn up(s: str) -> str {
+  var result = s
+  val lower = "abcdefghijklmnopqrstuvwxyz"
+  val upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  lp i = 0; i < 26; i += 1 {
+    result = result.rpl(lower[i..i + 1], upper[i..i + 1])
+  }
+  ret result
+}
+
+pub fn low(s: str) -> str {
+  var result = s
+  val upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  val lower = "abcdefghijklmnopqrstuvwxyz"
+  lp i = 0; i < 26; i += 1 {
+    result = result.rpl(upper[i..i + 1], lower[i..i + 1])
+  }
+  ret result
+}
+
+pub fn rpt(s: str, count: long) -> str {
+  var result: str = ""
+  lp i = 0; i < count; i += 1 {
+    result = result + s
+  }
+  ret result
+}

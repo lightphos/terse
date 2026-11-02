@@ -9,7 +9,7 @@ from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-    Block, ListLit, MapLit, Index, FnDecl, TrapExpr, TupleLit, TupleLetExpr,
+    Block, ListLit, MapLit, Index, SliceExpr, FnDecl, TrapExpr, TupleLit, TupleLetExpr,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
     EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
     EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -31,7 +31,7 @@ class CodeGen:
     def rt_num(self, t: str) -> str:
         """Map surface numeric/list elem name to runtime.c suffix (i64, i32, ...)."""
         return {
-            'long': 'i64', 'int': 'i32', 'chr': 'i8', 'byte': 'i8',
+            'long': 'i64', 'int': 'i32', 'chr': 'i8', 'byte': 'u8',
             'flt': 'f32', 'dbl': 'f64', 'str': 'str',
             'list_long': 'list_i64', 'list_int': 'list_i32', 'list_chr': 'list_i8',
             'list_flt': 'list_f32', 'list_dbl': 'list_f64',
@@ -158,7 +158,7 @@ class CodeGen:
             if inner == 'str':
                 return 'List_str'
             # surface long/int/chr → runtime List_i64 / List_i32 / List_i8
-            rt = {'long': 'i64', 'int': 'i32', 'chr': 'i8', 'byte': 'i8',
+            rt = {'long': 'i64', 'int': 'i32', 'chr': 'i8', 'byte': 'u8',
                   'flt': 'f32', 'dbl': 'f64'}.get(inner, inner)
             return f"List_{rt}"
         if t.startswith('map_'):
@@ -509,13 +509,23 @@ class CodeGen:
                 record_name = ct[5:]
                 if record_name == 'str':
                     return f"list_get_str({c}, {i})", "str"
-                return f"list_get_{self.rt_num(record_name) if record_name in ("long","int","chr","flt","dbl") else record_name}({c}, {i})", record_name if record_name not in ('long',) else 'long'
+                runtime_name = (
+                    self.rt_num(record_name)
+                    if record_name in ("long", "int", "chr", "byte", "flt", "dbl", "bool")
+                    else record_name
+                )
+                return f"list_get_{runtime_name}({c}, {i})", record_name
             if ct in ('List', 'list', 'List_i64'):
                 return f"list_get_i64({c}, {i})", "long"
             if ct.startswith('map_') or ct == 'Map':
                 return f"map_str_i64_get({c}, {i})", "long"
             # last resort: treat as [i64]
             return f"list_get_i64({c}, {i})", "long"
+        if isinstance(e, SliceExpr):
+            text, _ = self.gen_expr(e.value)
+            start, _ = self.gen_expr(e.start)
+            end, _ = self.gen_expr(e.end)
+            return f"str_slice_range({text}, {start}, {end})", "str"
         if isinstance(e, Call) and isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name in self.enum_values:
             ename = e.func.obj.name
             vname = e.func.field
@@ -530,6 +540,35 @@ class CodeGen:
                 return f"(({ename}){{ {', '.join(parts)} }})", ename
         if isinstance(e, Call):
             # builtins
+            if isinstance(e.func, Member) and not (
+                isinstance(e.func.obj, Var) and e.func.obj.name == 'str'
+            ) and self.expr_type(e.func.obj) == 'str':
+                receiver, _ = self.gen_expr(e.func.obj)
+                method = e.func.field
+                args = [self.gen_expr(arg)[0] for arg in e.args]
+                if method == 'len' and not args:
+                    return f"str_len({receiver})", "long"
+                if method in ('fnd', 'has', 'empty', 'split', 'up', 'low', 'rpl', 'rpt'):
+                    function_name = f"__module_std_std_str_{method}"
+                    cname = self.known.get(function_name)
+                    if cname is None:
+                        raise SyntaxError(
+                            f"string method '{method}' requires 'use std.str'"
+                        )
+                    ret_type = {
+                        "fnd": "long",
+                        "has": "bool",
+                        "empty": "bool",
+                        "split": "list_str",
+                    }.get(method, "str")
+                    call_args = ", ".join([receiver] + args)
+                    return f"{cname}({call_args})", ret_type
+                if method == 'trim' and not args:
+                    return f"str_trim({receiver})", "str"
+                if method == 'start' and len(args) == 1:
+                    return f"str_starts({receiver}, {args[0]})", "bool"
+                if method == 'end' and len(args) == 1:
+                    return f"str_ends({receiver}, {args[0]})", "bool"
             if isinstance(e.func, Var) and e.func.name == 'err':
                 message, _ = self.gen_expr(e.args[0], 'str')
                 return f"({{ terse_err({message}); INT64_C(0); }})", "long"
@@ -664,7 +703,10 @@ class CodeGen:
             if isinstance(e.func, Var) and e.func.name == 'has' and len(e.args) >= 2:
                 a, at = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
                 if at == 'str':
-                    return f"str_has({a}, {b})", "bool"
+                    cname = self.known.get("__module_std_std_str_has")
+                    if cname is None:
+                        raise SyntaxError("string has requires 'use std.str'")
+                    return f"{cname}({a}, {b})", "bool"
                 if isinstance(at, str) and at.startswith('map_'):
                     parts = at.split('_')
                     kty, vty = parts[1], '_'.join(parts[2:])
@@ -688,27 +730,47 @@ class CodeGen:
             if isinstance(e.func, Var) and e.func.name == 'trim' and len(e.args) >= 1:
                 a, _ = self.gen_expr(e.args[0])
                 return f"str_trim({a})", "str"
-            if isinstance(e.func, Var) and e.func.name == 'up' and len(e.args) >= 1:
-                a, _ = self.gen_expr(e.args[0])
-                return f"str_up({a})", "str"
-            if isinstance(e.func, Var) and e.func.name == 'low' and len(e.args) >= 1:
-                a, _ = self.gen_expr(e.args[0])
-                return f"str_low({a})", "str"
+            if isinstance(e.func, Var) and e.func.name in ('up', 'low', 'split') \
+                    and len(e.args) >= (2 if e.func.name == 'split' else 1):
+                method = e.func.name
+                cname = self.known.get(f"__module_std_std_str_{method}")
+                if cname is None:
+                    raise SyntaxError(f"{method} requires 'use std.str'")
+                args = [self.gen_expr(arg)[0] for arg in e.args]
+                return f"{cname}({', '.join(args)})", (
+                    "list_str" if method == "split" else "str"
+                )
+            if isinstance(e.func, Var) and e.func.name == 'fnd' and len(e.args) >= 2:
+                cname = self.known.get("__module_std_std_str_fnd")
+                if cname is None:
+                    raise SyntaxError("fnd requires 'use std.str'")
+                args = [self.gen_expr(arg)[0] for arg in e.args]
+                return f"{cname}({', '.join(args)})", "long"
             if isinstance(e.func, Var) and e.func.name == 'parse' and len(e.args) >= 1:
                 a, at = self.gen_expr(e.args[0])
                 return f"str_parse_i64({a})", "long"
-            if isinstance(e.func, Var) and e.func.name == 'split' and len(e.args) >= 2:
-                a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
-                return f"str_split({a}, {b})", "list_str"
             if isinstance(e.func, Var) and e.func.name == 'join' and len(e.args) >= 2:
                 a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
                 return f"str_join({a}, {b})", "str"
             # std.str.foo(...) method form when use std.str
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) and e.func.obj.name == 'str':
                 meth = e.func.field
-                if meth == 'has' and len(e.args) >= 2:
-                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
-                    return f"str_has({a}, {b})", "bool"
+                if meth in ('fnd', 'has', 'empty', 'split', 'up', 'low', 'rpl', 'rpt') \
+                        and e.args:
+                    cname = self.known.get(f"__module_std_std_str_{meth}")
+                    if cname is None:
+                        raise SyntaxError(f"str.{meth} requires 'use std.str'")
+                    args = [self.gen_expr(arg)[0] for arg in e.args]
+                    ret_type = {
+                        "fnd": "long",
+                        "has": "bool",
+                        "empty": "bool",
+                        "split": "list_str",
+                    }.get(meth, "str")
+                    return f"{cname}({', '.join(args)})", ret_type
+                if meth == 'len' and len(e.args) >= 1:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"str_len({a})", "long"
                 if meth == 'starts' and len(e.args) >= 2:
                     a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
                     return f"str_starts({a}, {b})", "bool"
@@ -718,18 +780,9 @@ class CodeGen:
                 if meth == 'trim' and len(e.args) >= 1:
                     a, _ = self.gen_expr(e.args[0])
                     return f"str_trim({a})", "str"
-                if meth == 'up' and len(e.args) >= 1:
-                    a, _ = self.gen_expr(e.args[0])
-                    return f"str_up({a})", "str"
-                if meth == 'low' and len(e.args) >= 1:
-                    a, _ = self.gen_expr(e.args[0])
-                    return f"str_low({a})", "str"
                 if meth == 'parse' and len(e.args) >= 1:
                     a, _ = self.gen_expr(e.args[0])
                     return f"str_parse_i64({a})", "long"
-                if meth == 'split' and len(e.args) >= 2:
-                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
-                    return f"str_split({a}, {b})", "list_str"
                 if meth == 'join' and len(e.args) >= 2:
                     a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
                     return f"str_join({a}, {b})", "str"

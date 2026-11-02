@@ -279,6 +279,15 @@ static char* str_slice(const char* s, int64_t start, int64_t length) {
     return result;
 }
 
+static char* str_slice_range(const char* s, int64_t start, int64_t end) {
+  int64_t size = str_len(s);
+  if (start < 0) start = 0;
+  if (start > size) start = size;
+  if (end < 0) end = 0;
+  if (end > size) end = size;
+  return str_slice(s, start, end > start ? end - start : 0);
+}
+
 /* --- [str] lists --- */
 typedef struct { const char **d; int64_t n; int64_t cap; } List_str;
 static List_str list_new_str(int64_t n) {
@@ -342,9 +351,11 @@ TERSE_DECL_LIST(i64, int64_t)
 TERSE_DECL_LIST(i32, int32_t)
 TERSE_DECL_LIST(i16, int16_t)
 TERSE_DECL_LIST(i8, int8_t)
+TERSE_DECL_LIST(u8, uint8_t)
 TERSE_DECL_LIST(u64, uint64_t)
 TERSE_DECL_LIST(u32, uint32_t)
 TERSE_DECL_LIST(u16, uint16_t)
+TERSE_DECL_LIST(f32, float)
 TERSE_DECL_LIST(f64, double)
 TERSE_DECL_LIST(bool, bool)
 /* char is i8 surface */
@@ -375,10 +386,6 @@ static List map_str_i64_values(Map_str_i64 m) {
 }
 
 /* --- std.str surface (terse names) --- */
-static int64_t str_has(const char* s, const char* sub) {
-  if (!s) s = ""; if (!sub) sub = "";
-  return strstr(s, sub) != NULL ? INT64_C(1) : INT64_C(0);
-}
 static int64_t str_starts(const char* s, const char* prefix) {
   if (!s) s = ""; if (!prefix) prefix = "";
   size_t n = strlen(prefix);
@@ -391,28 +398,6 @@ static int64_t str_ends(const char* s, const char* suffix) {
   return strcmp(s + (ns - n), suffix) == 0 ? INT64_C(1) : INT64_C(0);
 }
 
-static char* str_up(const char* s) {
-  if (!s) s = "";
-  size_t n = strlen(s);
-  char* r = (char*)malloc(n + 1);
-  for (size_t i = 0; i < n; i++) {
-    unsigned char c = (unsigned char)s[i];
-    r[i] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : (char)c;
-  }
-  r[n] = 0;
-  return r;
-}
-static char* str_low(const char* s) {
-  if (!s) s = "";
-  size_t n = strlen(s);
-  char* r = (char*)malloc(n + 1);
-  for (size_t i = 0; i < n; i++) {
-    unsigned char c = (unsigned char)s[i];
-    r[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : (char)c;
-  }
-  r[n] = 0;
-  return r;
-}
 static char* str_trim(const char* s) {
   if (!s) s = "";
   while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
@@ -436,31 +421,6 @@ static int64_t str_parse_i64(const char* s) {
   }
   if (!any) return INT64_C(0);
   return neg ? -v : v;
-}
-static List_str str_split(const char* s, const char* sep) {
-  List_str out = list_new_str(0);
-  if (!s) s = "";
-  if (!sep || !sep[0]) {
-    /* empty sep → each character as its own string */
-    for (const char* p = s; *p; p++) {
-      char* one = (char*)malloc(2); one[0] = *p; one[1] = 0;
-      out = list_push_str(out, one);
-    }
-    return out;
-  }
-  size_t sepn = strlen(sep);
-  const char* start = s;
-  for (;;) {
-    const char* found = strstr(start, sep);
-    size_t len = found ? (size_t)(found - start) : strlen(start);
-    char* part = (char*)malloc(len + 1);
-    if (!part) { fprintf(stderr, "oom split\n"); exit(1); }
-    memcpy(part, start, len); part[len] = 0;
-    out = list_push_str(out, part);
-    if (!found) break;
-    start = found + sepn;
-  }
-  return out;
 }
 static char* str_join(List_str parts, const char* sep) {
   if (!sep) sep = "";

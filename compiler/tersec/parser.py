@@ -7,7 +7,7 @@ from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
     Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
-    Block, ListLit, MapLit, Index, FnDecl, TrapExpr, TupleLit, TupleLetExpr,
+    Block, ListLit, MapLit, Index, SliceExpr, FnDecl, TrapExpr, TupleLit, TupleLetExpr,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
     EnumDecl, FixDecl, Wildcard, LiteralPattern, BindPattern,
     EnumVariant, RecordPattern, TuplePattern, ListPattern, MatchArm, MatchExpr,
@@ -250,12 +250,6 @@ class Parser:
         self.expect(TT.ASSIGN)
         val = self.parse_expr()
         return name, val, typ
-
-    def parse_while(self):
-        self.expect(TT.WHILE)
-        cond = self.parse_expr()
-        body = self.parse_block() if self.match(TT.LBRACE) else self.parse_expr()
-        return LoopExpr(None, cond, None, body)
 
     def parse_loop(self):
         self.expect(TT.LP)
@@ -507,7 +501,6 @@ class Parser:
         if self.match(TT.PIPE): return self.parse_lambda()
         if self.match(TT.LBRACE): return self.parse_brace()
         if self.match(TT.IF): return self.parse_if()
-        if self.match(TT.WHILE): return self.parse_while()
         if self.match(TT.LP): return self.parse_loop()
         raise SyntaxError(f"unexpected {t.t.name} ('{t.v}') at {t.line}:{t.col}")
 
@@ -559,7 +552,7 @@ class Parser:
         if self.match(TT.RBRACE):
             self.adv()
             return IntLit(0)
-        if self.match(TT.VAL, TT.VAR, TT.IF, TT.LP, TT.WHILE, TT.RET, TT.BRK, TT.SKIP,
+        if self.match(TT.VAL, TT.VAR, TT.IF, TT.LP, TT.RET, TT.BRK, TT.SKIP,
                       TT.FN, TT.GO, TT.FIX):
             self.i = save
             return self.parse_block()
@@ -605,7 +598,9 @@ class Parser:
                 self.expect(TT.COLON)
                 handler = self.parse_block()
                 e = TrapExpr(e, name, handler)
-            elif self.match(TT.DOT):
+            elif self.match(TT.DOT) and not (
+                self.i + 1 < len(self.toks) and self.toks[self.i + 1].t == TT.DOT
+            ):
                 self.adv()
                 tok = self.cur()
                 if tok.t == TT.IDENT or (isinstance(tok.v, str) and tok.v.isidentifier()):
@@ -633,15 +628,24 @@ class Parser:
                 e = Call(e, args, line=call_tok.line, col=call_tok.col)
             elif self.match(TT.LBRACK):
                 self.adv()
-                parts = [self.parse_expr()]
-                while self.match(TT.COMMA):
+                first = self.parse_expr()
+                if self.match(TT.DOT) and self.i + 1 < len(self.toks) \
+                        and self.toks[self.i + 1].t == TT.DOT:
                     self.adv()
-                    parts.append(self.parse_expr())
-                self.expect(TT.RBRACK)
-                if len(parts) == 1:
-                    e = Index(e, parts[0])
+                    self.adv()
+                    last = self.parse_expr()
+                    self.expect(TT.RBRACK)
+                    e = SliceExpr(e, first, last)
                 else:
-                    e = Index(e, ListLit(parts))
+                    parts = [first]
+                    while self.match(TT.COMMA):
+                        self.adv()
+                        parts.append(self.parse_expr())
+                    self.expect(TT.RBRACK)
+                    if len(parts) == 1:
+                        e = Index(e, parts[0])
+                    else:
+                        e = Index(e, ListLit(parts))
             else:
                 break
         return e

@@ -75,7 +75,13 @@ def _rewrite_module_expr(e, local_functions, imported_modules):
         if isinstance(e.obj, Var) and e.obj.name in imported_modules:
             exports = imported_modules[e.obj.name]
             if '__builtin_module__' in exports:
-                return Member(Var(exports['__builtin_module__']), e.field)
+                builtin_module = exports['__builtin_module__']
+                if builtin_module == 'str' and e.field in (
+                        'len', 'sub', 'fnd', 'has', 'starts', 'ends', 'empty',
+                        'trim', 'split', 'up', 'low', 'rpl', 'rpt') \
+                        and e.field in exports:
+                    return Var(exports[e.field])
+                return Member(Var(builtin_module), e.field)
             if e.field not in exports:
                 raise SyntaxError(f"module '{e.obj.name}' has no function '{e.field}'")
             return Var(exports[e.field])
@@ -364,7 +370,15 @@ def _load_source_modules(program, source_path):
         for child_use in child.uses:
             if child_use.path.startswith('std.'):
                 builtin = child_use.path.split('.')[-1]
-                if child_use.alias != builtin:
+                if builtin == 'str':
+                    child_module = load_module(child_use)
+                    child_namespaces[child_use.alias] = {
+                        '__builtin_module__': builtin,
+                        **(child_module.get('exports') or {}),
+                    }
+                    for function in child_module['functions']:
+                        functions_by_name[function.name] = function
+                elif child_use.alias != builtin:
                     child_namespaces[child_use.alias] = {'__builtin_module__': builtin}
                 continue
             child_module = load_module(child_use)

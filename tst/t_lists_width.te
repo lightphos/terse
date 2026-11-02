@@ -30,3 +30,33 @@ fn t_char_list() {
   tst.eq(cs[0], 65)
   tst.eq(len(cs), 2)
 }
+
+fn t_flt_list() {
+  val xs: [flt] = [1.5, 2.5]
+  tst.eq(xs[0] == 1.5, true)
+  tst.eq(xs[1] == 2.5, true)
+  tst.eq(len(xs), 2)
+}
+
+fn t_byte_list() {
+  val xs: [byte] = [1, 255]
+  tst.eq(xs[0], 1)
+  tst.eq(xs[1], 255)
+  tst.eq(len(xs), 2)
+}
+
+fn t_bool_list() {
+  val xs: [bool] = [true, false]
+  tst.eq(xs[0], true)
+  tst.eq(xs[1], false)
+  tst.eq(len(xs), 2)
+}
+
+fn twice_list_item(n: long) -> long = n * 2
+
+fn t_map() {
+  val xs = map([3, 4], twice_list_item)
+  tst.eq(len(xs), 2)
+  tst.eq(xs[0], 6)
+  tst.eq(xs[1], 8)
+}

@@ -158,7 +158,7 @@ class TestControl(unittest.TestCase):
         self.assertIn("s", out)
         self.assertIn("1", out)
 
-    def test_loop_while(self):
+    def test_loop_condition(self):
         src = textwrap.dedent("""\
             go {
               var i = 0
@@ -171,6 +171,11 @@ class TestControl(unittest.TestCase):
             }
         """)
         assert_result(self, src, "10")
+
+    def test_while_keyword_removed(self):
+        _, code, log = compile_src("go { while true { 1 } }")
+        self.assertNotEqual(code, 0)
+        self.assertIn("unknown name 'while'", log)
 
     def test_loop_for(self):
         src = textwrap.dedent("""\
@@ -318,6 +323,24 @@ class TestStringsLists(unittest.TestCase):
             }
         """)
         assert_result(self, src, "3")
+
+    def test_list_type_mismatch_rejected(self):
+        _, code, log = compile_src(
+            'go { val xs: [long] = ["wrong"]; len(xs) }'
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("declared 'list_long' but value is 'list_str'", log)
+
+    def test_list_index_out_of_bounds(self):
+        for index in ("-1", "2"):
+            with self.subTest(index=index):
+                src = f"go {{ val xs = [10, 20]; xs[{index}] }}"
+                bin_path, code, log = compile_src(src)
+                self.assertEqual(code, 0, log)
+                rc, _, err = run_bin(bin_path)
+                self.assertNotEqual(rc, 0)
+                self.assertIn("index out of bounds: index", err)
+                self.assertIn("len 2", err)
 
 
 class TestEntryPoints(unittest.TestCase):

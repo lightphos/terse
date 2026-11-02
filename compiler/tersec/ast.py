@@ -177,6 +177,13 @@ class Index(Expr):
 
 
 @dataclass
+class SliceExpr(Expr):
+    value: Expr
+    start: Expr
+    end: Expr
+
+
+@dataclass
 
 
 class FnDecl:

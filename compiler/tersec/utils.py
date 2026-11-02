@@ -27,7 +27,7 @@ _RUNTIME_SUFFIX = {
     'long': 'i64',
     'int': 'i32',
     'chr': 'i8',
-    'byte': 'i8',   # list storage as i8; byte is unsigned in scalars only
+    'byte': 'u8',
     'flt': 'f32',
     'dbl': 'f64',
 }

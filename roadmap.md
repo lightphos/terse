@@ -81,7 +81,7 @@ Locked in `SPEC.md` §8 — only these are the supported host surface:
 
 | Module / kind | Surface |
 |---------------|---------|
-| `std.str` | `has`, `starts`, `ends`, `trim`, `up`, `low`, `parse`, `split`, `join` |
+| `std.str` | SPEC §8 string API; `rpl` and `rpt` implemented in `lib/std/str.te` |
 | `std.io`  | `in`, `out` |
 | `std.tst` | `eq`, `ne`, `chk`, `report` |
 | Maps      | `m[k]`, `m[k]=v`, `has(m,k)`, `keys(m)`, `len(m)`, `lp k:m` |
@@ -99,8 +99,9 @@ No silent expansion of std without a SPEC/BNF note.
 
 ### 1.4 List / map edge cases  **Done (host, core)** / polish **Later**
 - Empty typed lists `var xs: [int] = []`, width lists, push/concat/`len` — working
+- Tests cover `map`, all primitive list element types, and rejected mixed list types
 - Maps `{str:long}`: `{:}`, put/get, `has`, `keys`, `len`, `lp k:m` — tests `t_map_has`, `t_map_lp`
-- Bounds process-exit with `index`/`len` in message **Done (host)**
+- Bounds process-exit with `index`/`len` in message; tests cover negative and upper-bound indexes **Done (host)**
 - **`tc.te`:** T3/T4 when native must compile non-`long` lists / maps
 
 ### 1.5 Tooling quality gate  **Next**

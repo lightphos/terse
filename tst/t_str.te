@@ -1,0 +1,97 @@
+use std.tst
+use std.str
+
+fn t_concat() {
+    val s1 = "Hello, ";
+    val s2 = "World!";
+
+    val s3 = s1 + s2;
+    tst.eq(s3, "Hello, World!");
+}
+
+fn t_length() {
+    val s = "Hello, World!";
+    tst.eq(str.len(s), 13);
+}
+
+fn t_substring() {
+    val s = "Hello, World!";
+    val sub = str.sub(s, 7, 12);
+    tst.eq(sub, "World");
+}
+
+fn t_split() {
+    val s = "apple,banana,cherry";
+    val parts = str.split(s, ",");
+    tst.eq(parts.len(), 3);
+    tst.eq(parts[0], "apple");
+    tst.eq(parts[1], "banana");
+    tst.eq(parts[2], "cherry");
+}
+
+fn t_trim() {
+    val s = "   Hello, World!   ";
+    val trimmed = str.trim(s);
+    tst.eq(trimmed, "Hello, World!");
+    tst.eq(str.trim("\t \n"), "");
+    tst.eq(str.trim("\r  abc\t"), "abc");
+}
+
+fn t_find() {
+    val s = "Hello, World!";
+    val index = str.fnd(s, "World");
+    tst.eq(index, 7);
+    val not_found = str.fnd(s, "Rust");
+    tst.eq(not_found, -1);
+}
+
+fn t_is_empty() {
+    val s1 = "";
+    val s2 = "Hello";
+    tst.eq(str.empty(s1), true);
+    tst.eq(str.empty(s2), false);
+}
+
+fn t_repeat() {
+    val s = "abc";
+    val repeated = str.rpt(s, 3);
+    tst.eq(repeated, "abcabcabc");
+}
+
+fn t_string_edges() {
+    val s = "abc";
+    tst.eq(str.rpl(s, "", "x"), "abc");
+    tst.eq(str.rpt(s, 0), "");
+    tst.eq(str.sub(s, -5, 99), "abc");
+    tst.eq(str.sub(s, 2, 1), "");
+    tst.eq(str.fnd(s, ""), 0);
+    tst.eq(str.empty(""), true);
+}
+
+fn t_split_edges() {
+    val trailing = str.split("a,", ",");
+    tst.eq(trailing.len(), 2);
+    tst.eq(trailing[0], "a");
+    tst.eq(trailing[1], "");
+    tst.eq(str.split("", ",").len(), 1);
+    tst.eq(str.split("ab", "").len(), 2);
+    tst.eq(str.split("ab", "")[1], "b");
+    tst.eq(str.split("", "").len(), 0);
+}
+
+fn t_str_module_functions() {
+    tst.eq(str.len("abc"), 3);
+    tst.eq(str.sub("abc", 1, 3), "bc");
+    tst.eq(str.fnd("abc", "b"), 1);
+    tst.eq(str.has("abc", "b"), true);
+    tst.eq(str.starts("abc", "a"), true);
+    tst.eq(str.ends("abc", "c"), true);
+    tst.eq(str.trim(" abc "), "abc");
+    tst.eq(str.empty(""), true);
+    tst.eq(str.low("HELLO"), "hello");
+    tst.eq(str.up("hello"), "HELLO");
+    tst.eq(str.split("a,b", ",")[1], "b");
+    tst.eq(str.rpl("a-a", "a", "b"), "b-b");
+    tst.eq(str.rpt("x", 2), "xx");
+    tst.eq(str.empty(""), true);
+}

@@ -1,4 +1,5 @@
 use std.tst
+use std.str
 use cnx.http
 
 fn t_parse_get() {

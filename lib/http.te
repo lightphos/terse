@@ -1,6 +1,8 @@
 // Optional package: use http
 // Types + parse/format + srv on host sock.*  (client later)
 
+use std.str
+
 en Status {
   ok = 200,
   created = 201,

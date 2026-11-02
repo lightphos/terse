@@ -32,7 +32,7 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
 ### Keywords (reserved)
-`fn`, `val`, `var`, `fix`, `type`, `if`, `else`, `use`, `ret`, `true`, `false`, `rec`, `en`, `tr`, `self`, `pub`, `while`, `lp`, `brk`, `skip`, `go`, `pr`
+`fn`, `val`, `var`, `fix`, `type`, `if`, `else`, `use`, `ret`, `true`, `false`, `rec`, `en`, `tr`, `self`, `pub`, `lp`, `brk`, `skip`, `go`, `pr`
 
 
 ### Literals
@@ -261,7 +261,6 @@ if r {
 lp x: xs { ... }         // for-in (lists, map keys)
 lp i = 0; i < n; i = i + 1 { ... }
 lp cond { ... }
-while cond { ... }
 
 ret expr                 // return from function (not only the block)
 brk                      // break loop
@@ -374,13 +373,43 @@ There is no `"{x}"` interpolation yet — use `+` or `fmt`.
 str.has(s, sub) -> bool
 str.starts(s, prefix) -> bool
 str.ends(s, suffix) -> bool
+str.fnd(s, sub) -> long
+str.rpl(s, old, new) -> str
 str.trim(s) -> str
 str.up(s) / str.low(s) -> str
 str.parse(s) -> long
 str.split(s, sep) -> [str]
 str.join(parts, sep) -> str
+str.rpt(s, count) -> str
+str.empty(s) -> bool
+str.len(s) -> long
+str.sub(s, start, end) -> str
 ```
-Unqualified `has`/`starts`/`ends` prefer `std.str` when the receiver is `str`; map `has(m, k)` requires a map as first argument (overload by type).
+String operations also have receiver-method spellings: `s.has(sub)`,
+`s.start(prefix)`, `s.end(suffix)`, `s.fnd(sub)`, `s.rpl(old, new)`,
+`s.trim()`, `s.up()`, `s.low()`, `s.split(sep)`, `s.rpt(count)`,
+`s.empty()`, and `s.len()`. The module names for start/end checks are
+`str.starts` and `str.ends`; `fnd`, `rpl`, and `rpt` use the same names in
+receiver and module form. `parse` and `join` are available in `str` module form.
+`len`, `sub`, `fnd`, `has`, `starts`, `ends`, `trim`, `split`, `up`, `low`,
+`empty`, `rpl`, and `rpt` are implemented in `lib/std/str.te`; use
+`use std.str` when calling them.
+
+String indexing, lengths, and slices use UTF-8 bytes, not Unicode code points.
+`str.sub(s, start, end)` and slice syntax `s[start..end]` use half-open ranges:
+the start is included and the end is excluded.
+Endpoints are clamped to the string; if the clamped end is before the start,
+the result is empty. `fnd` returns the first byte offset or `-1`.
+`rpl` replaces all non-overlapping occurrences; an empty search string
+leaves the input unchanged. `rpt` returns an empty string for non-positive
+counts. Case conversion is ASCII-only, and trim removes ASCII spaces, tabs,
+carriage returns, and newlines from both ends. `split` preserves empty fields;
+an empty separator splits into one-byte strings.
+The library's `len` wrapper and `sub` implementation use the host's basic
+length and slice primitives.
+
+Unqualified `has`/`starts`/`ends` prefer `std.str` when the receiver is `str`;
+map `has(m, k)` requires a map as first argument (overload by type).
 
 ### `std.io`
 ```
