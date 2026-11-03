@@ -55,6 +55,8 @@ class CodeGen:
         self.interface_methods = {}
         self.interface_method_returns = {}
         self.interface_helpers = {}
+        self.generic_traits = {}
+        self.generic_trait_instances = {}
         self.enum_values = {}  # enum name -> {variant: value}
         self.func_param_types = {}
         self.func_return_types = {}
@@ -102,6 +104,10 @@ class CodeGen:
     def type_name(self, typ):
         if typ is None:
             return 'long'
+        if typ.name in self.generic_traits and typ.args:
+            return _mangle_generic(
+                typ.name, [_type_node_name(arg) for arg in typ.args]
+            )
         if typ.name == 'tuple':
             items = [self.type_name(arg) for arg in typ.args]
             name = 'tuple__' + '__'.join(items)
@@ -259,6 +265,10 @@ class CodeGen:
             expected = self.type_name(e.typ) if e.typ is not None else None
             v, vt = self.gen_expr(e.value, expected)
             if e.typ is not None:
+                if expected in self.interface_methods and vt in self.record_field_types:
+                    helper = self.interface_helpers.get((expected, vt))
+                    if helper:
+                        v = f"{helper}(&({v}))"
                 vt = self.type_name(e.typ)
             # Empty typed lists must use typed list_new_* even if inference missed
             if expected and expected.startswith('list_'):
@@ -1255,6 +1265,11 @@ class CodeGen:
         if isinstance(e, LetExpr):
             v, vt = self.gen_expr(e.value, self.type_name(e.typ) if e.typ else None)
             if e.typ is not None:
+                expected = self.type_name(e.typ)
+                if expected in self.interface_methods and vt in self.record_field_types:
+                    helper = self.interface_helpers.get((expected, vt))
+                    if helper:
+                        v = f"{helper}(&({v}))"
                 vt = self.type_name(e.typ)
             old = self.env.get(e.name)
             old_alias = self.var_aliases.pop(e.name, None)
@@ -1385,6 +1400,33 @@ class CodeGen:
         self.emit()
 
     def generate(self, prog: Program, source_path: Optional[str] = None, as_lib: bool = False, skip_runtime: bool = False) -> str:
+        self.generic_traits = {
+            sig.name: sig for sig in prog.sigs if getattr(sig, 'type_params', None)
+        }
+        self.generic_trait_instances = {}
+
+        def collect_trait_instances(value, visited):
+            if value is None or id(value) in visited:
+                return
+            if isinstance(value, TypeNode):
+                trait = self.generic_traits.get(value.name)
+                if trait and len(value.args) == len(trait.type_params):
+                    key = self.type_name(value)
+                    self.generic_trait_instances[key] = (trait, value.args)
+                for arg in value.args:
+                    collect_trait_instances(arg, visited)
+                return
+            if isinstance(value, (list, tuple)):
+                for item in value:
+                    collect_trait_instances(item, visited)
+                return
+            if hasattr(value, '__dict__'):
+                visited.add(id(value))
+                for child in vars(value).values():
+                    collect_trait_instances(child, visited)
+
+        collect_trait_instances(prog, set())
+
         # Skip generic templates; specialized clones (Box__i64) are concrete
         self.record_field_types = {
             r.name: {n: self.type_name(t) for n, t in r.fields}
@@ -1405,14 +1447,45 @@ class CodeGen:
         }
         self.method_names = {}
         self.method_returns = {}
+        interface_specs = {}
+        self.interface_methods = {}
+        self.interface_method_returns = {}
+        for sig in prog.sigs:
+            if getattr(sig, 'type_params', None):
+                continue
+            methods = [
+                (m[0], [self.type_name(p.typ) if p.typ else 'long' for p in m[1]],
+                 self.type_name(m[2]) if m[2] else 'long')
+                for m in sig.methods
+            ]
+            interface_specs[sig.name] = methods
+        for instance_name, (sig, type_args) in self.generic_trait_instances.items():
+            mapping = {
+                name: _type_node_name(arg)
+                for name, arg in zip(sig.type_params, type_args)
+            }
+            methods = [
+                (
+                    method_name,
+                    [
+                        self.type_name(_subst_type_node(p.typ, mapping))
+                        if p.typ else 'long'
+                        for p in params
+                    ],
+                    self.type_name(_subst_type_node(ret, mapping))
+                    if ret else 'long',
+                )
+                for method_name, params, ret in sig.methods
+            ]
+            interface_specs[instance_name] = methods
         self.interface_methods = {
-            sig.name: [m[0] for m in sig.methods]
-            for sig in prog.sigs if not getattr(sig, 'type_params', None)
+            name: [method[0] for method in methods]
+            for name, methods in interface_specs.items()
         }
         self.interface_method_returns = {
-            (sig.name, m[0]): self.type_name(m[2]) if m[2] else 'long'
-            for sig in prog.sigs if not getattr(sig, 'type_params', None)
-            for m in sig.methods
+            (interface_name, method_name): return_type
+            for interface_name, methods in interface_specs.items()
+            for method_name, _, return_type in methods
         }
         # Top-level fix constants: register types in env for later expressions
         self.const_decls = list(getattr(prog, 'fixes', []) or [])
@@ -1509,72 +1582,58 @@ class CodeGen:
                 val_c, vt = self.gen_expr(c.value)
                 out.append(f'static {self.c_type(vt)} {c.name} = {val_c};')
             out.append('')
-        for sig in prog.sigs:
-            if getattr(sig, 'type_params', None):
-                continue
+        for iface_name, methods in interface_specs.items():
             fields = ["  void* value;"]
-            for name, _, _ in sig.methods:
+            for name, _, _ in methods:
                 fields.append(f"  void* (*{name})(void*);")
-            out.append(f"typedef struct {{")
+            out.append("typedef struct {")
             out.extend(fields)
-            out.append(f"}} {sig.name};")
+            out.append(f"}} {iface_name};")
             out.append("")
         self.interface_helpers = {}
-        # Compute implicit satisfaction: which (sig, struct) pairs are satisfied
-        # by structural matching of method signatures.
-        type_name = lambda t: t.name if t else 'long'
+        # Build adapters for every concrete record satisfying an interface.
         method_sigs = {
             (m.receiver, m.name): (
-                [type_name(p.typ) for p in m.params],
-                type_name(m.ret),
+                [self.type_name(p.typ) if p.typ else 'long' for p in m.params],
+                self.type_name(m.ret) if m.ret else 'long',
             )
             for m in prog.methods
         }
-        satisfied = set()
-        for sig in prog.sigs:
-            if getattr(sig, 'type_params', None):
-                continue
-            sig_methods = [
-                (m[0], [type_name(p.typ) for p in m[1]], type_name(m[2]))
-                for m in sig.methods
-            ]
-            for rec in prog.recs:
+        concrete_recs = [r for r in prog.recs if not getattr(r, 'type_params', None)]
+        for iface_name, methods in interface_specs.items():
+            for rec in concrete_recs:
                 struct_name = rec.name
-                ok = True
-                for mname, mparams, mret in sig_methods:
-                    key = (struct_name, mname)
-                    if key not in method_sigs:
-                        ok = False
-                        break
-                    mp, mr = method_sigs[key]
-                    if mp != mparams or mr != mret:
-                        ok = False
-                        break
-                if ok:
-                    satisfied.add((sig.name, struct_name))
-        for iface_name, struct_name in satisfied:
-            iface_methods = [m for sig in prog.sigs if sig.name == iface_name for m in sig.methods]
-            for method_name, _, ret_node in iface_methods:
-                if (struct_name, method_name) in self.method_names:
-                    helper_name = f"{iface_name}_from_{struct_name}"
-                    self.interface_helpers[(iface_name, struct_name)] = helper_name
-                    ret_type = self.type_name(ret_node) if ret_node else 'long'
+                if not all(
+                    (struct_name, method_name) in method_sigs
+                    and method_sigs[(struct_name, method_name)] == (param_types, ret_type)
+                    for method_name, param_types, ret_type in methods
+                ):
+                    continue
+                helper_name = f"{iface_name}_from_{struct_name}"
+                self.interface_helpers[(iface_name, struct_name)] = helper_name
+                assignments = []
+                for method_name, _, ret_type in methods:
+                    if (struct_name, method_name) not in self.method_names:
+                        continue
                     c_ret_type = self.c_type(ret_type)
-                    wrapper_name = f"{struct_name}_{method_name}_adapter"
+                    wrapper_name = f"{iface_name}_{struct_name}_{method_name}_adapter"
                     self.extra.append(
                         f"static {c_ret_type} {wrapper_name}(void* value) {{\n"
                         f"  {struct_name}* self = ({struct_name}*)value;\n"
                         f"  return ({c_ret_type}){self.known.get(f'{struct_name}_{method_name}', '0')}(*self);\n"
                         f"}}\n"
                     )
-                    self.extra.append(
-                        f"static {iface_name} {helper_name}({struct_name}* value) {{\n"
-                        f"  {iface_name} out = {{0}};\n"
-                        f"  out.value = (void*)value;\n"
-                        f"  out.{method_name} = (void*(*)(void*)){wrapper_name};\n"
-                        f"  return out;\n"
-                        f"}}\n"
+                    assignments.append(
+                        f"  out.{method_name} = (void*(*)(void*)){wrapper_name};"
                     )
+                self.extra.append(
+                    f"static {iface_name} {helper_name}({struct_name}* value) {{\n"
+                    f"  {iface_name} out = {{0}};\n"
+                    f"  out.value = (void*)value;\n"
+                    + "\n".join(assignments) + "\n"
+                    f"  return out;\n"
+                    f"}}\n"
+                )
         concrete_recs = [r for r in prog.recs if not getattr(r, 'type_params', None)]
         concrete_enums = [e for e in prog.enums if not getattr(e, 'type_params', None)]
         for rec in concrete_recs:

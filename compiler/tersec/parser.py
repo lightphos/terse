@@ -806,14 +806,7 @@ class Parser:
                 name = tok.v
         else:
             raise SyntaxError(f"expected record name at {self.cur().line}:{self.cur().col}")
-        type_params = []
-        if self.match(TT.LBRACK):
-            self.adv()
-            while not self.match(TT.RBRACK):
-                type_params.append(self.expect(TT.IDENT).v)
-                if self.match(TT.COMMA):
-                    self.adv()
-            self.expect(TT.RBRACK)
+        type_params, type_param_bounds = self.parse_type_params()
         self.expect(TT.LBRACE)
         fields = []
         while not self.match(TT.RBRACE):
@@ -823,19 +816,12 @@ class Parser:
             fields.append((field_name, field_type))
             if self.match(TT.COMMA): self.adv()
         self.expect(TT.RBRACE)
-        return RecDecl(name, fields, type_params=type_params)
+        return RecDecl(name, fields, type_params=type_params, type_param_bounds=type_param_bounds)
 
     def parse_enum(self):
         self.expect(TT.EN)
         name = self.expect(TT.IDENT).v
-        type_params = []
-        if self.match(TT.LBRACK):
-            self.adv()
-            while not self.match(TT.RBRACK):
-                type_params.append(self.expect(TT.IDENT).v)
-                if self.match(TT.COMMA):
-                    self.adv()
-            self.expect(TT.RBRACK)
+        type_params, type_param_bounds = self.parse_type_params()
         self.expect(TT.LBRACE)
         variants = []
         while not self.match(TT.RBRACE):
@@ -855,19 +841,34 @@ class Parser:
             variants.append(EnumVariantDecl(vname, fields, value=disc))
             if self.match(TT.COMMA): self.adv()
         self.expect(TT.RBRACE)
-        return EnumDecl(name, variants, type_params=type_params)
+        return EnumDecl(name, variants, type_params=type_params, type_param_bounds=type_param_bounds)
+
+    def parse_type_params(self):
+        type_params = []
+        bounds = {}
+        if self.match(TT.LBRACK):
+            self.adv()
+            while not self.match(TT.RBRACK):
+                name = self.expect(TT.IDENT).v
+                param_bounds = []
+                if self.match(TT.COLON):
+                    self.adv()
+                    param_bounds.append(self.expect(TT.IDENT).v)
+                    while self.match(TT.PLUS):
+                        self.adv()
+                        param_bounds.append(self.expect(TT.IDENT).v)
+                type_params.append(name)
+                if param_bounds:
+                    bounds[name] = param_bounds
+                if self.match(TT.COMMA):
+                    self.adv()
+            self.expect(TT.RBRACK)
+        return type_params, bounds
 
     def parse_trait(self):
         self.expect(TT.TR)
         name = self.expect(TT.IDENT).v
-        type_params = []
-        if self.match(TT.LBRACK):
-            self.adv()
-            while not self.match(TT.RBRACK):
-                type_params.append(self.expect(TT.IDENT).v)
-                if self.match(TT.COMMA):
-                    self.adv()
-            self.expect(TT.RBRACK)
+        type_params, type_param_bounds = self.parse_type_params()
         self.expect(TT.LBRACE)
         methods = []
         while not self.match(TT.RBRACE):
@@ -880,7 +881,7 @@ class Parser:
             methods.append((method_name, params, ret))
             if self.match(TT.SEMI): self.adv()
         self.expect(TT.RBRACE)
-        return TraitDecl(name, methods, type_params=type_params)
+        return TraitDecl(name, methods, type_params=type_params, type_param_bounds=type_param_bounds)
 
     def parse_method(self, receiver: str, name: str):
         params = self.parse_params()
@@ -902,18 +903,11 @@ class Parser:
             self.adv()
             method_name = self.expect(TT.IDENT).v
             return self.parse_method(name, method_name)
-        type_params = []
-        if self.match(TT.LBRACK):
-            self.adv()
-            while not self.match(TT.RBRACK):
-                type_params.append(self.expect(TT.IDENT).v)
-                if self.match(TT.COMMA):
-                    self.adv()
-            self.expect(TT.RBRACK)
+        type_params, type_param_bounds = self.parse_type_params()
         params = self.parse_params()
         ret = None
         if self.match(TT.ARROW):
             self.adv(); ret = self.parse_type()
         if self.match(TT.ASSIGN): self.adv()
         body = self.parse_expr()
-        return FnDecl(name, params, ret, body, type_params=type_params)
+        return FnDecl(name, params, ret, body, type_params=type_params, type_param_bounds=type_param_bounds)

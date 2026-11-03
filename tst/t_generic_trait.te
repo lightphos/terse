@@ -4,6 +4,10 @@ tr Eq[T] {
   fn eq(other: T) -> bool
 }
 
+tr Ord[T] {
+  fn lt(other: T) -> bool
+}
+
 tr Show[T] {
   fn str() -> str
 }
@@ -16,13 +20,34 @@ rec Pt {
 fn Pt.eq(other: Pt) -> bool =
   self.x == other.x && self.y == other.y
 
+fn Pt.lt(other: Pt) -> bool =
+  self.x < other.x && self.y < other.y
+
 fn Pt.str() -> str =
   fmt(self.x, ",", self.y)
+
+fn same[T: Eq](a: T, b: T) -> bool =
+  a.eq(b)
+
+fn max[T: Ord](a: T, b: T) -> T =
+  a.lt(b) ? b : a
 
 fn t_eq_same() {
   val a = Pt { x: 1, y: 2 }
   val b = Pt { x: 1, y: 2 }
   tst.eq(a.eq(b), true)
+}
+
+fn t_bound_same() {
+  val a = Pt { x: 1, y: 2 }
+  val b = Pt { x: 1, y: 2 }
+  tst.eq(same(a, b), true)
+}
+
+fn t_bound_max() {
+  val a = Pt { x: 1, y: 2 }
+  val b = Pt { x: 3, y: 4 }
+  tst.eq(max(a, b).x, 3)
 }
 
 fn t_eq_diff() {
@@ -34,4 +59,10 @@ fn t_eq_diff() {
 fn t_show() {
   val a = Pt { x: 3, y: 4 }
   tst.eq(a.str(), "3,4")
+}
+
+fn t_show_trait_binding() {
+  val a = Pt { x: 3, y: 4 }
+  val s: Show[Pt] = a
+  tst.eq(s.str(), "3,4")
 }

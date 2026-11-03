@@ -35,5 +35,6 @@ go {
     print(p)
     pr(p.add())
     pr(" -> " + p.cord())
-    p.x
+    val prr: Printable = p
+    pr(prr.str())
  }

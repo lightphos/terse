@@ -115,8 +115,9 @@ first(xs)        // infer T from list element
 - Generic **`rec Box[T]`** and **`en Opt[T]`** — monomorphize at use:
   `Box[long] { value: 1 }`, `Opt[long].Some(3)`.
 - **Known limitation:** pattern arms may require specialized names (`Opt__long.Some(x)`) until demangling lands.
-- Generic **`tr Eq[T]`** — structural satisfaction after subst is partial; trait *parameters* like `fn f(p: Show[Point])` are not fully codegen'd yet (use non-generic traits or concrete types).
-- **Not yet:** constraints (`T: Ord`), pretty pattern names without `__`.
+- Generic **`tr Eq[T]`** — structural satisfaction after substitution is supported for generic bounds and local trait values such as `val s: Show[Point] = point`; generic trait-typed function parameters such as `fn f(p: Show[Point])` remain limited.
+- Generic trait bounds are supported on type params: `fn max[T: Ord](a: T, b: T) -> T = a.lt(b) ? b : a`.
+- Remaining polish: pretty pattern names without `__`.
 
 ## 4. Declarations & Visibility
 
@@ -331,6 +332,15 @@ fn print(p: Printable) { pr(p.str()) }
 ```
 
 A `rec` **satisfies** a trait when it has methods with matching names and signatures (implicit; no `impl` keyword).
+Trait-typed parameters and local bindings accept structurally satisfying records:
+
+```terse
+val p = Point { x: 1, y: 2 }
+val printable: Printable = p
+print(printable)
+```
+
+Trait method calls dispatch through the generated adapter for the concrete record type.
 
 **To grow traits later (not phase 1):**
 

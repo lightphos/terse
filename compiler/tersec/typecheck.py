@@ -190,6 +190,32 @@ class TypeChecker:
             self.check(prog.toplevel)
         return self.errors
 
+    def _trait_satisfied(self, trait_name: str, concrete_type: str) -> bool:
+        if (trait_name, concrete_type) in self.satisfied:
+            return True
+        if (trait_name, (concrete_type,), concrete_type) in self.satisfied:
+            return True
+        specialized = _mangle_generic(trait_name, [concrete_type])
+        if (specialized, concrete_type) in self.satisfied:
+            return True
+        return False
+
+    def _assignment_compatible(self, expected: str, actual: str) -> bool:
+        return _types_compatible(expected, actual) or (
+            expected in self.sigs
+            and actual in self.recs
+            and self._trait_satisfied(expected, actual)
+        )
+
+    def _declared_type_name(self, typ) -> str:
+        if typ is not None and typ.name in self.generic_traits:
+            trait = self.generic_traits[typ.name]
+            if len(typ.args) == len(trait.type_params):
+                return _mangle_generic(
+                    typ.name, [_type_node_name(arg) for arg in typ.args]
+                )
+        return _norm_type_name(typ)
+
     def _infer_generic_args(self, g, arg_types):
         mapping = {}
         def bind(tp, concrete):
@@ -237,6 +263,16 @@ class TypeChecker:
             )
             return None
         mapping = {tp: _type_node_name(ta) for tp, ta in zip(g.type_params, type_args)}
+        for tp, bounds in getattr(g, 'type_param_bounds', {}).items():
+            concrete = mapping.get(tp)
+            if concrete is None:
+                continue
+            for bound in bounds:
+                if not self._trait_satisfied(bound, concrete):
+                    self.errors.append(
+                        f"type error: '{concrete}' does not satisfy trait bound '{tp}: {bound}'"
+                    )
+                    return None
         mangled = _mangle_generic(name, list(mapping.values()))
         if mangled in self.funcs:
             return mangled
@@ -412,6 +448,13 @@ class TypeChecker:
                 if e.field in self.enums[e.obj.name]:
                     return e.obj.name
             base = self.check(e.obj)
+            if base in self.sigs:
+                method = next(
+                    (sig for sig in self.sigs[base] if sig[0] == e.field),
+                    None,
+                )
+                if method is not None:
+                    return method[2]
             if base in self.recs:
                 return self.recs[base].get(e.field, 'long')
             if base in self.enums:
@@ -641,6 +684,26 @@ class TypeChecker:
                 key = (recv_t, e.func.field)
                 if key in getattr(self, 'methods', {}):
                     return self.methods[key][1]
+                if recv_t in self.sigs:
+                    method = next(
+                        (sig for sig in self.sigs[recv_t] if sig[0] == e.func.field),
+                        None,
+                    )
+                    if method is not None:
+                        _, param_types, return_type = method
+                        if len(e.args) != len(param_types):
+                            self.errors.append(
+                                f"type error: trait method '{e.func.field}' expects "
+                                f"{len(param_types)} argument(s), got {len(e.args)}"
+                            )
+                        for i, (actual, expected) in enumerate(zip(arg_types, param_types)):
+                            if not _types_compatible(expected, actual):
+                                self.errors.append(
+                                    f"type error: argument {i + 1} of trait method "
+                                    f"'{e.func.field}' has type '{actual}', "
+                                    f"expected '{expected}'"
+                                )
+                        return return_type
                 if recv_t == 'str':
                     signatures = {
                         'len': (0, 'long'),
@@ -790,8 +853,8 @@ class TypeChecker:
         if isinstance(e, LetExpr):
             vt = self.check(e.value)
             if e.typ is not None:
-                t = _norm_type_name(e.typ)
-                if not _types_compatible(t, vt):
+                t = self._declared_type_name(e.typ)
+                if not self._assignment_compatible(t, vt):
                     self.errors.append(
                         f"type error: '{e.name}' declared '{t}' but value is '{vt}'"
                     )
@@ -800,7 +863,7 @@ class TypeChecker:
                         'i8','i16','int','long','u8','u16','u32','u64','char','f32','dbl'
                     ):
                         vt = t
-            store = _norm_type_name(e.typ) if e.typ is not None else vt
+            store = self._declared_type_name(e.typ) if e.typ is not None else vt
             if e.typ is not None and _types_compatible(store, vt):
                 t = store
             elif e.typ is not None:

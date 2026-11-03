@@ -1,12 +1,17 @@
 // T0: non-generic tr still works (see trait.te)
 // T1: parametric trait + structural satisfaction after subst
+// T2: generic trait bounds on type parameters
 
 tr Eq[T] {
   fn eq(other: T) -> bool
 }
 
+tr Ord[T] {
+  fn lt(other: T) -> bool
+}
+
 tr Show[T] {
-  fn str() -> T
+  fn str() -> str
 }
 
 rec Point {
@@ -14,8 +19,25 @@ rec Point {
   y: long
 }
 
+tr Printable {
+  fn print() -> str
+}
+
+rec Point3D {
+  x: long,
+  y: long,
+  z: long
+}
+
+fn Point3D.print() -> str {
+  fmt("Point3D(", self.x, ",", self.y, ",", self.z, ")")
+}
+
 fn Point.eq(other: Point) -> bool =
   self.x == other.x && self.y == other.y
+
+fn Point.lt(other: Point) -> bool =
+  self.x < other.x && self.y < other.y
 
 fn Point.str() -> str =
   fmt("(", self.x, ",", self.y, ")")
@@ -23,13 +45,30 @@ fn Point.str() -> str =
 fn same(a: Point, b: Point) -> bool =
   a.eq(b)
 
-fn show(a: Show[Point]) {
+fn bound_same[T: Eq](a: T, b: T) -> bool =
+  a.eq(b)
+
+fn max[T: Ord](a: T, b: T) -> T =
+  a.lt(b) ? b : a
+
+fn show[T: Show](a: T) {
   pr("showing " + a.str())
+}
+
+fn print(p: Printable) {
+  pr("printing " + p.print())
 }
 
 go {
   val a = Point { x: 1, y: 2 }
   val b = Point { x: 1, y: 2 }
+  val c = Point { x: 3, y: 4 }
+  val p3d = Point3D { x: 1, y: 2, z: 3 }
   pr(same(a, b) ? 1 : 0)
-  show(a)
+  pr(bound_same(a, b) ? 1 : 0)
+  pr(max(a, c).x)
+  print(p3d)
+  val s: Show[Point] = a
+  pr(s.str())
+
 }

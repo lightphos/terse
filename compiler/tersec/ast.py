@@ -184,8 +184,6 @@ class SliceExpr(Expr):
 
 
 @dataclass
-
-
 class FnDecl:
     name: str
     params: List[Param]
@@ -194,6 +192,7 @@ class FnDecl:
     public: bool = False
     external_lib: bool = False
     type_params: List[str] = field(default_factory=list)
+    type_param_bounds: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -202,6 +201,7 @@ class RecDecl:
     fields: List[Tuple[str, TypeNode]]
     public: bool = False
     type_params: List[str] = field(default_factory=list)
+    type_param_bounds: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -209,7 +209,7 @@ class TraitDecl:
     name: str
     methods: List[Tuple[str, List[Param], Optional[TypeNode]]]
     type_params: List[str] = field(default_factory=list)
-
+    type_param_bounds: dict = field(default_factory=dict)
 
 @dataclass
 class MethodDecl:
@@ -248,6 +248,7 @@ class EnumDecl:
     variants: List[EnumVariantDecl]
     public: bool = True
     type_params: List[str] = field(default_factory=list)
+    type_param_bounds: dict = field(default_factory=dict)
 
 
 @dataclass

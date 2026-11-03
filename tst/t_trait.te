@@ -16,6 +16,12 @@ fn t_point_str() {
   tst.eq(p.str(), "Point { x: 3, y: 2 }")
 }
 
+fn t_trait_local_binding() {
+  val p = Point { x: 3, y: 2 }
+  val s: Printable = p
+  tst.eq(s.str(), "Point { x: 3, y: 2 }")
+}
+
 fn t_origin() {
   val p = origin()          // or point.origin()
   tst.eq(p.x, 0)

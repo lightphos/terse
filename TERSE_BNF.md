@@ -94,7 +94,9 @@
 
 <field>         ::= IDENT ":" <type>
 
-<type-params>   ::= "[" IDENT { "," IDENT } [ "," ] "]"
+<type-params>   ::= "[" <type-param> { "," <type-param> } [ "," ] "]"
+
+<type-param>    ::= IDENT [ ":" IDENT { "+" IDENT } ]
 
 <type-args>     ::= "[" <type> { "," <type> } [ "," ] "]"
 

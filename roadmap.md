@@ -119,7 +119,8 @@ No silent expansion of std without a SPEC/BNF note.
 - `rec Box[T]`, `en Opt[T]` + monomorphize (`Box[long] {…}`, `Opt[long].Some(…)`)
 - Examples: `src/generic_demo.te`, `src/generic_rec_en.te`
 - T1 parametric `tr Eq[T]` parse + structural sat after subst **Done**
-- Later: `T: Eq` bounds (T2), pattern-arm sugar without `Opt__long`
+- T2 generic trait bounds are supported: `fn same[T: Eq](a: T, b: T)` **Done**
+- Later: pattern-arm sugar without `Opt__long`
 
 
 
