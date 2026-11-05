@@ -1,0 +1,13 @@
+// Exercise arena-backed lists and maps
+go {
+  var xs: [long] = []
+  lp i = 0; i < 10; i = i + 1 {
+    xs = xs + [i * i]
+  }
+  var m: {str:long} = {:}
+  m["n"] = len(xs)
+  m["sum"] = xs[0] + xs[9]
+  pr(arena.used())
+  pr(m["n"])
+  pr(m["sum"])
+}

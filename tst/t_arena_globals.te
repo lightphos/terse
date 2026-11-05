@@ -1,0 +1,41 @@
+use std.tst
+
+// Globals share the process arena. Top-level var needs a go entry in non-test
+// layout; here we use long-lived function-scope collections (same allocator).
+
+fn t_long_lived_list() {
+  var g: [long] = []
+  lp i = 0; i < 30; i = i + 1 {
+    g = g + [i]
+  }
+  tst.eq(len(g), 30)
+  tst.eq(g[29], 29)
+  tst.eq(arena.used() > 0, true)
+}
+
+fn t_long_lived_map() {
+  var g: {str:long} = {:}
+  lp i = 0; i < 30; i = i + 1 {
+    g["k" + i] = i * 2
+  }
+  tst.eq(len(g), 30)
+  tst.eq(g["k10"], 20)
+  tst.eq(has(g, "k0"), true)
+}
+
+fn t_arena_chunks() {
+  var xs: [long] = [1, 2, 3, 4, 5]
+  val c = arena.chunks()
+  tst.eq(c >= 1, true)
+  tst.eq(len(xs), 5)
+}
+
+fn t_concat_strings() {
+  // string concat also uses the arena
+  var s = ""
+  lp i = 0; i < 20; i = i + 1 {
+    s = s + "a"
+  }
+  tst.eq(len(s), 20)
+  tst.eq(arena.used() > 0, true)
+}

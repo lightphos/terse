@@ -812,6 +812,15 @@ class CodeGen:
                     text, _ = self.gen_expr(e.args[1])
                     return f"fs_append_text({path}, {text})", "long"
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'arena':
+                f = e.func.field
+                if f == 'used':
+                    return "arena_used()", "long"
+                if f == 'chunks':
+                    return "arena_chunk_count()", "long"
+                if f == 'reset':
+                    return "(arena_reset(), INT64_C(0))", "long"
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'sock':
                 f = e.func.field
                 if f == 'listen' and e.args:

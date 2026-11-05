@@ -139,6 +139,84 @@ Not yet implemented (but specified):
 - HTTP beyond minimal `http.srv`
 
 
+
+## Memory: bump arena
+
+Generated programs allocate through a **bump arena** in `compiler/runtime.c` (linked into every binary). Lists, maps, strings, and similar runtime objects use the arena instead of per-object `malloc`/`free`.
+
+### How it works
+
+1. The arena holds one or more **chunks** (default **256 KiB**, or larger when a single object needs more).
+2. Chunks are obtained with system `malloc`.
+3. Client allocations **bump** a cursor inside the current chunk (8-byte aligned). Each block stores a small size header so `realloc` can copy.
+4. Individual objects are **not** freed. Growing a list or map may abandon the old buffer (copy-forward `realloc`).
+5. Optional **`arena.reset()`** releases every chunk at once (e.g. end of a batch or test).
+
+This fits Terse’s C backend: short-lived program runs, tests, and request-style servers where freeing the whole arena is enough.
+
+```text
+  _arena_head ─────────────────────────────────────────┐
+                                                       │
+                                                       ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Chunk N (newest)                                            │
+  │  next ──► Chunk N-1 ──► … ──► Chunk 0 ──► NULL              │
+  │                                                             │
+  │  used ──────────┐                                           │
+  │                 ▼                                           │
+  │  ┌──────┬──────────┬──────┬──────────┬──────┬────────────┐  │
+  │  │ size │ payload  │ size │ payload  │ size │  free …    │  │
+  │  │ hdr  │ (list,   │ hdr  │ (string, │ hdr  │            │  │
+  │  │      │  map…)   │      │  …)      │      │            │  │
+  │  └──────┴──────────┴──────┴──────────┴──────┴────────────┘  │
+  │  ◄────────── live objects ──────────►◄── bump space ──►     │
+  └─────────────────────────────────────────────────────────────┘
+
+  arena_alloc(n)
+       │  align n; if not enough room in current chunk → new chunk
+       ▼
+  write size header, advance `used`, return pointer to payload
+
+  arena_realloc(ptr, n)
+       │  read old size from header; arena_alloc(n); memcpy
+       ▼
+  old payload stays in the chunk (abandoned; no free)
+
+  arena_reset()
+       │
+       ▼
+  free every chunk via system free; head = NULL; used = 0
+```
+
+### Runtime API (C)
+
+| Function | Role |
+|----------|------|
+| `arena_alloc` / `arena_calloc` | New block |
+| `arena_realloc` | New block + copy; old block left in place |
+| `arena_strdup` | Copy a C string into the arena |
+| `arena_used` | Approximate bytes handed to clients |
+| `arena_chunk_count` | Number of chunks |
+| `arena_reset` | Free all chunks and zero counters |
+
+### Terse surface
+
+```terse
+arena.used()     // long — bytes allocated to clients
+arena.chunks()   // long — chunk count
+arena.reset()    // drop the arena (optional)
+```
+
+### Tests
+
+Arena behaviour is exercised under `tst/`:
+
+- `tst/t_arena_list.te` — growing `[long]` / `[str]`
+- `tst/t_arena_map.te` — `{str:long}` / `{str:str}`
+- `tst/t_arena_globals.te` — long-lived collections and string concat
+
+Demo: `src/arena_demo.te`.
+
 ## Architecture
 
 ```

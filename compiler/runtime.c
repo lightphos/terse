@@ -18,6 +18,95 @@
 #include <unistd.h>
 #endif
 
+
+/* --- Arena (bump) memory management --------------------------------------
+ * All Terse runtime heap traffic (lists, maps, strings) goes through the
+ * arena. Chunks are allocated with system malloc; individual objects are
+ * bump-allocated and never freed individually. Suitable for batch / server
+ * request scopes and whole-program globals.
+ * ----------------------------------------------------------------------- */
+typedef struct ArenaChunk {
+  struct ArenaChunk *next;
+  size_t size;
+  size_t used;
+  /* flexible array: char data[]; — use offset after struct */
+} ArenaChunk;
+
+static ArenaChunk *_arena_head = NULL;
+static size_t _arena_chunk_cap = 256u * 1024u;
+static size_t _arena_bytes = 0;   /* bytes handed to clients */
+static size_t _arena_chunks = 0;
+
+static void *arena_sys_malloc(size_t n) {
+  void *p = malloc(n);
+  if (!p) { fprintf(stderr, "arena: system OOM (%zu bytes)\n", n); exit(1); }
+  return p;
+}
+
+static void *arena_alloc(size_t n) {
+  if (n == 0) n = 1;
+  /* header (size_t) + payload, 8-byte aligned */
+  size_t need = sizeof(size_t) + n;
+  need = (need + 7u) & ~(size_t)7u;
+  if (!_arena_head || _arena_head->used + need > _arena_head->size) {
+    size_t cap = need > _arena_chunk_cap ? need : _arena_chunk_cap;
+    ArenaChunk *c = (ArenaChunk *)arena_sys_malloc(sizeof(ArenaChunk) + cap);
+    c->next = _arena_head;
+    c->size = cap;
+    c->used = 0;
+    _arena_head = c;
+    _arena_chunks++;
+  }
+  char *base = (char *)(_arena_head + 1) + _arena_head->used;
+  _arena_head->used += need;
+  _arena_bytes += n;
+  size_t *hdr = (size_t *)base;
+  *hdr = n;
+  return (void *)(hdr + 1);
+}
+
+static void *arena_calloc(size_t count, size_t size) {
+  size_t total = count * size;
+  void *p = arena_alloc(total);
+  memset(p, 0, total);
+  return p;
+}
+
+/* Bump realloc: allocate fresh block and copy; old block is abandoned. */
+static void *arena_realloc(void *ptr, size_t new_n) {
+  size_t old_n = 0;
+  if (ptr) old_n = ((size_t *)ptr)[-1];
+  void *p = arena_alloc(new_n);
+  if (ptr && old_n) {
+    size_t copy = old_n < new_n ? old_n : new_n;
+    memcpy(p, ptr, copy);
+  }
+  return p;
+}
+
+static char *arena_strdup(const char *s) {
+  if (!s) s = "";
+  size_t n = strlen(s);
+  char *d = (char *)arena_alloc(n + 1);
+  memcpy(d, s, n + 1);
+  return d;
+}
+
+/* Bytes currently live in the arena (approximate client payload). */
+static int64_t arena_used(void) { return (int64_t)_arena_bytes; }
+static int64_t arena_chunk_count(void) { return (int64_t)_arena_chunks; }
+
+/* Optional: release all arena chunks (tests / request end). */
+static void arena_reset(void) {
+  while (_arena_head) {
+    ArenaChunk *n = _arena_head->next;
+    free(_arena_head);
+    _arena_head = n;
+  }
+  _arena_bytes = 0;
+  _arena_chunks = 0;
+}
+
 typedef struct TerseTrap {
   jmp_buf env;
   struct TerseTrap *prev;
@@ -116,7 +205,7 @@ static char* sock_recv(int64_t fd) {
     buf[n] = 0;
     if (strstr(buf, "\r\n\r\n")) break;
   }
-  if (n <= 0) { char* e = (char*)malloc(1); e[0]=0; return e; }
+  if (n <= 0) { char* e = (char*)arena_alloc(1); e[0]=0; return e; }
   buf[n] = 0;
   char* sep = strstr(buf, "\r\n\r\n");
   int content_length = 0;
@@ -129,7 +218,7 @@ static char* sock_recv(int64_t fd) {
     n += got;
     buf[n] = 0;
   }
-  char* out = (char*)malloc((size_t)n + 1);
+  char* out = (char*)arena_alloc((size_t)n + 1);
   memcpy(out, buf, (size_t)n);
   out[n] = 0;
   return out;
@@ -160,7 +249,7 @@ static int64_t sock_close(int64_t fd) {
 typedef struct { int64_t *d; int64_t n; } List;
 
 static List list_new(int64_t n) {
-  List L; L.n = n; L.d = (int64_t*)malloc(sizeof(int64_t) * (n > 0 ? n : 1));
+  List L; L.n = n; L.d = (int64_t*)arena_alloc(sizeof(int64_t) * (size_t)(n > 0 ? n : 1));
   return L;
 }
 static int64_t list_get(List L, int64_t i) {
@@ -173,7 +262,7 @@ static int64_t list_get(List L, int64_t i) {
 }
 static int64_t list_len(List L) { return L.n; }
 static List list_push(List L, int64_t value) {
-    L.d = (int64_t*)realloc(L.d, sizeof(int64_t) * (size_t)(L.n + 1));
+    L.d = (int64_t*)arena_realloc(L.d, sizeof(int64_t) * (size_t)(L.n + 1));
     L.d[L.n++] = value;
     return L;
 }
@@ -218,8 +307,8 @@ static Map_str_i64 map_str_i64_put(Map_str_i64 m, const char* key, int64_t val) 
   }
   if (m.n >= m.cap) {
     m.cap = m.cap ? m.cap * 2 : 8;
-    m.k = (const char**)realloc(m.k, sizeof(const char*) * (size_t)m.cap);
-    m.v = (int64_t*)realloc(m.v, sizeof(int64_t) * (size_t)m.cap);
+    m.k = (const char**)arena_realloc((void*)m.k, sizeof(const char*) * (size_t)m.cap);
+    m.v = (int64_t*)arena_realloc(m.v, sizeof(int64_t) * (size_t)m.cap);
   }
   m.k[m.n] = key; m.v[m.n] = val; m.n++; return m;
 }
@@ -231,8 +320,8 @@ static Map_str_str map_str_str_put(Map_str_str m, const char* key, const char* v
   }
   if (m.n >= m.cap) {
     m.cap = m.cap ? m.cap * 2 : 8;
-    m.k = (const char**)realloc(m.k, sizeof(const char*) * (size_t)m.cap);
-    m.v = (const char**)realloc(m.v, sizeof(const char*) * (size_t)m.cap);
+    m.k = (const char**)arena_realloc((void*)m.k, sizeof(const char*) * (size_t)m.cap);
+    m.v = (const char**)arena_realloc((void*)m.v, sizeof(const char*) * (size_t)m.cap);
   }
   m.k[m.n] = key; m.v[m.n] = val; m.n++; return m;
 }
@@ -247,20 +336,20 @@ typedef struct {
 
 
 static char* str_from_i64(int64_t x) {
-  char* b = (char*)malloc(32);
+  char* b = (char*)arena_alloc(32);
   snprintf(b, 32, "%lld", (long long)x);
   return b;
 }
 static char* str_from_bool(bool v) {
   const char* s = v ? "true" : "false";
   size_t n = strlen(s);
-  char* b = (char*)malloc(n + 1);
+  char* b = (char*)arena_alloc(n + 1);
   memcpy(b, s, n + 1);
   return b;
 }
 static char* str_concat(const char* a, const char* b) {
   size_t na = strlen(a), nb = strlen(b);
-  char* r = (char*)malloc(na + nb + 1);
+  char* r = (char*)arena_alloc(na + nb + 1);
   memcpy(r, a, na); memcpy(r + na, b, nb); r[na+nb] = 0;
   return r;
 }
@@ -272,7 +361,7 @@ static char* str_slice(const char* s, int64_t start, int64_t length) {
     if (start > size) start = size;
     if (length < 0) length = 0;
     if (length > size - start) length = size - start;
-    char* result = (char*)malloc((size_t)length + 1);
+    char* result = (char*)arena_alloc((size_t)length + 1);
     if (!result) { fprintf(stderr, "out of memory slicing string\n"); exit(1); }
     memcpy(result, s + start, (size_t)length);
     result[length] = 0;
@@ -292,13 +381,13 @@ static char* str_slice_range(const char* s, int64_t start, int64_t end) {
 typedef struct { const char **d; int64_t n; int64_t cap; } List_str;
 static List_str list_new_str(int64_t n) {
   List_str L = {NULL, 0, n};
-  if (n > 0) { L.d = (const char**)calloc((size_t)n, sizeof(const char*)); L.n = n; }
+  if (n > 0) { L.d = (const char**)arena_calloc((size_t)n, sizeof(const char*)); L.n = n; }
   return L;
 }
 static List_str list_push_str(List_str L, const char* v) {
   if (L.n >= L.cap) {
     L.cap = L.cap ? L.cap * 2 : 8;
-    L.d = (const char**)realloc(L.d, sizeof(const char*) * (size_t)L.cap);
+    L.d = (const char**)arena_realloc((void*)L.d, sizeof(const char*) * (size_t)L.cap);
   }
   L.d[L.n++] = v ? v : "";
   return L;
@@ -325,11 +414,11 @@ static List_str list_concat_str(List_str a, List_str b) {
 typedef struct { CType *d; int64_t n; int64_t cap; } List_##Name; \
 static List_##Name list_new_##Name(int64_t n) { \
   List_##Name L = {NULL, 0, n}; \
-  if (n > 0) L.d = (CType*)calloc((size_t)n, sizeof(CType)); \
+  if (n > 0) L.d = (CType*)arena_calloc((size_t)n, sizeof(CType)); \
   return L; \
 } \
 static List_##Name list_push_##Name(List_##Name L, CType v) { \
-  if (L.n >= L.cap) { L.cap = L.cap ? L.cap * 2 : 8; L.d = (CType*)realloc(L.d, (size_t)L.cap * sizeof(CType)); } \
+  if (L.n >= L.cap) { L.cap = L.cap ? L.cap * 2 : 8; L.d = (CType*)arena_realloc(L.d, (size_t)L.cap * sizeof(CType)); } \
   L.d[L.n++] = v; \
   return L; \
 } \
@@ -403,7 +492,7 @@ static char* str_trim(const char* s) {
   while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
   size_t n = strlen(s);
   while (n > 0 && (s[n-1] == ' ' || s[n-1] == '\t' || s[n-1] == '\n' || s[n-1] == '\r')) n--;
-  char* r = (char*)malloc(n + 1);
+  char* r = (char*)arena_alloc(n + 1);
   memcpy(r, s, n); r[n] = 0;
   return r;
 }
@@ -431,7 +520,7 @@ static char* str_join(List_str parts, const char* sep) {
     total += strlen(pi);
     if (i + 1 < parts.n) total += sepn;
   }
-  char* r = (char*)malloc(total);
+  char* r = (char*)arena_alloc(total);
   if (!r) { fprintf(stderr, "oom join\n"); exit(1); }
   size_t off = 0;
   for (int64_t i = 0; i < parts.n; i++) {
@@ -569,20 +658,20 @@ static int64_t tst_report(void) {
 }
 
 static char* json_int(int64_t x) {
-  char* b = (char*)malloc(32);
+  char* b = (char*)arena_alloc(32);
   snprintf(b, 32, "%lld", (long long)x);
   return b;
 }
 static char* json_str(const char* s) {
   size_t n = strlen(s);
-  char* b = (char*)malloc(n + 3);
+  char* b = (char*)arena_alloc(n + 3);
   b[0] = '"'; memcpy(b+1, s, n); b[n+1] = '"'; b[n+2] = 0;
   return b;
 }
 static char* json_list(List L) {
   /* rough buffer */
   size_t cap = 64 + L.n * 24;
-  char* b = (char*)malloc(cap);
+  char* b = (char*)arena_alloc(cap);
   size_t o = 0;
   b[o++] = '[';
   for (int64_t i = 0; i < L.n; i++) {
@@ -693,7 +782,7 @@ static char* fs_read_text(const char* path) {
     if (fseek(file, 0, SEEK_END) != 0) fs_io_fail("read", path);
     long size = ftell(file);
     if (size < 0 || fseek(file, 0, SEEK_SET) != 0) fs_io_fail("read", path);
-    char* text = (char*)malloc((size_t)size + 1);
+    char* text = (char*)arena_alloc((size_t)size + 1);
     if (!text) { fclose(file); fprintf(stderr, "out of memory reading '%s'\n", path); exit(1); }
     size_t read_size = fread(text, 1, (size_t)size, file);
     if (ferror(file)) fs_io_fail("read", path);

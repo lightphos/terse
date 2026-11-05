@@ -1,0 +1,23 @@
+use std.tst
+
+fn t_map_put_many() {
+  var m: {str:long} = {:}
+  val before = arena.used()
+  lp i = 0; i < 100; i = i + 1 {
+    m["k" + i] = i
+  }
+  tst.eq(len(m), 100)
+  tst.eq(m["k0"], 0)
+  tst.eq(m["k99"], 99)
+  tst.eq(has(m, "k50"), true)
+  val after = arena.used()
+  tst.eq(after > before, true)
+}
+
+fn t_map_str_values() {
+  var m: {str:str} = { "a": "alpha" }
+  m["b"] = "beta"
+  tst.eq(m["a"], "alpha")
+  tst.eq(m["b"], "beta")
+  tst.eq(len(m), 2)
+}

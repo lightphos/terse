@@ -1,0 +1,24 @@
+use std.tst
+
+fn t_list_grow() {
+  var xs: [long] = []
+  val before = arena.used()
+  lp i = 0; i < 200; i = i + 1 {
+    xs = xs + [i]
+  }
+  tst.eq(len(xs), 200)
+  tst.eq(xs[0], 0)
+  tst.eq(xs[199], 199)
+  val after = arena.used()
+  // growth must allocate through the arena
+  tst.eq(after > before, true)
+}
+
+fn t_str_list_grow() {
+  var ys: [str] = []
+  lp i = 0; i < 50; i = i + 1 {
+    ys = ys + ["x"]
+  }
+  tst.eq(len(ys), 50)
+  tst.eq(ys[0], "x")
+}
