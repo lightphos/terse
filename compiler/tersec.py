@@ -665,6 +665,20 @@ def ensure_module_lib(module_file, use_path, verbose=False, force=False):
         return None
     return lib_obj_path(key) if os.path.isfile(lib_obj_path(key)) else None
 
+def _tls_link_flags():
+    """OpenSSL link flags (HTTPS client). Override with TERSE_NO_TLS=1."""
+    if os.environ.get("TERSE_NO_TLS", "").strip() in ("1", "true", "yes"):
+        return ["-DTERSE_NO_TLS"]
+    flags = []
+    # compile-time: always include TLS unless disabled
+    # link:
+    if sys.platform == "win32":
+        flags += ["-lssl", "-lcrypto", "-lws2_32", "-lcrypt32"]
+    else:
+        flags += ["-lssl", "-lcrypto"]
+    return flags
+
+
 def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
                   as_lib=False, link_libs=True, force=False, lib_key=None):
     try:
@@ -807,7 +821,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
                             break
                     print(err, file=sys.stderr)
                 return 1
-            cmd_l = [cc, "-O0", "-std=c11", "-o", gcc_out, main_obj] + link_objs
+            cmd_l = [cc, "-O0", "-std=c11", "-o", gcc_out, main_obj] + link_objs + [f for f in _tls_link_flags() if f.startswith("-l")]
             if sys.platform == "win32":
                 cmd_l.extend(["-lws2_32", "-mconsole"])
             r = subprocess.run(cmd_l, capture_output=True, text=True)
@@ -818,7 +832,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
         else:
             cmd = [cc, "-O0", "-std=c11",
                    "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value",
-                   "-Wno-parentheses", c_file, "-o", gcc_out]
+                   "-Wno-parentheses", c_file, "-o", gcc_out] + _tls_link_flags()
             if sys.platform == "win32":
                 cmd.extend(["-lws2_32", "-mconsole"])
             r = subprocess.run(cmd, capture_output=True, text=True)

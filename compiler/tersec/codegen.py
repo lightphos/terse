@@ -843,6 +843,9 @@ class CodeGen:
                 if f == 'connect' and len(e.args) >= 2:
                     a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
                     return f"sock_connect({a}, {b})", "long"
+                if f in ('connect_tls', 'connecttls') and len(e.args) >= 2:
+                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                    return f"sock_connect_tls({a}, {b})", "long"
                 if f in ('recv_all', 'recvall') and e.args:
                     a, _ = self.gen_expr(e.args[0])
                     return f"sock_recv_all({a})", "str"

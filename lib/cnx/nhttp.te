@@ -123,10 +123,13 @@ fn parse_url(url: str) -> {str: str} {
   var host = "127.0.0.1"
   var port = "80"
   var path = "/"
+  var scheme = "http"
   var rest = url
   if str.has(rest, "://") {
     val parts = str.split(rest, "://")
+    if len(parts) > 0 { scheme = parts[0] }
     if len(parts) > 1 { rest = parts[1] }
+    if scheme == "https" { port = "443" }
   }
   if str.has(rest, "/") {
     val parts = str.split(rest, "/")
@@ -149,7 +152,7 @@ fn parse_url(url: str) -> {str: str} {
     host = hp[0]
     if len(hp) > 1 { port = hp[1] }
   }
-  ret { "host": host, "port": port, "path": path }
+  ret { "host": host, "port": port, "path": path, "scheme": scheme }
 }
 
 fn parse_client_res(raw: str) -> ClientRes {
@@ -212,7 +215,12 @@ pub fn request(method: str, url: str, body: str, ctype: str) -> ClientRes {
   val host = u["host"]
   val path = u["path"]
   val port = parse(u["port"])
-  val fd = sock.connect(host, port)
+  val scheme = u["scheme"]
+  val fd = if scheme == "https" {
+    sock.connect_tls(host, port)
+  } else {
+    sock.connect(host, port)
+  }
   if fd < 0 {
     ret ClientRes { status: 0, body: "connect failed", ctype: "text/plain" }
   }

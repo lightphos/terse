@@ -1,12 +1,29 @@
-// HTTP client demo — call a REST API
-//   Terminal 1: python3 compiler/tersec.py build src/nhttp_srv.te -o out/nhttp_srv -f && ./out/nhttp_srv
-//   Terminal 2: python3 compiler/tersec.py build src/http_client.te -o out/http_client -f && ./out/http_client
+// HTTP / HTTPS client demo
+//
+// Local server (optional):
+//   python3 compiler/tersec.py build src/nhttp_srv.te -o out/nhttp_srv -f && ./out/nhttp_srv
+//
+// Client:
+//   python3 compiler/tersec.py build src/http_client.te -o out/http_client -f
+//   ./out/http_client
+//
+// Needs libssl (e.g. apt install libssl-dev) for https://
 
 use cnx.http
 
 go {
+  // HTTPS — public site (OpenSSL TLS)
+  val hx = http.get("https://example.com/")
+  pr(fmt("GET https://example.com/ => ", hx.status, " bytes=", len(hx.body)))
+  if hx.status == 200 {
+    pr("https ok")
+  } else {
+    pr(fmt("https body: ", hx.body))
+  }
+
+  // Local HTTP — requires nhttp_srv on :8766
   val r1 = http.get("http://127.0.0.1:8766/")
-  pr(fmt("GET / => ", r1.status, " ", r1.body))
+  pr(fmt("GET http://127.0.0.1:8766/ => ", r1.status, " ", r1.body))
 
   val r2 = http.get("http://127.0.0.1:8766/api")
   pr(fmt("GET /api => ", r2.status, " ", r2.body))

@@ -145,6 +145,8 @@ static void terse_err(const char *message) {
   #include <sys/socket.h>
   #include <netinet/in.h>
 #include <netdb.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
   #include <arpa/inet.h>
   #include <signal.h>
   typedef int sock_t;
@@ -155,6 +157,22 @@ static void terse_err(const char *message) {
 #endif
 
 /* --- basic TCP sockets (host surface; HTTP lives in lib/http.te) --- */
+
+#ifndef TERSE_NO_TLS
+#define TERSE_TLS_MAX 64
+typedef struct {
+  int active;
+  sock_t fd;
+  SSL *ssl;
+  SSL_CTX *ctx;
+} TerseTlsSlot;
+static TerseTlsSlot terse_tls_slots[TERSE_TLS_MAX];
+static int terse_tls_inited = 0;
+static int terse_tls_find(sock_t fd);
+static void terse_tls_free_slot(int i);
+#endif
+
+
 static int64_t sock_listen(int64_t port) {
   sock_init();
 #ifndef _WIN32
@@ -230,6 +248,18 @@ static int64_t sock_send(int64_t fd, const char* data) {
   if (!data) data = "";
   int n = (int)strlen(data);
   int sent = 0;
+#ifndef TERSE_NO_TLS
+  int ti = terse_tls_find(s);
+  if (ti >= 0) {
+    SSL *ssl = terse_tls_slots[ti].ssl;
+    while (sent < n) {
+      int k = SSL_write(ssl, data + sent, n - sent);
+      if (k <= 0) break;
+      sent += k;
+    }
+    return (int64_t)sent;
+  }
+#endif
   while (sent < n) {
     int k = (int)send(s, data + sent, (size_t)(n - sent), 0);
     if (k <= 0) break;
@@ -239,6 +269,10 @@ static int64_t sock_send(int64_t fd, const char* data) {
 }
 static int64_t sock_close(int64_t fd) {
   sock_t s = (sock_t)(intptr_t)fd;
+#ifndef TERSE_NO_TLS
+  int ti = terse_tls_find(s);
+  if (ti >= 0) terse_tls_free_slot(ti);
+#endif
 #ifdef _WIN32
   shutdown(s, SD_BOTH);
 #else
@@ -277,6 +311,89 @@ static int64_t sock_connect(const char* host, int64_t port) {
 }
 
 /* Read until connection close or buffer full (for HTTP client responses). */
+
+/* --- TLS (OpenSSL) client sessions keyed by socket fd --- */
+#ifndef TERSE_NO_TLS
+static void terse_tls_init(void) {
+  if (terse_tls_inited) return;
+  SSL_library_init();
+  SSL_load_error_strings();
+  OpenSSL_add_all_algorithms();
+  terse_tls_inited = 1;
+}
+
+static int terse_tls_find(sock_t fd) {
+  for (int i = 0; i < TERSE_TLS_MAX; i++)
+    if (terse_tls_slots[i].active && terse_tls_slots[i].fd == fd) return i;
+  return -1;
+}
+
+static int terse_tls_alloc(sock_t fd, SSL *ssl, SSL_CTX *ctx) {
+  for (int i = 0; i < TERSE_TLS_MAX; i++) {
+    if (!terse_tls_slots[i].active) {
+      terse_tls_slots[i].active = 1;
+      terse_tls_slots[i].fd = fd;
+      terse_tls_slots[i].ssl = ssl;
+      terse_tls_slots[i].ctx = ctx;
+      return i;
+    }
+  }
+  return -1;
+}
+
+static void terse_tls_free_slot(int i) {
+  if (i < 0 || i >= TERSE_TLS_MAX || !terse_tls_slots[i].active) return;
+  if (terse_tls_slots[i].ssl) {
+    SSL_shutdown(terse_tls_slots[i].ssl);
+    SSL_free(terse_tls_slots[i].ssl);
+  }
+  if (terse_tls_slots[i].ctx) SSL_CTX_free(terse_tls_slots[i].ctx);
+  terse_tls_slots[i].active = 0;
+  terse_tls_slots[i].ssl = NULL;
+  terse_tls_slots[i].ctx = NULL;
+}
+
+/* TCP + TLS handshake. Returns fd or -1. */
+static int64_t sock_connect_tls(const char* host, int64_t port) {
+  if (!host || !*host) return INT64_C(-1);
+  int64_t raw = sock_connect(host, port);
+  if (raw < 0) return raw;
+  sock_t fd = (sock_t)(intptr_t)raw;
+  terse_tls_init();
+  SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+  if (!ctx) { CLOSESOCK(fd); return INT64_C(-1); }
+  SSL_CTX_set_default_verify_paths(ctx);
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+  SSL *ssl = SSL_new(ctx);
+  if (!ssl) { SSL_CTX_free(ctx); CLOSESOCK(fd); return INT64_C(-1); }
+  SSL_set_fd(ssl, (int)fd);
+  SSL_set_tlsext_host_name(ssl, host);
+  /* OpenSSL 1.1+ hostname check */
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+  SSL_set1_host(ssl, host);
+#endif
+  if (SSL_connect(ssl) != 1) {
+    fprintf(stderr, "sock.connect_tls: handshake failed for %s\n", host);
+    ERR_print_errors_fp(stderr);
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    CLOSESOCK(fd);
+    return INT64_C(-1);
+  }
+  if (terse_tls_alloc(fd, ssl, ctx) < 0) {
+    SSL_shutdown(ssl); SSL_free(ssl); SSL_CTX_free(ctx); CLOSESOCK(fd);
+    return INT64_C(-1);
+  }
+  return raw;
+}
+#else
+static int64_t sock_connect_tls(const char* host, int64_t port) {
+  (void)host; (void)port;
+  fprintf(stderr, "sock.connect_tls: TLS not built (define without TERSE_NO_TLS and link -lssl -lcrypto)\n");
+  return INT64_C(-1);
+}
+#endif
+
 static char* sock_recv_all(int64_t fd) {
   sock_t s = (sock_t)(intptr_t)fd;
 #ifdef _WIN32
@@ -289,6 +406,12 @@ static char* sock_recv_all(int64_t fd) {
   size_t cap = 8192, n = 0;
   char* buf = (char*)malloc(cap);
   if (!buf) { char* e = (char*)arena_alloc(1); e[0]=0; return e; }
+#ifndef TERSE_NO_TLS
+  int ti = terse_tls_find(s);
+  SSL *ssl = (ti >= 0) ? terse_tls_slots[ti].ssl : NULL;
+#else
+  void *ssl = NULL;
+#endif
   for (;;) {
     if (n + 2048 >= cap) {
       cap *= 2;
@@ -296,7 +419,15 @@ static char* sock_recv_all(int64_t fd) {
       if (!nb) break;
       buf = nb;
     }
-    int got = (int)recv(s, buf + n, (int)(cap - n - 1), 0);
+    int got;
+#ifndef TERSE_NO_TLS
+    if (ssl) {
+      got = SSL_read(ssl, buf + n, (int)(cap - n - 1));
+    } else
+#endif
+    {
+      got = (int)recv(s, buf + n, (int)(cap - n - 1), 0);
+    }
     if (got <= 0) break;
     n += (size_t)got;
     buf[n] = 0;
