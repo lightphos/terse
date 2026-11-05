@@ -1,0 +1,25 @@
+// Non-blocking HTTP demo (cnx.nhttp + sock.nb_srv)
+//   python3 compiler/tersec.py build src/nhttp_srv.te -o out/nhttp_srv -f
+//   ./out/nhttp_srv
+//
+//   curl -s http://127.0.0.1:8766/
+//   curl -s http://127.0.0.1:8766/api
+//   curl -s -X POST -d 'hi' http://127.0.0.1:8766/echo
+
+use cnx.nhttp
+
+fn handle(r: Req) -> Res {
+  if r.get() {
+    "/" => ret nhttp.success("hello nonblock\n", "text/plain; charset=utf-8")
+    "/api" => ret nhttp.success("{\"ok\":true,\"mode\":\"nb\"}\n", "application/json; charset=utf-8")
+  }
+  if r.post() {
+    "/echo" => ret nhttp.success(r.body + "\n", "text/plain; charset=utf-8")
+  }
+  ret nhttp.fail(Status.not_found, "not found\n", "text/plain; charset=utf-8")
+}
+
+go {
+  pr("nhttp non-blocking on :8766 (GET / /api  POST /echo)")
+  nhttp.srv(8766, handle)
+}

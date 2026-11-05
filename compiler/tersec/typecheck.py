@@ -6,7 +6,7 @@ import copy
 
 from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
-    Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
+    Binary, Unary, AwaitExpr, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
     Block, ListLit, MapLit, Index, SliceExpr, FnDecl, TrapExpr, TupleLit, TupleLetExpr,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
@@ -509,6 +509,8 @@ class TypeChecker:
                     return 'f32'
                 return 'long'
             return 'bool' if e.op in ('==','!=','<','>','<=','>=','&&','||') else 'long'
+        if isinstance(e, AwaitExpr):
+            return self.check(e.value)
         if isinstance(e, Unary): return self.check(e.expr)
         if isinstance(e, RetExpr):
             if e.value is not None:

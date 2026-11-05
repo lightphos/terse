@@ -124,10 +124,10 @@ clean:
 wzone:
 	find . -name "*Zone*" -exec rm {} \;
 
-zipit:
+zit:
 	cd .. && zip -r terse.zip terse -x "terse/.venv/*" -x "terse/.vscode/*" -x "terse/vscode-terse/*" -x "terse/.git*/*" -x "terse/.claude/*"
 
-unzipit:
+uzit:
 	cd .. && unzip -o terse-refactored.zip
 
 srv:

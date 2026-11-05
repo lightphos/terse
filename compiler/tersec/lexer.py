@@ -68,6 +68,8 @@ class TT(Enum):
     COMPOSE = auto()
     UNDERSCORE = auto()
     QUESTION = auto()
+    ASYNC = auto()
+    AWAIT = auto()
 
 
 KW = {
@@ -211,6 +213,12 @@ class Lexer:
                 self.adv()
                 self.adv()
                 self.toks.append(Tok(TT.PIPEGT, '|>', ln, cl))
+            elif c == '~' and self.p(1) == '~':
+                self.adv(); self.adv()
+                self.toks.append(Tok(TT.ASYNC, '~~', ln, cl))
+            elif c == '~':
+                self.adv()
+                self.toks.append(Tok(TT.AWAIT, '~', ln, cl))
             elif c == '>' and self.p(1) == '>':
                 self.adv()
                 self.adv()

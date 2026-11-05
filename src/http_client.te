@@ -1,0 +1,16 @@
+// HTTP client demo — call a REST API
+//   Terminal 1: python3 compiler/tersec.py build src/nhttp_srv.te -o out/nhttp_srv -f && ./out/nhttp_srv
+//   Terminal 2: python3 compiler/tersec.py build src/http_client.te -o out/http_client -f && ./out/http_client
+
+use cnx.http
+
+go {
+  val r1 = http.get("http://127.0.0.1:8766/")
+  pr(fmt("GET / => ", r1.status, " ", r1.body))
+
+  val r2 = http.get("http://127.0.0.1:8766/api")
+  pr(fmt("GET /api => ", r2.status, " ", r2.body))
+
+  val r3 = http.post("http://127.0.0.1:8766/echo", "hello rest", "text/plain")
+  pr(fmt("POST /echo => ", r3.status, " ", r3.body))
+}

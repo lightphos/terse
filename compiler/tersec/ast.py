@@ -54,6 +54,11 @@ class Binary(Expr):
 
 
 @dataclass
+class AwaitExpr(Expr):
+    value: Expr
+
+
+@dataclass
 class Unary(Expr):
     op: str
     expr: Expr
@@ -193,6 +198,7 @@ class FnDecl:
     external_lib: bool = False
     type_params: List[str] = field(default_factory=list)
     type_param_bounds: dict = field(default_factory=dict)
+    is_async: bool = False
 
 
 @dataclass

@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -143,6 +144,7 @@ static void terse_err(const char *message) {
   #include <unistd.h>
   #include <sys/socket.h>
   #include <netinet/in.h>
+#include <netdb.h>
   #include <arpa/inet.h>
   #include <signal.h>
   typedef int sock_t;
@@ -244,6 +246,234 @@ static int64_t sock_close(int64_t fd) {
 #endif
   CLOSESOCK(s);
   return INT64_C(0);
+}
+
+/* TCP client connect. host: hostname or dotted IP. returns fd or -1. */
+static int64_t sock_connect(const char* host, int64_t port) {
+  sock_init();
+#ifndef _WIN32
+  signal(SIGPIPE, SIG_IGN);
+#endif
+  if (!host || !*host) return INT64_C(-1);
+  char portbuf[16];
+  snprintf(portbuf, sizeof(portbuf), "%lld", (long long)port);
+  struct addrinfo hints, *res = NULL, *rp;
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  int gai = getaddrinfo(host, portbuf, &hints, &res);
+  if (gai != 0 || !res) return INT64_C(-1);
+  sock_t fd = (sock_t)SOCK_ERR;
+  for (rp = res; rp; rp = rp->ai_next) {
+    fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+    if (fd == (sock_t)SOCK_ERR) continue;
+    if (connect(fd, rp->ai_addr, (int)rp->ai_addrlen) == 0) break;
+    CLOSESOCK(fd);
+    fd = (sock_t)SOCK_ERR;
+  }
+  freeaddrinfo(res);
+  if (fd == (sock_t)SOCK_ERR) return INT64_C(-1);
+  return (int64_t)(intptr_t)fd;
+}
+
+/* Read until connection close or buffer full (for HTTP client responses). */
+static char* sock_recv_all(int64_t fd) {
+  sock_t s = (sock_t)(intptr_t)fd;
+#ifdef _WIN32
+  DWORD tv = 10000;
+  setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+#else
+  struct timeval tv; tv.tv_sec = 10; tv.tv_usec = 0;
+  setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+#endif
+  size_t cap = 8192, n = 0;
+  char* buf = (char*)malloc(cap);
+  if (!buf) { char* e = (char*)arena_alloc(1); e[0]=0; return e; }
+  for (;;) {
+    if (n + 2048 >= cap) {
+      cap *= 2;
+      char* nb = (char*)realloc(buf, cap);
+      if (!nb) break;
+      buf = nb;
+    }
+    int got = (int)recv(s, buf + n, (int)(cap - n - 1), 0);
+    if (got <= 0) break;
+    n += (size_t)got;
+    buf[n] = 0;
+    /* stop early if headers+body complete */
+    char* sep = strstr(buf, "\r\n\r\n");
+    if (sep) {
+      int content_length = -1;
+      char* cl = strstr(buf, "Content-Length:");
+      if (!cl) cl = strstr(buf, "content-length:");
+      if (cl) sscanf(cl, "%*[^:]: %d", &content_length);
+      int header_len = (int)(sep - buf) + 4;
+      if (content_length >= 0 && (int)n >= header_len + content_length) break;
+      /* no content-length: keep reading until peer closes or timeout */
+    }
+  }
+  buf[n] = 0;
+  char* out = (char*)arena_alloc(n + 1);
+  if (out) { memcpy(out, buf, n + 1); }
+  free(buf);
+  if (!out) { char* e = (char*)arena_alloc(1); e[0]=0; return e; }
+  return out;
+}
+
+
+
+/* --- non-blocking multi-connection HTTP (select) --- */
+#ifndef SOCK_NB_AGAIN
+#define SOCK_NB_AGAIN (-2)
+#endif
+
+static void sock_set_nonblock(sock_t s) {
+#ifdef _WIN32
+  u_long mode = 1;
+  ioctlsocket(s, FIONBIO, &mode);
+#else
+  int fl = fcntl(s, F_GETFL, 0);
+  if (fl >= 0) fcntl(s, F_SETFL, fl | O_NONBLOCK);
+#endif
+}
+
+static int64_t sock_listen_nb(int64_t port) {
+  int64_t fd = sock_listen(port);
+  sock_set_nonblock((sock_t)(intptr_t)fd);
+  return fd;
+}
+
+static int64_t sock_accept_nb(int64_t listen_fd) {
+  sock_t srv = (sock_t)(intptr_t)listen_fd;
+  sock_t cli = accept(srv, NULL, NULL);
+  if (cli == (sock_t)SOCK_ERR) {
+#ifdef _WIN32
+    int e = WSAGetLastError();
+    if (e == WSAEWOULDBLOCK) return SOCK_NB_AGAIN;
+#else
+    if (errno == EAGAIN || errno == EWOULDBLOCK) return SOCK_NB_AGAIN;
+#endif
+    return INT64_C(-1);
+  }
+  sock_set_nonblock(cli);
+  return (int64_t)(intptr_t)cli;
+}
+
+typedef char* (*sock_nb_handler_fn)(const char* raw);
+
+typedef struct {
+  sock_t fd;
+  char* in;
+  int in_cap;
+  int in_n;
+  char* out;
+  int out_off;
+  int out_len;
+  int st; /* 0=read 1=write */
+  int active;
+} SockNbConn;
+
+#define SOCK_NB_MAX 64
+#define SOCK_NB_IN_CAP 16384
+
+static int sock_nb_request_complete(const char* buf, int n) {
+  char* sep = strstr(buf, "\r\n\r\n");
+  if (!sep) return 0;
+  int header_len = (int)(sep - buf) + 4;
+  int content_length = 0;
+  const char* cl = strstr(buf, "Content-Length:");
+  if (cl) sscanf(cl, "Content-Length: %d", &content_length);
+  return n >= header_len + content_length;
+}
+
+/* Concurrent non-blocking HTTP server. handler(raw_request) -> full response bytes. */
+static void sock_nb_srv(int64_t port, sock_nb_handler_fn handler) {
+  int64_t lfd = sock_listen_nb(port);
+  sock_t listen_s = (sock_t)(intptr_t)lfd;
+  SockNbConn* conns = (SockNbConn*)calloc(SOCK_NB_MAX, sizeof(SockNbConn));
+  if (!conns) { fprintf(stderr, "sock.nb_srv: oom\n"); exit(1); }
+  fprintf(stderr, "sock.nb_srv non-blocking on :%lld\n", (long long)port);
+  for (;;) {
+    fd_set rfds, wfds;
+    FD_ZERO(&rfds); FD_ZERO(&wfds);
+    FD_SET(listen_s, &rfds);
+    sock_t maxfd = listen_s;
+    for (int i = 0; i < SOCK_NB_MAX; i++) {
+      if (!conns[i].active) continue;
+      if (conns[i].st == 0) FD_SET(conns[i].fd, &rfds);
+      else FD_SET(conns[i].fd, &wfds);
+      if (conns[i].fd > maxfd) maxfd = conns[i].fd;
+    }
+    struct timeval tv; tv.tv_sec = 1; tv.tv_usec = 0;
+    int rc = select((int)maxfd + 1, &rfds, &wfds, NULL, &tv);
+    if (rc < 0) continue;
+    if (FD_ISSET(listen_s, &rfds)) {
+      for (;;) {
+        int64_t c = sock_accept_nb(lfd);
+        if (c == SOCK_NB_AGAIN || c < 0) break;
+        int slot = -1;
+        for (int i = 0; i < SOCK_NB_MAX; i++) if (!conns[i].active) { slot = i; break; }
+        if (slot < 0) { CLOSESOCK((sock_t)(intptr_t)c); break; }
+        conns[slot].fd = (sock_t)(intptr_t)c;
+        conns[slot].in = (char*)malloc(SOCK_NB_IN_CAP);
+        conns[slot].in_cap = SOCK_NB_IN_CAP;
+        conns[slot].in_n = 0;
+        if (conns[slot].in) conns[slot].in[0] = 0;
+        conns[slot].out = NULL;
+        conns[slot].out_off = 0;
+        conns[slot].out_len = 0;
+        conns[slot].st = 0;
+        conns[slot].active = 1;
+      }
+    }
+    for (int i = 0; i < SOCK_NB_MAX; i++) {
+      if (!conns[i].active) continue;
+      if (conns[i].st == 0 && FD_ISSET(conns[i].fd, &rfds)) {
+        if (!conns[i].in) { CLOSESOCK(conns[i].fd); conns[i].active = 0; continue; }
+        int space = conns[i].in_cap - 1 - conns[i].in_n;
+        if (space <= 0) { free(conns[i].in); CLOSESOCK(conns[i].fd); conns[i].active = 0; continue; }
+        int got = (int)recv(conns[i].fd, conns[i].in + conns[i].in_n, space, 0);
+        if (got <= 0) {
+#ifdef _WIN32
+          int e = WSAGetLastError();
+          if (e == WSAEWOULDBLOCK) continue;
+#else
+          if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+#endif
+          free(conns[i].in); conns[i].in = NULL; CLOSESOCK(conns[i].fd); conns[i].active = 0; continue;
+        }
+        conns[i].in_n += got;
+        conns[i].in[conns[i].in_n] = 0;
+        if (sock_nb_request_complete(conns[i].in, conns[i].in_n)) {
+          char* resp = handler(conns[i].in);
+          if (!resp) resp = (char*)"HTTP/1.1 500 Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+          conns[i].out = resp;
+          conns[i].out_len = (int)strlen(resp);
+          conns[i].out_off = 0;
+          conns[i].st = 1;
+        }
+      } else if (conns[i].st == 1 && FD_ISSET(conns[i].fd, &wfds)) {
+        int left = conns[i].out_len - conns[i].out_off;
+        if (left <= 0) { CLOSESOCK(conns[i].fd); conns[i].active = 0; continue; }
+        int k = (int)send(conns[i].fd, conns[i].out + conns[i].out_off, (size_t)left, 0);
+        if (k <= 0) {
+#ifdef _WIN32
+          int e = WSAGetLastError();
+          if (e == WSAEWOULDBLOCK) continue;
+#else
+          if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+#endif
+          CLOSESOCK(conns[i].fd); conns[i].active = 0; continue;
+        }
+        conns[i].out_off += k;
+        if (conns[i].out_off >= conns[i].out_len) {
+          free(conns[i].in); conns[i].in = NULL;
+          CLOSESOCK(conns[i].fd);
+          conns[i].active = 0;
+        }
+      }
+    }
+  }
 }
 
 typedef struct { int64_t *d; int64_t n; } List;

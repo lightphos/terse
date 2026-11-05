@@ -1,5 +1,5 @@
 // Optional package: use http
-// Types + parse/format + srv on host sock.*  (client later)
+// Types + parse/format + srv/client on host sock.*
 
 use std.str
 
@@ -117,4 +117,132 @@ pub fn srv(port: long, handler: fn(Req) -> Res) {
     sock.send(c, format_response(rs))
     sock.close(c)
   }
+}
+
+// --- HTTP client (REST) ---
+
+pub rec ClientRes {
+  status: long,
+  body: str,
+  ctype: str
+}
+
+fn parse_url(url: str) -> {str: str} {
+  var host = "127.0.0.1"
+  var port = "80"
+  var path = "/"
+  var rest = url
+  if str.has(rest, "://") {
+    val parts = str.split(rest, "://")
+    if len(parts) > 1 { rest = parts[1] }
+  }
+  if str.has(rest, "/") {
+    val parts = str.split(rest, "/")
+    host = parts[0]
+    path = "/"
+    if len(parts) > 1 {
+      var i = 1
+      lp i < len(parts) {
+        if i > 1 { path = path + "/" }
+        path = path + parts[i]
+        i = i + 1
+      }
+    }
+  } else {
+    host = rest
+    path = "/"
+  }
+  if str.has(host, ":") {
+    val hp = str.split(host, ":")
+    host = hp[0]
+    if len(hp) > 1 { port = hp[1] }
+  }
+  ret { "host": host, "port": port, "path": path }
+}
+
+fn parse_client_res(raw: str) -> ClientRes {
+  var status: long = 0
+  var body = ""
+  var ctype = "text/plain"
+  if len(raw) == 0 {
+    ret ClientRes { status: 0, body: "", ctype: ctype }
+  }
+  if str.has(raw, "\r\n\r\n") {
+    val parts = str.split(raw, "\r\n\r\n")
+    val head = parts[0]
+    if len(parts) > 1 { body = parts[1] }
+    val lines = str.split(head, "\r\n")
+    if len(lines) > 0 {
+      val bits = str.split(lines[0], " ")
+      if len(bits) > 1 { status = parse(bits[1]) }
+    }
+    var i = 1
+    lp i < len(lines) {
+      val line = lines[i]
+      if str.starts(line, "Content-Type:") {
+        val cparts = str.split(line, ":")
+        if len(cparts) > 1 { ctype = str.trim(cparts[1]) }
+      }
+      if str.starts(line, "content-type:") {
+        val cparts = str.split(line, ":")
+        if len(cparts) > 1 { ctype = str.trim(cparts[1]) }
+      }
+      i = i + 1
+    }
+  } else {
+    body = raw
+  }
+  ret ClientRes { status: status, body: body, ctype: ctype }
+}
+
+fn format_request(method: str, path: str, host: str, body: str, ctype: str) -> str {
+  val n = len(body)
+  if n > 0 {
+    ret fmt(
+      method, " ", path, " HTTP/1.1\r\n",
+      "Host: ", host, "\r\n",
+      "Content-Type: ", ctype, "\r\n",
+      "Content-Length: ", n, "\r\n",
+      "Connection: close\r\n\r\n",
+      body
+    )
+  }
+  ret fmt(
+    method, " ", path, " HTTP/1.1\r\n",
+    "Host: ", host, "\r\n",
+    "Connection: close\r\n\r\n"
+  )
+}
+
+// url e.g. "http://127.0.0.1:8766/api" or "127.0.0.1:8766/api"
+pub fn request(method: str, url: str, body: str, ctype: str) -> ClientRes {
+  val u = parse_url(url)
+  val host = u["host"]
+  val path = u["path"]
+  val port = parse(u["port"])
+  val fd = sock.connect(host, port)
+  if fd < 0 {
+    ret ClientRes { status: 0, body: "connect failed", ctype: "text/plain" }
+  }
+  val req = format_request(method, path, host, body, ctype)
+  sock.send(fd, req)
+  val raw = sock.recv_all(fd)
+  sock.close(fd)
+  ret parse_client_res(raw)
+}
+
+pub fn get(url: str) -> ClientRes {
+  ret request("GET", url, "", "text/plain")
+}
+
+pub fn post(url: str, body: str, ctype: str) -> ClientRes {
+  ret request("POST", url, body, ctype)
+}
+
+pub fn put(url: str, body: str, ctype: str) -> ClientRes {
+  ret request("PUT", url, body, ctype)
+}
+
+pub fn delete(url: str) -> ClientRes {
+  ret request("DELETE", url, "", "text/plain")
 }

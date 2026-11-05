@@ -7,7 +7,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from .lexer import TT, Tok, Lexer
 from .ast import (
     TypeNode, Param, Expr, IntLit, FloatLit, BoolLit, StrLit, Var,
-    Binary, Unary, Call, Member, IfExpr, TernaryExpr, LetExpr,
+    Binary, Unary, AwaitExpr, Call, Member, IfExpr, TernaryExpr, LetExpr,
     RetExpr, JumpExpr, Lambda, LoopExpr, ForInExpr, AssignExpr,
     Block, ListLit, MapLit, Index, SliceExpr, FnDecl, TrapExpr, TupleLit, TupleLetExpr,
     RecDecl, TraitDecl, MethodDecl, UseDecl, RecordLit, EnumVariantDecl,
@@ -425,6 +425,8 @@ class CodeGen:
                     cmp = f"(!{cmp})"
                 return cmp, "bool"
             return f"({l} {e.op} {r})", ("bool" if e.op in ('==','!=','<','>','<=','>=','&&','||') else "long")
+        if isinstance(e, AwaitExpr):
+            return self.gen_expr(e.value)
         if isinstance(e, Unary):
             x, _ = self.gen_expr(e.expr)
             return f"({e.op}{x})", "long"
@@ -838,6 +840,14 @@ class CodeGen:
                 if f == 'close' and e.args:
                     a, _ = self.gen_expr(e.args[0])
                     return f"sock_close({a})", "long"
+                if f == 'connect' and len(e.args) >= 2:
+                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                    return f"sock_connect({a}, {b})", "long"
+                if f in ('recv_all', 'recvall') and e.args:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"sock_recv_all({a})", "str"
+                if f in ('nb_srv', 'nb_serve') and len(e.args) >= 2:
+                    return self.gen_sock_nb_srv(e)
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'gcc' and e.func.field == 'compile':
                 source, _ = self.gen_expr(e.args[0])
@@ -1366,6 +1376,51 @@ class CodeGen:
         return "INT64_C(0)", "long"
 
 
+
+
+
+    def gen_sock_nb_srv(self, e: Call):
+        """sock.nb_srv(port, handler) — non-blocking HTTP.
+        handler may be a local fn-param (fn(Req)->Res) or a known global.
+        """
+        port_c, _ = self.gen_expr(e.args[0])
+        h = e.args[1]
+        self.lam_n += 1
+        n = self.lam_n
+        wrap = f"__nb_http_wrap_{n}"
+        slot = f"__nb_http_handler_{n}"
+        parse_n = fmt_n = None
+        for name, cname in self.known.items():
+            base = name.split('.')[-1] if isinstance(name, str) else name
+            if base == 'parse_req' or name.endswith('parse_req'):
+                parse_n = cname
+            if base == 'format_response' or name.endswith('format_response'):
+                fmt_n = cname
+        if isinstance(h, Var):
+            hc, ht = self.gen_expr(h)
+        else:
+            hc, ht = self.gen_expr(h)
+        # Prefer typed Req/Res wrap when helpers are available
+        if parse_n and fmt_n:
+            self.extra.append(
+                f"static Res (*{slot})(Req) = NULL;\n"
+                f"static char* {wrap}(const char* raw) {{\n"
+                f"  Req rq = {parse_n}((char*)raw);\n"
+                f"  Res rs = {slot}(rq);\n"
+                f"  return (char*){fmt_n}(rs);\n"
+                f"}}\n"
+            )
+            return (
+                f"({{ {slot} = (Res(*)(Req))({hc}); "
+                f"sock_nb_srv({port_c}, {wrap}); INT64_C(0); }})",
+                "long",
+            )
+        self.extra.append(
+            f"static char* {wrap}(const char* raw) {{\n"
+            f"  return ((char*(*)(const char*))({hc}))(raw);\n"
+            f"}}\n"
+        )
+        return f"(sock_nb_srv({port_c}, {wrap}), INT64_C(0))", "long"
 
 
     def gen_fn(self, f: FnDecl):
