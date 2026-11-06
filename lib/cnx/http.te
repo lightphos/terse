@@ -29,19 +29,25 @@ pub rec Res {
   ctype: str
 }
 
+pub rec Rsp {
+  status: Status,
+  body: str,
+  ctype: str
+}
+
 pub fn Req.get() -> str =  self.method == "GET" ? self.path : ""
 pub fn Req.post() -> str =  self.method == "POST" ? self.path : ""
 
 
-pub fn success(body: str, ctype: str) -> Res {
-  ret Res { status: Status.ok, body: body, ctype: ctype }
+pub fn success(body: str, ctype: str) -> Rsp {
+  ret Rsp { status: Status.ok, body: body, ctype: ctype }
 }
 
-pub fn fail(status: Status, body: str, ctype: str) -> Res {
-  ret Res { status: status, body: body, ctype: ctype }
+pub fn fail(status: Status, body: str, ctype: str) -> Rsp {
+  ret Rsp { status: status, body: body, ctype: ctype }
 }
 
-pub fn format_response(r: Res) -> str {
+pub fn formatRsp(r: Res) -> str {
   val code = 500
   val reason = "Error"
   if r.status == Status.ok { code = 200; reason = "OK" }
@@ -64,7 +70,12 @@ pub fn format_response(r: Res) -> str {
   )
 }
 
-pub fn parse_req(raw: str) -> Req {
+pub fn formatResponse(r: Rsp) -> str {
+  val rr = Res { status: r.status, body: r.body, ctype: r.ctype }
+  ret formatRsp(rr)
+}
+
+pub fn parseReq(raw: str) -> Req {
   val method = "GET"
   val path = "/"
   val query = ""
@@ -101,8 +112,8 @@ pub fn parse_req(raw: str) -> Req {
   ret Req { method: method, path: path, query: query, body: body }
 }
 
-// Blocks forever. handler: fn(Req) -> Res
-pub fn srv(port: long, handler: fn(Req) -> Res) {
+// Blocks forever. handler: fn(Req) -> Rsp
+pub fn srv(port: long, handler: fn(Req) -> Rsp) {
   val ls = sock.listen(port)
   lp true {
     val c = sock.accept(ls)
@@ -112,22 +123,16 @@ pub fn srv(port: long, handler: fn(Req) -> Res) {
       sock.close(c)
       skip
     }
-    val rq = parse_req(raw)
+    val rq = parseReq(raw)
     val rs = handler(rq)
-    sock.send(c, format_response(rs))
+    sock.send(c, formatResponse(rs))
     sock.close(c)
   }
 }
 
 // --- HTTP client (REST) ---
 
-pub rec ClientRes {
-  status: long,
-  body: str,
-  ctype: str
-}
-
-fn parse_url(url: str) -> {str: str} {
+fn parseUrl(url: str) -> {str: str} {
   var host = "127.0.0.1"
   var port = "80"
   var path = "/"
@@ -148,7 +153,7 @@ fn parse_url(url: str) -> {str: str} {
       lp i < len(parts) {
         if i > 1 { path = path + "/" }
         path = path + parts[i]
-        i = i + 1
+        i += 1
       }
     }
   } else {
@@ -163,12 +168,12 @@ fn parse_url(url: str) -> {str: str} {
   ret { "host": host, "port": port, "path": path, "scheme": scheme }
 }
 
-fn parse_client_res(raw: str) -> ClientRes {
-  var status: long = 0
+fn parseClientRsp(raw: str) -> Rsp {
+  var status = Status.ok
   var body = ""
   var ctype = "text/plain"
   if len(raw) == 0 {
-    ret ClientRes { status: 0, body: "", ctype: ctype }
+    ret Rsp { status: Status.no_content, body: "", ctype: ctype }
   }
   if str.has(raw, "\r\n\r\n") {
     val parts = str.split(raw, "\r\n\r\n")
@@ -177,10 +182,12 @@ fn parse_client_res(raw: str) -> ClientRes {
     val lines = str.split(head, "\r\n")
     if len(lines) > 0 {
       val bits = str.split(lines[0], " ")
-      if len(bits) > 1 { status = parse(bits[1]) }
+      if len(bits) > 1 {
+        status = statusFromCode(parse(bits[1]))
+      }
     }
     var i = 1
-    lp i < len(lines) {
+    lp i = 1; i < len(lines); i += 1 {
       val line = lines[i]
       if str.starts(line, "Content-Type:") {
         val cparts = str.split(line, ":")
@@ -190,15 +197,28 @@ fn parse_client_res(raw: str) -> ClientRes {
         val cparts = str.split(line, ":")
         if len(cparts) > 1 { ctype = str.trim(cparts[1]) }
       }
-      i = i + 1
     }
   } else {
     body = raw
   }
-  ret ClientRes { status: status, body: body, ctype: ctype }
+  ret Rsp { status: status, body: body, ctype: ctype }
 }
 
-fn format_request(method: str, path: str, host: str, body: str, ctype: str) -> str {
+fn statusFromCode(code: long) -> Status {
+  if code == 200 { ret Status.ok }
+  if code == 201 { ret Status.created }
+  if code == 204 { ret Status.no_content }
+  if code == 400 { ret Status.bad_request }
+  if code == 401 { ret Status.unauthorized }
+  if code == 403 { ret Status.forbidden }
+  if code == 404 { ret Status.not_found }
+  if code == 405 { ret Status.method_not_allowed }
+  if code == 409 { ret Status.conflict }
+  if code == 500 { ret Status.server_error }
+  ret Status.ok
+}
+
+fn formatRequest(method: str, path: str, host: str, body: str, ctype: str, headers: str) -> str {
   val n = len(body)
   if n > 0 {
     ret fmt(
@@ -206,6 +226,7 @@ fn format_request(method: str, path: str, host: str, body: str, ctype: str) -> s
       "Host: ", host, "\r\n",
       "Content-Type: ", ctype, "\r\n",
       "Content-Length: ", n, "\r\n",
+      headers,
       "Connection: close\r\n\r\n",
       body
     )
@@ -213,13 +234,15 @@ fn format_request(method: str, path: str, host: str, body: str, ctype: str) -> s
   ret fmt(
     method, " ", path, " HTTP/1.1\r\n",
     "Host: ", host, "\r\n",
+    headers,
     "Connection: close\r\n\r\n"
   )
 }
 
 // url e.g. "http://127.0.0.1:8766/api" or "127.0.0.1:8766/api"
-pub fn request(method: str, url: str, body: str, ctype: str) -> ClientRes {
-  val u = parse_url(url)
+// headers must contain complete CRLF-terminated HTTP header lines.
+pub fn requestWithHeaders(method: str, url: str, body: str, ctype: str, headers: str) -> Rsp {
+  val u = parseUrl(url)
   val host = u["host"]
   val path = u["path"]
   val port = parse(u["port"])
@@ -230,27 +253,31 @@ pub fn request(method: str, url: str, body: str, ctype: str) -> ClientRes {
     sock.connect(host, port)
   }
   if fd < 0 {
-    ret ClientRes { status: 0, body: "connect failed", ctype: "text/plain" }
+    ret Rsp { status: Status.no_content, body: "connect failed", ctype: "text/plain" }
   }
-  val req = format_request(method, path, host, body, ctype)
+  val req = formatRequest(method, path, host, body, ctype, headers)
   sock.send(fd, req)
   val raw = sock.recv_all(fd)
   sock.close(fd)
-  ret parse_client_res(raw)
+  ret parseClientRsp(raw)
 }
 
-pub fn get(url: str) -> ClientRes {
+pub fn request(method: str, url: str, body: str, ctype: str) -> Rsp {
+  ret requestWithHeaders(method, url, body, ctype, "")
+}
+
+pub fn get(url: str) -> Rsp {
   ret request("GET", url, "", "text/plain")
 }
 
-pub fn post(url: str, body: str, ctype: str) -> ClientRes {
-  ret request("POST", url, body, ctype)
+pub fn post(url: str, body: str, ctype: str = "application/json", headers: str = "") -> Rsp {
+  ret requestWithHeaders("POST", url, body, ctype, headers)
 }
 
-pub fn put(url: str, body: str, ctype: str) -> ClientRes {
+pub fn put(url: str, body: str, ctype: str) -> Rsp {
   ret request("PUT", url, body, ctype)
 }
 
-pub fn delete(url: str) -> ClientRes {
+pub fn delete(url: str) -> Rsp {
   ret request("DELETE", url, "", "text/plain")
 }

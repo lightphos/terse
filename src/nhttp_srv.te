@@ -7,19 +7,20 @@
 //   curl -s -X POST -d 'hi' http://127.0.0.1:8766/echo
 
 use cnx.nhttp
+use cnx.http
 
-fn handle(r: Req) -> Res {
+fn handle(r: Req) -> Rsp {
   if r.get() {
-    "/" => ret nhttp.success("hello nonblock\n", "text/plain; charset=utf-8")
-    "/api" => ret nhttp.success("{\"ok\":true,\"mode\":\"nb\"}\n", "application/json; charset=utf-8")
+    "/" => ret http.success("hello nonblock\n", "text/plain; charset=utf-8")
+    "/api" => ret http.success("{\"ok\":true,\"mode\":\"nb\"}\n", "application/json; charset=utf-8")
   }
   if r.post() {
-    "/echo" => ret nhttp.success(r.body + "\n", "text/plain; charset=utf-8")
+    "/echo" => ret http.success(r.body + "\n", "text/plain; charset=utf-8")
   }
-  ret nhttp.fail(Status.not_found, "not found\n", "text/plain; charset=utf-8")
+  ret http.fail(Status.not_found, "not found\n", "text/plain; charset=utf-8")
 }
 
 go {
   pr("nhttp non-blocking on :8766 (GET / /api  POST /echo)")
-  nhttp.srv(8766, handle)
+  nhttp.asrv(8766, handle)
 }

@@ -3,26 +3,26 @@ use std.str
 use cnx.http
 
 fn t_parse_get() {
-  val q = parse_req("GET /hello HTTP/1.1\r\nHost: x\r\n\r\n")
+  val q = parseReq("GET /hello HTTP/1.1\r\nHost: x\r\n\r\n")
   tst.eq(q.method, "GET")
   tst.eq(q.path, "/hello")
 }
 
 fn t_parse_query() {
-  val q = parse_req("GET /x?a=1 HTTP/1.1\r\n\r\n")
+  val q = parseReq("GET /x?a=1 HTTP/1.1\r\n\r\n")
   tst.eq(q.path, "/x")
   tst.eq(q.query, "a=1")
 }
 
 fn t_format() {
   val r = Res { status: Status.ok, body: "hi", ctype: "text/plain" }
-  val s = format_response(r)
+  val s = formatRsp(r)
   tst.eq(str.has(s, "200"), true)
   tst.eq(str.has(s, "hi"), true)
 }
 
 fn t_not_found_status() {
   val r = Res { status: Status.not_found, body: "x", ctype: "text/plain" }
-  val s = format_response(r)
+  val s = formatRsp(r)
   tst.eq(str.has(s, "404"), true)
 }

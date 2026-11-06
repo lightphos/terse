@@ -10,7 +10,7 @@
 
 use cnx.http
 
-fn handle(r: Req) -> Res {
+fn handle(r: Req) -> Rsp {
 
   if r.get() {
     "/" => ret http.success("hello world\n", "text/plain; charset=utf-8")

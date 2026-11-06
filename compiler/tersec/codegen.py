@@ -1393,16 +1393,35 @@ class CodeGen:
         wrap = f"__nb_http_wrap_{n}"
         slot = f"__nb_http_handler_{n}"
         parse_n = fmt_n = None
+        parse_req_n = format_rsp_n = None
         for name, cname in self.known.items():
             base = name.split('.')[-1] if isinstance(name, str) else name
             if base == 'parse_req' or name.endswith('parse_req'):
                 parse_n = cname
             if base == 'format_response' or name.endswith('format_response'):
                 fmt_n = cname
+            if base == 'parseReq' or name.endswith('parseReq'):
+                parse_req_n = cname
+            if base == 'formatResponse' or name.endswith('formatResponse'):
+                format_rsp_n = cname
         if isinstance(h, Var):
             hc, ht = self.gen_expr(h)
         else:
             hc, ht = self.gen_expr(h)
+        if parse_req_n and format_rsp_n:
+            self.extra.append(
+                f"static Rsp (*{slot})(Req) = NULL;\n"
+                f"static char* {wrap}(const char* raw) {{\n"
+                f"  Req rq = {parse_req_n}((char*)raw);\n"
+                f"  Rsp rs = {slot}(rq);\n"
+                f"  return (char*){format_rsp_n}(rs);\n"
+                f"}}\n"
+            )
+            return (
+                f"({{ {slot} = (Rsp(*)(Req))({hc}); "
+                f"sock_nb_srv({port_c}, {wrap}); INT64_C(0); }})",
+                "long",
+            )
         # Prefer typed Req/Res wrap when helpers are available
         if parse_n and fmt_n:
             self.extra.append(
