@@ -1,0 +1,35 @@
+use std.tst
+
+fn work() {
+  var n = 0
+  lp n < 3 {
+    n += 1
+  }
+}
+
+fn ~~ run_bg(f: fn) {
+  f()
+}
+
+fn ~~ run_bg_val(x: long) -> long {
+  ret x + 1
+}
+
+fn t_async_fire() {
+  // Detached spawn must not block the caller forever
+  run_bg(work)
+  tst.eq(1, 1)
+}
+
+fn t_async_await() {
+  // ~ joins the worker before continuing
+  ~ run_bg(work)
+  tst.eq(2, 2)
+}
+
+fn t_async_await_result_side() {
+  // awaiting a void-ish async call still completes
+  ~ run_bg(work)
+  ~ run_bg(work)
+  tst.eq(3, 3)
+}

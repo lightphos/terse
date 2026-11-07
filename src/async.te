@@ -1,0 +1,27 @@
+// Async: ~~ fn runs on a background thread.
+//   callAsync(...)     — fire-and-forget (detached)
+//   ~ callAsync(...)   — wait until finished (join)
+//
+//   python3 compiler/tersec.py build src/async.te -o out/async -f && ./out/async
+
+fn loopy(id: str) {
+  lp l = 0; l < 5; l += 1 {
+    npr(fmt(id, " ", l, " "))
+  }
+  pr("")
+}
+
+// Async entry takes the label and runs loopy on a worker thread
+fn ~~ callAsync(id: str) {
+  loopy(id)
+  pr("async done")
+}
+
+go {
+  pr("starting async")
+  callAsync("async")
+  pr("after async")
+  pr("starting async waiting")
+  ~ callAsync("await")
+  pr("await done")
+}

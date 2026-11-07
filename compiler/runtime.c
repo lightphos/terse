@@ -9,7 +9,10 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <sched.h>
 #include <string.h>
+#include <time.h>
 #include <setjmp.h>
 #ifdef _WIN32
 #include <process.h>
@@ -607,6 +610,132 @@ static void sock_nb_srv(int64_t port, sock_nb_handler_fn handler) {
   }
 }
 
+
+
+/* --- time --- */
+static int64_t terse_time_now_ms(void) {
+  struct timespec ts;
+#if defined(CLOCK_REALTIME)
+  if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return INT64_C(0);
+  return (int64_t)ts.tv_sec * INT64_C(1000) + (int64_t)ts.tv_nsec / INT64_C(1000000);
+#else
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return (int64_t)tv.tv_sec * INT64_C(1000) + (int64_t)tv.tv_usec / INT64_C(1000);
+#endif
+}
+
+static int64_t terse_time_now_s(void) {
+  return terse_time_now_ms() / INT64_C(1000);
+}
+
+/* Monotonic milliseconds (for durations; not wall-clock). */
+static int64_t terse_time_mono_ms(void) {
+  struct timespec ts;
+#if defined(CLOCK_MONOTONIC)
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return INT64_C(0);
+  return (int64_t)ts.tv_sec * INT64_C(1000) + (int64_t)ts.tv_nsec / INT64_C(1000000);
+#else
+  return terse_time_now_ms();
+#endif
+}
+
+static int64_t terse_time_sleep_ms(int64_t ms) {
+  if (ms <= 0) return INT64_C(0);
+  struct timespec ts;
+  ts.tv_sec = (time_t)(ms / 1000);
+  ts.tv_nsec = (long)((ms % 1000) * 1000000L);
+  while (nanosleep(&ts, &ts) != 0) {
+    /* EINTR: continue with remaining */
+  }
+  return INT64_C(0);
+}
+
+/* Format unix seconds with strftime. fmt e.g. "%Y-%m-%d %H:%M:%S". */
+static char* terse_time_fmt(const char* fmt, int64_t unix_s) {
+  if (!fmt) fmt = "%Y-%m-%d %H:%M:%S";
+  time_t t = (time_t)unix_s;
+  struct tm tmv;
+#if defined(_WIN32)
+  localtime_s(&tmv, &t);
+#else
+  localtime_r(&t, &tmv);
+#endif
+  char buf[128];
+  size_t n = strftime(buf, sizeof(buf), fmt, &tmv);
+  if (n == 0) { char* e = (char*)arena_alloc(1); e[0]=0; return e; }
+  char* out = (char*)arena_alloc(n + 1);
+  memcpy(out, buf, n + 1);
+  return out;
+}
+
+/* Parse "YYYY-MM-DD HH:MM:SS" (local) → unix seconds, or -1 on failure. */
+static int64_t terse_time_parse(const char* s) {
+  if (!s || !*s) return INT64_C(-1);
+  int Y=0,M=0,D=0,h=0,m=0,sec=0;
+  if (sscanf(s, "%d-%d-%d %d:%d:%d", &Y, &M, &D, &h, &m, &sec) < 3)
+    return INT64_C(-1);
+  struct tm tmv;
+  memset(&tmv, 0, sizeof(tmv));
+  tmv.tm_year = Y - 1900;
+  tmv.tm_mon = M - 1;
+  tmv.tm_mday = D;
+  tmv.tm_hour = h;
+  tmv.tm_min = m;
+  tmv.tm_sec = sec;
+  tmv.tm_isdst = -1;
+  time_t t = mktime(&tmv);
+  if (t == (time_t)-1) return INT64_C(-1);
+  return (int64_t)t;
+}
+
+/* --- async (pthread) --- */
+typedef void* (*terse_async_fn)(void*);
+
+#define TERSE_ASYNC_MAX 64
+static pthread_t terse_async_threads[TERSE_ASYNC_MAX];
+static int terse_async_n = 0;
+static pthread_mutex_t terse_async_mu = PTHREAD_MUTEX_INITIALIZER;
+
+/* Join all fire-and-forget tasks still outstanding (call before exit). */
+static void terse_async_drain(void) {
+  pthread_mutex_lock(&terse_async_mu);
+  int n = terse_async_n;
+  pthread_t copy[TERSE_ASYNC_MAX];
+  for (int i = 0; i < n; i++) copy[i] = terse_async_threads[i];
+  terse_async_n = 0;
+  pthread_mutex_unlock(&terse_async_mu);
+  for (int i = 0; i < n; i++) {
+    pthread_join(copy[i], NULL);
+  }
+}
+
+static int64_t terse_async_spawn(terse_async_fn entry, void* arg, int wait) {
+  pthread_t th;
+  if (pthread_create(&th, NULL, entry, arg) != 0) {
+    fprintf(stderr, "async spawn failed\n");
+    free(arg);
+    return INT64_C(-1);
+  }
+  if (wait) {
+    pthread_join(th, NULL);
+  } else {
+    /* Track so main can drain before exit — do not detach. */
+    pthread_mutex_lock(&terse_async_mu);
+    if (terse_async_n < TERSE_ASYNC_MAX) {
+      terse_async_threads[terse_async_n++] = th;
+    } else {
+      pthread_mutex_unlock(&terse_async_mu);
+      fprintf(stderr, "async: too many outstanding tasks, joining\n");
+      pthread_join(th, NULL);
+      return INT64_C(0);
+    }
+    pthread_mutex_unlock(&terse_async_mu);
+    sched_yield();
+  }
+  return INT64_C(0);
+}
+
 typedef struct { int64_t *d; int64_t n; } List;
 
 static List list_new(int64_t n) {
@@ -937,7 +1066,13 @@ static void print_list_str(List_str L) {
 
 static void print_i64(int64_t x) { _terse_did_print = 1; printf("%lld\n", (long long)x); }
 static void print_bool(bool v) { _terse_did_print = 1; printf(v ? "true\n" : "false\n"); }
-static void print_str(const char* s) { _terse_did_print = 1; printf("%s\n", s); }
+static void print_str(const char* s) { _terse_did_print = 1; printf("%s\n", s ? s : ""); fflush(stdout); }
+static void print_str_nnl(const char* s) {
+  _terse_did_print = 1;
+  fputs(s ? s : "", stdout);
+  fflush(stdout);
+}
+
 
 /* -- std.tst assertion helpers (continue on failure; count via _tst_failures) -- */
 static int64_t _tst_failures = 0;

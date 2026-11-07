@@ -666,16 +666,18 @@ def ensure_module_lib(module_file, use_path, verbose=False, force=False):
     return lib_obj_path(key) if os.path.isfile(lib_obj_path(key)) else None
 
 def _tls_link_flags():
-    """OpenSSL link flags (HTTPS client). Override with TERSE_NO_TLS=1."""
-    if os.environ.get("TERSE_NO_TLS", "").strip() in ("1", "true", "yes"):
-        return ["-DTERSE_NO_TLS"]
+    """OpenSSL + pthread link flags. TERSE_NO_TLS=1 skips OpenSSL."""
     flags = []
-    # compile-time: always include TLS unless disabled
-    # link:
-    if sys.platform == "win32":
+    if os.environ.get("TERSE_NO_TLS", "").strip() in ("1", "true", "yes"):
+        flags.append("-DTERSE_NO_TLS")
+    elif sys.platform == "win32":
         flags += ["-lssl", "-lcrypto", "-lws2_32", "-lcrypt32"]
     else:
         flags += ["-lssl", "-lcrypto"]
+    if sys.platform != "win32":
+        flags.append("-lpthread")
+    else:
+        flags.append("-lpthread")  # mingw often provides pthread
     return flags
 
 

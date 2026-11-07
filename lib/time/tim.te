@@ -1,0 +1,67 @@
+// Time helpers — use time.tim  or  use time  (via host time.* / tim.*)
+//
+// Wall clock is unix milliseconds unless noted.
+// mono() is monotonic ms for measuring intervals.
+
+// Blocking sleep for ms milliseconds.
+pub fn wait(ms: long) {
+  time.sleep(ms)
+}
+
+// Unix epoch milliseconds (wall clock).
+pub fn now() -> long {
+  ret time.now()
+}
+
+// Unix epoch seconds.
+pub fn now_s() -> long {
+  ret time.now_s()
+}
+
+// Monotonic milliseconds (for elapsed durations).
+pub fn mono() -> long {
+  ret time.mono()
+}
+
+// Elapsed ms since start (mono-based).
+pub fn elapsed(start: long) -> long {
+  ret time.mono() - start
+}
+
+// Format unix seconds with strftime-style pattern.
+//   tim.fmt("%Y-%m-%d %H:%M:%S", tim.now_s())
+pub fn fmt(pattern: str, unix_s: long) -> str {
+  ret time.fmt(pattern, unix_s)
+}
+
+// Parse local "YYYY-MM-DD HH:MM:SS" → unix seconds (-1 on failure).
+pub fn parse(s: str) -> long {
+  ret time.parse(s)
+}
+
+// Run f after waiting ms (blocking).
+pub fn after(ms: long, f: fn) {
+  time.sleep(ms)
+  f()
+}
+
+// Run f only if still before deadline_ms (mono deadline).
+pub fn before(deadline_mono: long, f: fn) {
+  if time.mono() < deadline_mono {
+    f()
+  }
+}
+
+// Wait until local wall time "YYYY-MM-DD HH:MM:SS", then run f.
+// If the time is in the past, runs f immediately.
+pub fn at(when: str, f: fn) {
+  val target = time.parse(when)
+  if target < 0 {
+    ret
+  }
+  val cur = time.now_s()
+  if target > cur {
+    time.sleep((target - cur) * 1000)
+  }
+  f()
+}

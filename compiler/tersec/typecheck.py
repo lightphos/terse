@@ -428,11 +428,11 @@ class TypeChecker:
             if hasattr(self, 'fixes') and e.name in self.fixes: return self.fixes[e.name]
             if e.name in self.enums: return e.name
             if e.name in self.funcs or e.name in (
-                'pr','len','env','str','push','substr','arg',
+                'pr','npr','pr_','len','env','str','push','substr','arg',
                 'keys','values','has','up','low','trim','split','join',
                 'parse','starts','ends','map','fmt','err'
             ): return 'fn'
-            if e.name in ('http','db','tst','fs','gcc','io','sock','arena'): return 'mod'
+            if e.name in ('http','db','tst','fs','gcc','io','sock','arena','time','tim'): return 'mod'
             self.errors.append(f"unknown name '{e.name}'")
             return 'long'
         if isinstance(e, Member):
@@ -546,7 +546,7 @@ class TypeChecker:
         if isinstance(e, Call):
             if isinstance(e.func, Var):
                 n = e.func.name
-                builtins = {'pr','len','env','str','push','substr','arg','keys','values',
+                builtins = {'pr','npr','pr_','len','env','str','push','substr','arg','keys','values',
                             'has','up','low','trim','split','join','parse','starts','ends','map','fmt','err'}
                 if (n not in self.funcs and n not in builtins and n not in self.env
                         and n not in getattr(self, 'generic_fns', {})):
@@ -679,7 +679,7 @@ class TypeChecker:
                     return self.funcs[n][1]
                 if n == 'fmt':
                     return 'str'
-                if n == 'pr':
+                if n in ('pr', 'npr', 'pr_'):
                     return 'long'
             if isinstance(e.func, Member):
                 recv_t = self.check(e.func.obj)
@@ -741,6 +741,14 @@ class TypeChecker:
                 if e.func.field in ('in', 'read_text'): return 'str'
                 if e.func.field in ('out', 'write_text', 'append', 'append_text'): return 'long'
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name in ('time', 'tim'):
+                f = e.func.field
+                if f in ('now', 'now_ms', 'now_s', 'unix', 'mono', 'mono_ms',
+                         'sleep', 'wait', 'parse'):
+                    return 'long'
+                if f in ('fmt', 'format'):
+                    return 'str'
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'str':
                 f = e.func.field
                 if f == 'len':
@@ -761,7 +769,7 @@ class TypeChecker:
                     return 'long'
             if isinstance(e.func, Var):
                 n = e.func.name
-                if n == 'pr':
+                if n in ('pr', 'npr', 'pr_'):
                     return 'long'
                 if n in ( 'env', 'substr', 'arg', 'trim', 'up', 'low', 'join', 'parse'):
                     return 'str' if n != 'parse' else 'long'

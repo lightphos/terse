@@ -44,6 +44,8 @@ class CodeGen:
         self.lam_n = 0
         self.extra = []
         self.known = {}
+        self.async_fns = set()  # names of ~~ async functions
+        self._await_depth = 0
         self.tmp = 0
         self.env = {}
         self.var_aliases = {}
@@ -426,7 +428,11 @@ class CodeGen:
                 return cmp, "bool"
             return f"({l} {e.op} {r})", ("bool" if e.op in ('==','!=','<','>','<=','>=','&&','||') else "long")
         if isinstance(e, AwaitExpr):
-            return self.gen_expr(e.value)
+            self._await_depth += 1
+            try:
+                return self.gen_expr(e.value)
+            finally:
+                self._await_depth -= 1
         if isinstance(e, Unary):
             x, _ = self.gen_expr(e.expr)
             return f"({e.op}{x})", "long"
@@ -610,7 +616,8 @@ class CodeGen:
                 for p2 in parts[1:]:
                     expr = f'str_concat({expr}, {p2})'
                 return expr, 'str'
-            if isinstance(e.func, Var) and e.func.name == 'pr':
+            if isinstance(e.func, Var) and e.func.name in ('pr', 'npr', 'pr_'):
+                _pr_nnl = e.func.name in ('npr', 'pr_')
                 a, at = self.gen_expr(e.args[0])
                 if at.startswith('tuple__'):
                     fields = self.tuple_types[at]
@@ -637,7 +644,7 @@ class CodeGen:
                         "long",
                     )
                 if at == 'str':
-                    return f"(print_str({a}), INT64_C(0))", "long"
+                    return (f"(print_str_nnl({a}), INT64_C(0))", "long") if _pr_nnl else (f"(print_str({a}), INT64_C(0))", "long")
                 if at in ('list', 'List', 'list_long'):
                     return f"(print_list_i64({a}), INT64_C(0))", "long"
                 if at == 'list_str':
@@ -652,6 +659,8 @@ class CodeGen:
                     return f"(print_bool({a}), INT64_C(0))", "long"
                 if at in self.record_field_types:
                     return f"(print_{at}({a}), INT64_C(0))", "long"
+                if _pr_nnl:
+                    return f"({{ _terse_did_print = 1; printf(\"%lld\", (long long)({a})); INT64_C(0); }})", "long"
                 return f"(print_i64({a}), INT64_C(0))", "long"
             if isinstance(e.func, Var) and e.func.name == 'map':
                 coll, ct = self.gen_expr(e.args[0])
@@ -852,6 +861,24 @@ class CodeGen:
                 if f in ('nb_srv', 'nb_serve') and len(e.args) >= 2:
                     return self.gen_sock_nb_srv(e)
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name in ('time', 'tim'):
+                f = e.func.field
+                if f in ('now', 'now_ms') and not e.args:
+                    return "terse_time_now_ms()", "long"
+                if f in ('now_s', 'unix') and not e.args:
+                    return "terse_time_now_s()", "long"
+                if f in ('mono', 'mono_ms') and not e.args:
+                    return "terse_time_mono_ms()", "long"
+                if f in ('sleep', 'wait') and e.args:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"terse_time_sleep_ms({a})", "long"
+                if f in ('fmt', 'format') and len(e.args) >= 2:
+                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
+                    return f"terse_time_fmt({a}, {b})", "str"
+                if f == 'parse' and e.args:
+                    a, _ = self.gen_expr(e.args[0])
+                    return f"terse_time_parse({a})", "long"
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'gcc' and e.func.field == 'compile':
                 source, _ = self.gen_expr(e.args[0])
                 output, _ = self.gen_expr(e.args[1])
@@ -1004,11 +1031,18 @@ class CodeGen:
                     if resolved:
                         pts, cname, ret_ty = resolved
                         args = []
+                        arg_ctypes = []
                         for (ac, at), expected in zip(typed_args, pts):
                             if expected in self.interface_methods and at in self.record_field_types and (expected, at) in self.interface_helpers:
                                 args.append(f"{self.interface_helpers[(expected, at)]}( &({ac}) )")
                             else:
                                 args.append(ac)
+                            arg_ctypes.append(self.c_type(expected if expected else at))
+                        fname = e.func.name if isinstance(e.func, Var) else None
+                        if fname in getattr(self, 'async_fns', ()) or cname in getattr(self, 'async_fns', ()):
+                            wait = getattr(self, '_await_depth', 0) > 0
+                            code = self.gen_async_spawn(cname, args, arg_ctypes, wait)
+                            return code, "long"
                         return f"{cname}({', '.join(args)})", ret_ty
                 cname = self.known.get(e.func.name)
                 if cname is None and overs:
@@ -1024,6 +1058,21 @@ class CodeGen:
                             args.append(arg_code)
                 else:
                     args = [self.gen_expr(a)[0] for a in e.args]
+                # ~~ async: spawn on background thread
+                fname = e.func.name if isinstance(e.func, Var) else None
+                if fname in getattr(self, 'async_fns', ()) or cname in getattr(self, 'async_fns', ()):
+                    arg_pairs = []
+                    if param_ts:
+                        for a, expected in zip(e.args, param_ts):
+                            ac, at = self.gen_expr(a, expected)
+                            arg_pairs.append((ac, self.c_type(expected if expected else at)))
+                    else:
+                        for a in e.args:
+                            ac, at = self.gen_expr(a)
+                            arg_pairs.append((ac, self.c_type(at)))
+                    wait = getattr(self, '_await_depth', 0) > 0
+                    code = self.gen_async_spawn(cname, [p[0] for p in arg_pairs], [p[1] for p in arg_pairs], wait)
+                    return code, "long"
                 args_str = ", ".join(args)
                 return f"{cname}({args_str})", self.func_return_types.get(cname, self.func_return_types.get(e.func.name, "long"))
             fptr, ft = self.gen_expr(e.func)
@@ -1445,6 +1494,49 @@ class CodeGen:
         return f"(sock_nb_srv({port_c}, {wrap}), INT64_C(0))", "long"
 
 
+
+    def gen_async_spawn(self, cname: str, arg_codes: list, arg_ctypes: list, wait: bool) -> str:
+        """Spawn cname(args...) on a pthread; wait=True joins."""
+        pack = f"__async_pack_{cname}"
+        entry = f"__async_run_{cname}"
+        key = f"_async_emit_{cname}"
+        if not getattr(self, key, False):
+            setattr(self, key, True)
+            fields = []
+            call_args = []
+            frees = []
+            for i, ct in enumerate(arg_ctypes):
+                fields.append(f"  {ct} a{i};")
+                call_args.append(f"a->a{i}")
+                if "char" in ct:
+                    frees.append(f"  free((void*)a->a{i});")
+            fields_s = "\n".join(fields) if fields else "  int64_t _pad;"
+            call_s = ", ".join(call_args)
+            free_s = "\n".join(frees)
+            self.extra.append(
+                f"typedef struct {{\n{fields_s}\n}} {pack};\n"
+                f"static void* {entry}(void* p) {{\n"
+                f"  {pack}* a = ({pack}*)p;\n"
+                f"  (void){cname}({call_s});\n"
+                f"{free_s}\n"
+                f"  free(a);\n"
+                f"  return NULL;\n"
+                f"}}\n"
+            )
+        tmp = self.fresh()
+        lines = [f"{pack}* {tmp} = ({pack}*)malloc(sizeof({pack}));"]
+        for i, (ac, ct) in enumerate(zip(arg_codes, arg_ctypes)):
+            if "char" in ct:
+                lines.append(f'{tmp}->a{i} = strdup({ac} ? {ac} : "");')
+            else:
+                lines.append(f"{tmp}->a{i} = {ac};")
+        if not arg_codes:
+            lines.append(f"(void){tmp};")
+        w = "1" if wait else "0"
+        lines.append(f"terse_async_spawn({entry}, {tmp}, {w});")
+        lines.append("INT64_C(0)")
+        return "({ " + " ".join(lines) + "; })"
+
     def gen_fn(self, f: FnDecl):
         cname = getattr(f, '_c_name', None) or self.known[f.name]
         pcs = []
@@ -1623,6 +1715,9 @@ class CodeGen:
                         f"duplicate overload '{f.name}({', '.join(pts)})'"
                     )
             self.known[f.name] = cname  # last wins for non-call path; calls use overloads
+            if getattr(f, 'is_async', False):
+                self.async_fns.add(f.name)
+                self.async_fns.add(cname)
             self.func_param_types[cname] = pts
             self.func_param_types[f.name] = pts  # single-overload convenience
             self.func_return_types[cname] = ret
@@ -1811,6 +1906,7 @@ class CodeGen:
                 "  terse_argc = argc;",
                 "  terse_argv = argv;",
                 f"  int64_t result = {self.known[entry_name]}();",
+                "  terse_async_drain();",
                 "  if (!_terse_did_print)",
                 '    printf("%lld\\n", (long long)result);',
                 "  return (int)result;",

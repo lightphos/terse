@@ -752,6 +752,9 @@ class Parser:
                 if self.i + 1 < len(self.toks) and self.toks[self.i + 1].t == TT.LBRACE:
                     self.adv()
                     break
+                # use path.* — stop before STAR so glob handling can see it
+                if self.cur().t == TT.DOT and self.i + 1 < len(self.toks) and self.toks[self.i + 1].t == TT.STAR:
+                    break
                 separators.append(self.adv().v)
                 segments.append(self.expect(TT.IDENT).v)
             if self.match(TT.LBRACE):
@@ -776,7 +779,12 @@ class Parser:
                 break
             symbol = None
             glob = False
-            if (segments[0] != 'std' and len(segments) >= 3
+            # use path.*  → open import (all pub names unqualified)
+            if self.match(TT.DOT) and self.i + 1 < len(self.toks) and self.toks[self.i + 1].t == TT.STAR:
+                self.adv()  # DOT
+                self.adv()  # STAR
+                glob = True
+            if not glob and (segments[0] != 'std' and len(segments) >= 3
                     and '/' not in separators):
                 symbol = segments.pop()
                 separators.pop()
@@ -793,9 +801,6 @@ class Parser:
                 explicit_alias = True
             if path.startswith('io.') or path in ('io',) or segments[0] == 'io':
                 path = 'std.' + path if not path.startswith('std.') else path
-            # Dotted paths are packages: use calc.math → lib/calc/math.te, alias math
-            # (namespace math.abs). Do not treat 2-segment paths as globs.
-            glob = False
             uses.append(UseDecl(path, alias, symbol, glob))
             if self.match(TT.COMMA):
                 self.adv(); continue
@@ -913,6 +918,10 @@ class Parser:
     def parse_fn(self, is_async=False):
         if self.match(TT.FN):
             self.adv()
+        # Allow both "~~ fn name" (is_async already set) and "fn ~~ name"
+        if self.match(TT.ASYNC):
+            self.adv()
+            is_async = True
         name_tok = self.expect(TT.IDENT)
         name = name_tok.v
         if self.match(TT.DOT):

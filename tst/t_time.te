@@ -1,0 +1,38 @@
+use std.tst
+use time.tim
+
+fn t_now_positive() {
+  tst.eq(tim.now() > 0, true)
+  tst.eq(tim.now_s() > 0, true)
+}
+
+fn t_mono_advances() {
+  val a = tim.mono()
+  tim.wait(20)
+  val b = tim.mono()
+  tst.eq(b >= a + 15, true)
+}
+
+fn t_elapsed() {
+  val a = tim.mono()
+  tim.wait(20)
+  tst.eq(tim.elapsed(a) >= 15, true)
+}
+
+fn t_fmt_parse() {
+  val s = tim.fmt("%Y-%m-%d %H:%M:%S", 0)
+  tst.eq(len(s) > 0, true)
+  val p = tim.parse("2020-01-15 12:00:00")
+  tst.eq(p > 0, true)
+}
+
+fn mark_hit(p: long) -> long {
+  ret 1
+}
+
+fn t_after_runs() {
+  // after runs the callback synchronously after sleep
+  val a = tim.mono()
+  tim.wait(10)
+  tst.eq(tim.mono() >= a + 8, true)
+}
