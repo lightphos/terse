@@ -432,7 +432,7 @@ class TypeChecker:
                 'keys','values','has','up','low','trim','split','join',
                 'parse','starts','ends','map','fmt','err'
             ): return 'fn'
-            if e.name in ('http','db','tst','fs','gcc','io','sock','arena','time','tim'): return 'mod'
+            if e.name in ('http','db','tst','fs','gcc','io','sock','arena','time','tim','async'): return 'mod'
             self.errors.append(f"unknown name '{e.name}'")
             return 'long'
         if isinstance(e, Member):
@@ -748,6 +748,9 @@ class TypeChecker:
                     return 'long'
                 if f in ('fmt', 'format'):
                     return 'str'
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'async':
+                if e.func.field == 'drain': return 'long'
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'str':
                 f = e.func.field

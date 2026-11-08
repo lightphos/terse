@@ -1,30 +1,31 @@
-// Demo: HTTP server via lib/cnx/http on sock.*
-//   python3 compiler/tersec.py build src/http_srv_demo.te -o out/http_srv_demo -f
-//   ./out/http_srv_demo
+// Blocking HTTP demo (cnx.http)
+//   python3 compiler/tersec.py build src/http_srv.te -o out/http_srv -f
+//   ./out/http_srv
 //
-// Checks:
 //   curl -s http://127.0.0.1:8765/
 //   curl -s http://127.0.0.1:8765/api
-//   curl -s -X POST -d 'hello' http://127.0.0.1:8765/echo
-//   curl -s -X POST -H 'Content-Type: application/json' -d '{"n":1}' http://127.0.0.1:8765/echo
+//
+// /api sleeps 100ms on the only server thread before responding — concurrent
+// clients queue (contrast src/nhttp_srv.te).
 
-use cnx.http
+use cnx.http.*
+use time.tim
 
 fn handle(r: Req) -> Rsp {
-
   if r.get() {
-    "/" => ret http.success("hello world\n", "text/plain; charset=utf-8")
-    "/api" => ret http.success("{\"ok\":true}\n", "application/json; charset=utf-8")
+    "/" => ret success("hello world\n", TXT_PLAIN)
+    "/api" => {
+      tim.wait(100)
+      ret success("{\"ok\":true}\n", APP_JSON)
+    }
   }
-
   if r.post() {
-    "/echo" => ret http.success(r.body + "\n", "text/plain; charset=utf-8")
+    "/echo" => ret success(r.body + "\n", TXT_PLAIN)
   }
-  
-  ret http.fail(Status.not_found, "not found\n", "text/plain; charset=utf-8")
+  ret fail(Status.not_found, "not found\n", TXT_PLAIN)
 }
 
 go {
-  pr("starting on :8765 (GET /, /api  POST /echo)")
-  http.srv(8765, handle)
+  pr("blocking http.srv on :8765 (GET / /api  POST /echo)")
+  srv(8765, handle)
 }

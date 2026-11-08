@@ -32,7 +32,7 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
 ### Keywords (reserved)
-`fn`, `val`, `var`, `fix`, `type`, `if`, `else`, `use`, `ret`, `true`, `false`, `rec`, `en`, `tr`, `self`, `pub`, `lp`, `brk`, `skip`, `go`, `pr`
+`fn`, `val`, `var`, `fix`, `type`, `if`, `else`, `use`, `ret`, `true`, `false`, `rec`, `en`, `tr`, `self`, `pub`, `lp`, `brk`, `skip`, `go`, `pr`, `npr`
 
 
 ### Literals
@@ -56,7 +56,7 @@ Lambda: `|params| body`
 - `val` = immutable binding; `var` = mutable.
 - Blocks evaluate statements in order; the **block value** is the last expression (or `0` if empty).
 - `ret expr` / `ret` always **return from the enclosing function** (not from the block alone). A bare last expression yields the block value without exiting the function.
-- `pr(x)` prints a line and returns `0`. If `pr` ran, `main` does not print an extra numeric result.
+- `pr(x)` prints a line; `npr(x)` prints without a trailing newline and returns `0`. If `pr` ran, `main` does not print an extra numeric result.
 - `+` on strings concatenates; `str + long` / `long + str` convert the number.
 - `+` on lists: concat (`[str]`/`[long]`) or push one element (`list + elem`).
 

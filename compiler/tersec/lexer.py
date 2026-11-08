@@ -70,10 +70,13 @@ class TT(Enum):
     QUESTION = auto()
     ASYNC = auto()
     AWAIT = auto()
+    PR = auto()
+    NPR = auto()
 
 
 KW = {
     'fn': TT.FN, 'if': TT.IF, 'else': TT.ELSE, 'lp': TT.LP,
+    'pr': TT.PR, 'npr': TT.NPR,
     'true': TT.TRUE, 'false': TT.FALSE, 'return': TT.RETURN, 'ret': TT.RET,
     'use': TT.USE, 'type': TT.TYPE, 'go': TT.GO, 'tr': TT.TR, 'pub': TT.PUB,
     'en': TT.EN,

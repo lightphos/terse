@@ -1,0 +1,108 @@
+// HTTP bench — sequential rate vs concurrent capacity
+//
+// Modes (optional args):
+//   ./out/bench                         # default: par both servers 1000×50
+//   ./out/bench seq  url n
+//   ./out/bench par  url n [conc]
+//   ./out/bench conc url n
+//
+// With servers running:
+//   ./out/http_srv &   # :8765 blocking, /api sleeps 100ms in-request
+//   ./out/nhttp_srv &  # :8766 non-block, /api queues work on ~~ worker
+
+use cnx.http
+use time.tim
+
+fn ~~ fetch(url: str) {
+  val r = http.get(url)
+  if r.status == Status.ok { }
+}
+
+fn warmup(url: str) -> bool {
+  val w = http.get(url)
+  if w.status != Status.ok {
+    pr(fmt("warmup failed status=", w.status, " body=", w.body))
+    ret false
+  }
+  ret true
+}
+
+fn benchSeq(url: str, n: long) {
+  pr(fmt("seq  ", url, " n=", n))
+  if !warmup(url) { ret }
+  val t0 = tim.mono()
+  var ok = 0
+  var fail = 0
+  var i = 0
+  lp i < n {
+    val r = http.get(url)
+    if r.status == Status.ok { ok += 1 } else { fail += 1 }
+    i += 1
+  }
+  val ms = tim.elapsed(t0)
+  val rps = ms > 0 ? (ok * 1000) / ms : 0
+  pr(fmt(url, " ok=", ok, " fail=", fail, " ms=", ms, " req/s=", rps))
+}
+
+fn benchPar(url: str, n: long, conc: long) {
+  pr(fmt("par  ", url, " n=", n, " conc=", conc))
+  if !warmup(url) { ret }
+  if conc < 1 { conc = 1 }
+
+  val t0 = tim.mono()
+  var done = 0
+  lp done < n {
+    var wave = n - done
+    if wave > conc { wave = conc }
+    var f = 0
+    lp f < wave {
+      fetch(url)
+      f += 1
+    }
+    async.drain()
+    done += wave
+  }
+  val ms = tim.elapsed(t0)
+  val rps = ms > 0 ? (n * 1000) / ms : 0
+  pr(fmt(url, " completed=", n, " conc=", conc, " ms=", ms, " req/s≈", rps))
+}
+
+fn benchConc(url: str, n: long) {
+  pr(fmt("conc ", url, " in_flight=", n))
+  if !warmup(url) { ret }
+  val t0 = tim.mono()
+  var j = 0
+  lp j < n {
+    fetch(url)
+    j += 1
+  }
+  async.drain()
+  val ms = tim.elapsed(t0)
+  val rps = ms > 0 ? (n * 1000) / ms : 0
+  pr(fmt(url, " in_flight=", n, " ms=", ms, " req/s≈", rps))
+}
+
+go {
+  var mode = "both"
+  var url = "http://127.0.0.1:8766/api"
+  var n: long = 1000
+  var conc: long = 50
+  if len(arg(1)) > 0 { mode = arg(1) }
+  if len(arg(2)) > 0 { url = arg(2) }
+  if len(arg(3)) > 0 { n = parse(arg(3)) }
+  if len(arg(4)) > 0 { conc = parse(arg(4)) }
+
+  if mode == "seq" {
+    benchSeq(url, n)
+  } else if mode == "conc" {
+    benchConc(url, n)
+  } else if mode == "par" {
+    benchPar(url, n, conc)
+  } else {
+    // Default: compare nhttp vs blocking on /api
+    pr("--- nhttp :8766/api (~~ background work) ---")
+    benchPar("http://127.0.0.1:8766/api", n, conc)
+    pr("--- blocking :8765/api (in-request sleep) ---")
+    benchPar("http://127.0.0.1:8765/api", n, conc)
+  }
+}

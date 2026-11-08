@@ -3,6 +3,9 @@
 
 use std.str
 
+pub fix TXT_PLAIN = "text/plain; charset=utf-8"
+pub fix APP_JSON = "application/json; charset=utf-8"
+
 en Status {
   ok = 200,
   created = 201,

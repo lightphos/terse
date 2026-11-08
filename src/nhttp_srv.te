@@ -6,20 +6,30 @@
 //   curl -s http://127.0.0.1:8766/api
 //   curl -s -X POST -d 'hi' http://127.0.0.1:8766/echo
 //
-// use cnx.http.*  — open import: success / fail unqualified
+// /api schedules slow work on a ~~ worker and returns immediately so the
+// select loop stays free under concurrent load (see src/bench.te).
 
 use cnx.nhttp
 use cnx.http.*
+use time.tim
+
+// Worker-thread sleep — do not ~ from the handler (would block select).
+~~ fn slow_job() {
+  tim.wait(100)
+}
 
 fn handle(r: Req) -> Rsp {
   if r.get() {
-    "/" => ret success("hello nonblock\n", "text/plain; charset=utf-8")
-    "/api" => ret success("{\"ok\":true,\"mode\":\"nb\"}\n", "application/json; charset=utf-8")
+    "/" => ret success("hello nonblock\n", TXT_PLAIN)
+    "/api" => {
+      slow_job()
+      ret success("{\"ok\":true,\"queued\":true}\n", APP_JSON)
+    }
   }
   if r.post() {
-    "/echo" => ret success(r.body + "\n", "text/plain; charset=utf-8")
+    "/echo" => ret success(r.body + "\n", TXT_PLAIN)
   }
-  ret fail(Status.not_found, "not found\n", "text/plain; charset=utf-8")
+  ret fail(Status.not_found, "not found\n", TXT_PLAIN)
 }
 
 go {

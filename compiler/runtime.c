@@ -1,7 +1,7 @@
 
 #if !defined(_WIN32)
+#define _GNU_SOURCE
 #define _DEFAULT_SOURCE
-#define _POSIX_C_SOURCE 200112L
 #endif
 #include <stdint.h>
 #include <stdbool.h>
@@ -40,6 +40,7 @@ static ArenaChunk *_arena_head = NULL;
 static size_t _arena_chunk_cap = 256u * 1024u;
 static size_t _arena_bytes = 0;   /* bytes handed to clients */
 static size_t _arena_chunks = 0;
+static pthread_mutex_t _arena_mu = PTHREAD_MUTEX_INITIALIZER;
 
 static void *arena_sys_malloc(size_t n) {
   void *p = malloc(n);
@@ -48,6 +49,8 @@ static void *arena_sys_malloc(size_t n) {
 }
 
 static void *arena_alloc(size_t n) {
+  pthread_mutex_lock(&_arena_mu);
+
   if (n == 0) n = 1;
   /* header (size_t) + payload, 8-byte aligned */
   size_t need = sizeof(size_t) + n;
@@ -66,8 +69,10 @@ static void *arena_alloc(size_t n) {
   _arena_bytes += n;
   size_t *hdr = (size_t *)base;
   *hdr = n;
-  return (void *)(hdr + 1);
+  { void *_ar = ((void *)(hdr + 1)); pthread_mutex_unlock(&_arena_mu); return _ar; }
+
 }
+
 
 static void *arena_calloc(size_t count, size_t size) {
   size_t total = count * size;
@@ -507,7 +512,7 @@ typedef struct {
   int active;
 } SockNbConn;
 
-#define SOCK_NB_MAX 64
+#define SOCK_NB_MAX 256
 #define SOCK_NB_IN_CAP 16384
 
 static int sock_nb_request_complete(const char* buf, int n) {
@@ -692,10 +697,32 @@ static int64_t terse_time_parse(const char* s) {
 /* --- async (pthread) --- */
 typedef void* (*terse_async_fn)(void*);
 
-#define TERSE_ASYNC_MAX 64
+#define TERSE_ASYNC_MAX 2048
 static pthread_t terse_async_threads[TERSE_ASYNC_MAX];
 static int terse_async_n = 0;
 static pthread_mutex_t terse_async_mu = PTHREAD_MUTEX_INITIALIZER;
+
+/* Drop threads that have already finished (non-blocking). Must hold terse_async_mu. */
+static void terse_async_reap_unlocked(void) {
+  int w = 0;
+  for (int i = 0; i < terse_async_n; i++) {
+    pthread_t th = terse_async_threads[i];
+#if defined(__linux__)
+    int rj = pthread_tryjoin_np(th, NULL);
+    if (rj == 0) continue;           /* finished and joined */
+    if (rj == EBUSY) {
+      terse_async_threads[w++] = th; /* still running */
+      continue;
+    }
+    /* other error: keep to join later in drain */
+    terse_async_threads[w++] = th;
+#else
+    /* No tryjoin: keep all until drain */
+    terse_async_threads[w++] = th;
+#endif
+  }
+  terse_async_n = w;
+}
 
 /* Join all fire-and-forget tasks still outstanding (call before exit). */
 static void terse_async_drain(void) {
@@ -720,17 +747,16 @@ static int64_t terse_async_spawn(terse_async_fn entry, void* arg, int wait) {
   if (wait) {
     pthread_join(th, NULL);
   } else {
-    /* Track so main can drain before exit — do not detach. */
     pthread_mutex_lock(&terse_async_mu);
+    terse_async_reap_unlocked();
     if (terse_async_n < TERSE_ASYNC_MAX) {
       terse_async_threads[terse_async_n++] = th;
-    } else {
       pthread_mutex_unlock(&terse_async_mu);
-      fprintf(stderr, "async: too many outstanding tasks, joining\n");
-      pthread_join(th, NULL);
-      return INT64_C(0);
+    } else {
+      /* Table still full of live tasks: detach so we do not block the spawner. */
+      pthread_mutex_unlock(&terse_async_mu);
+      pthread_detach(th);
     }
-    pthread_mutex_unlock(&terse_async_mu);
     sched_yield();
   }
   return INT64_C(0);

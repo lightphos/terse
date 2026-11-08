@@ -16,6 +16,13 @@ from .ast import (
 
 
 class Parser:
+    def _name_token(self):
+        """IDENT or reserved call names pr / npr."""
+        if self.match(TT.PR, TT.NPR, TT.IDENT):
+            tok = self.adv()
+            return tok.v if tok.v is not None else (tok.t.name.lower())
+        return None
+
     def __init__(self, toks):
         self.toks, self.i = toks, 0
 
@@ -484,6 +491,9 @@ class Parser:
         if self.match(TT.FALSE): self.adv(); return BoolLit(False)
         if self.match(TT.STRING): self.adv(); return StrLit(t.v)
         if self.match(TT.IDENT): self.adv(); return Var(t.v)
+        if self.match(TT.PR, TT.NPR):
+            nt = self.adv()
+            return Var(nt.v if nt.v else ('pr' if nt.t == TT.PR else 'npr'))
         if self.match(TT.RET): return self.parse_ret()
         if self.match(TT.BRK):
             self.adv()

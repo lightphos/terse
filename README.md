@@ -8,25 +8,12 @@ Prerequisites:
 - Python 3.12+
 - `gcc` or `clang` available on `PATH`
 
-Compile and run the built-in hello example:
-
-```bash
-python3 compiler/tersec.py build src/hi.te -o out/hi
-./out/hi
 ```
-
-Or use the Makefile shortcuts:
-
-```bash
-make run.hi dir=src
-make tst
-```
-
 Example source (`src/hi.te`):
 
 ```terse
 go {
-  val name = arg(1) == "" ? "World" : arg(1)
+  val name = arg(1) == "" ? "all" : arg(1)
   pr("Hi, " + name + "! This is terse!")
 }
 ```
@@ -34,11 +21,13 @@ go {
 ## Build commands
 
 ```bash
-# Compile a source file using the Python host compiler
+# Compile and run
 python3 compiler/tersec.py build src/hi.te -o out/hi
+./out/hi
 
-# Run a source file directly
-python3 compiler/tersec.py run src/hi.te -o out/hi
+# Makefile shortcuts
+make run.NAME dir=src
+make run.hi
 
 # Parse + typecheck only
 python3 compiler/tersec.py check src/hi.te
@@ -47,12 +36,6 @@ python3 compiler/tersec.py check src/hi.te
 make tcc
 make tcc1
 make bootstrap
-
-# Compile/run a project example under src/
-make run.NAME dir=src
-
-# Run tests under tst/
-make tst
 ```
 
 ## Project layout
@@ -70,22 +53,22 @@ vscode-terse/  VS Code extension
 ## Testing
 
 ```bash
-# Host compiler unit tests
-python3 -m unittest compiler.test_compiler -v
+# Host compiler tests
+make verify
 
-# All Terse test programs
+# All Terse tests
 make tst
 ```
 
-Tests under `tst/` are written as `t_*.te` programs and are compiled by the host compiler.
+Tests are under `tst/` and prefixed with `t_`, ie. `t_*.te`.
+
 
 ## Language docs
 
 The language design, semantics, and grammar are documented in:
 - [SPEC.md](./SPEC.md)
-- [TERSE_BNF.md](./TERSE_BNF.md)
-
-This README intentionally stays concise; implementation details and language rules live in the spec files.
+- [BNF.md](./BNF.md)
+- [BENCHMARK](./BENCH.md)
 
 ## VS Code support
 
@@ -96,7 +79,7 @@ npm run compile
 npm run package
 ```
 
-Then reload the VS Code window and use the Terse commands from the command palette.
+There after reload the VS Code window and use terse commands from the command palette.
 
 ## Status
 
@@ -139,8 +122,7 @@ Not yet implemented (but specified):
 - HTTP beyond minimal `http.srv`
 
 
-
-## Memory: bump arena
+## Memory management
 
 Generated programs allocate through a **bump arena** in `compiler/runtime.c` (linked into every binary). Lists, maps, strings, and similar runtime objects use the arena instead of per-object `malloc`/`free`.
 
@@ -207,15 +189,6 @@ arena.chunks()   // long — chunk count
 arena.reset()    // drop the arena (optional)
 ```
 
-### Tests
-
-Arena behaviour is exercised under `tst/`:
-
-- `tst/t_arena_list.te` — growing `[long]` / `[str]`
-- `tst/t_arena_map.te` — `{str:long}` / `{str:str}`
-- `tst/t_arena_globals.te` — long-lived collections and string concat
-
-Demo: `src/arena_demo.te`.
 
 ## Architecture
 

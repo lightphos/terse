@@ -879,6 +879,11 @@ class CodeGen:
                     a, _ = self.gen_expr(e.args[0])
                     return f"terse_time_parse({a})", "long"
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'async':
+                f = e.func.field
+                if f == 'drain' and not e.args:
+                    return "terse_async_drain()", "long"
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'gcc' and e.func.field == 'compile':
                 source, _ = self.gen_expr(e.args[0])
                 output, _ = self.gen_expr(e.args[1])

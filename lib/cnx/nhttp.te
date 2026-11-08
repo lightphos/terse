@@ -1,13 +1,7 @@
 // Non-blocking HTTP on sock.nb_srv (select-based concurrent connections)
 // use cnx.nhttp
 
-use std.str
 use cnx.http
-
-// Non-blocking concurrent server (host select loop).
-pub fn srv(port: long, handler: fn(Req) -> Rsp) {
-  sock.nb_srv(port, handler)
-}
 
 // Async-style API: ~~ = async fn, ~ = await (suspend points for I/O).
 // Lowered to the same non-blocking srv today; await marks I/O boundaries.
