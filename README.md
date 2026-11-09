@@ -122,6 +122,28 @@ Not yet implemented (but specified):
 - HTTP beyond minimal `http.srv`
 
 
+## Threads (`~~` / `~`)
+
+`~~` marks a thread;
+ `~` waits`.
+
+
+## Closures
+
+Lambdas capture outer locals by value:
+
+```terse
+val k = 10
+xs |> map(|n| n + k)
+```
+
+See `src/closure.te` and `tst/t_closure.te`.
+
+## Event-loop async (`~~>` / `~>`)
+
+`~~>` marks an event-loop task; `~>` suspends the connection (e.g. `~> tim.wait(100)`). Thread async remains `~~` / `~`. See `src/nhttp_srv.te`.
+
+
 ## Memory management
 
 Generated programs allocate through a **bump arena** in `compiler/runtime.c` (linked into every binary). Lists, maps, strings, and similar runtime objects use the arena instead of per-object `malloc`/`free`.
@@ -224,7 +246,3 @@ make bootstrap
 
 MIT (for this reference implementation)
 
-
-## Event-loop async (`~~>` / `~>`)
-
-`~~>` marks an event-loop task; `~>` suspends the connection (e.g. `~> tim.wait(100)`). Thread async remains `~~` / `~`. See `src/nhttp_srv.te`.

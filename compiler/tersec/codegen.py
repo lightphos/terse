@@ -103,6 +103,99 @@ class CodeGen:
         self.tmp += 1
         return f"_t{self.tmp}"
 
+    def _lambda_free_vars(self, e, bound):
+        """Names referenced in e that are not in bound (params/locals)."""
+        from .ast import (
+            Var, Lambda, Call, Member, Binary, Unary, AwaitExpr, IfExpr, TernaryExpr,
+            LetExpr, Block, ListLit, MapLit, RecordLit, RetExpr, AssignExpr, LoopExpr,
+            ForInExpr, TupleLit,
+        )
+        found = set()
+        def walk(node, bound):
+            if node is None:
+                return
+            if isinstance(node, Var):
+                if node.name not in bound:
+                    found.add(node.name)
+                return
+            if isinstance(node, Lambda):
+                b2 = set(bound)
+                for p in node.params:
+                    b2.add(p.name)
+                walk(node.body, b2)
+                return
+            if isinstance(node, LetExpr):
+                walk(node.value, bound)
+                b2 = set(bound)
+                b2.add(node.name)
+                walk(node.body, b2)
+                return
+            if isinstance(node, Block):
+                b2 = set(bound)
+                for st in node.stmts:
+                    if isinstance(st, LetExpr):
+                        walk(st.value, b2)
+                        b2.add(st.name)
+                        if st.body is not None:
+                            walk(st.body, b2)
+                    else:
+                        walk(st, b2)
+                return
+            if isinstance(node, Call):
+                walk(node.func, bound)
+                for a in node.args:
+                    walk(a, bound)
+                return
+            if isinstance(node, Member):
+                walk(node.obj, bound)
+                return
+            if isinstance(node, Binary):
+                walk(node.left, bound); walk(node.right, bound); return
+            if isinstance(node, Unary):
+                walk(node.expr, bound); return
+            if isinstance(node, AwaitExpr):
+                walk(node.value, bound); return
+            if isinstance(node, IfExpr):
+                walk(node.cond, bound); walk(node.then, bound)
+                if node.els is not None:
+                    walk(node.els, bound)
+                return
+            if isinstance(node, TernaryExpr):
+                walk(node.cond, bound); walk(node.then, bound); walk(node.els, bound); return
+            if isinstance(node, RetExpr) and node.value is not None:
+                walk(node.value, bound); return
+            if isinstance(node, AssignExpr):
+                walk(node.target, bound); walk(node.value, bound); return
+            if isinstance(node, ListLit):
+                for it in node.items: walk(it, bound)
+                return
+            if isinstance(node, TupleLit):
+                for it in node.items: walk(it, bound)
+                return
+            if isinstance(node, MapLit):
+                for k, v in node.entries:
+                    walk(k, bound); walk(v, bound)
+                return
+            if isinstance(node, RecordLit):
+                walk(node.ctor, bound)
+                for _, v in node.fields:
+                    walk(v, bound)
+                return
+            if isinstance(node, LoopExpr):
+                if node.init: walk(node.init, bound)
+                walk(node.cond, bound)
+                if node.post: walk(node.post, bound)
+                walk(node.body, bound)
+                return
+            if isinstance(node, ForInExpr):
+                walk(node.iterable, bound)
+                b2 = set(bound); b2.add(node.var)
+                walk(node.body, b2)
+                return
+        walk(e, set(bound))
+        return sorted(found)
+
+
 
     def type_name(self, typ):
         if typ is None:
@@ -326,7 +419,7 @@ class CodeGen:
             if e.name in self.var_aliases:
                 return self.var_aliases[e.name], self.env.get(e.name, "long")
             if e.name in self.known:
-                return f"(void*){self.known[e.name]}", "fn"
+                return f"((void*)terse_clos_new((void*){self.known[e.name]}, NULL))", "fn"
             if e.name in self.env:
                 return e.name, self.env[e.name]
             # top-level fix constant
@@ -439,7 +532,7 @@ class CodeGen:
                         name = v.func.field
                     if name in ('wait', 'sleep') and v.args:
                         ms, _ = self.gen_expr(v.args[0])
-                        return f"(_terse_loop_wait_ms = ({ms}), INT64_C(0))", "long"
+                        return f"terse_loop_await_wait({ms})", "long"
             self._await_depth += 1
             try:
                 return self.gen_expr(e.value)
@@ -676,7 +769,6 @@ class CodeGen:
                 return f"(print_i64({a}), INT64_C(0))", "long"
             if isinstance(e.func, Var) and e.func.name == 'map':
                 coll, ct = self.gen_expr(e.args[0])
-                # Preserve list width: list_int → List_i32, etc.
                 if isinstance(ct, str) and ct.startswith('list_'):
                     elem = ct[5:]
                     lt = f"list_{elem}"
@@ -686,21 +778,27 @@ class CodeGen:
                 c_list = f"List_{rt}"
                 c_elem = self.c_type(elem)
                 fn_e = e.args[1]
-                if isinstance(fn_e, Var) and fn_e.name in self.known:
-                    fn_c = self.known[fn_e.name]
-                else:
-                    fn_c, _ = self.gen_expr(fn_e)
-                    fn_c = f"(({c_elem}(*)({c_elem})){fn_c})"
                 tmp = self.fresh()
                 idx = self.fresh()
+                if isinstance(fn_e, Var) and fn_e.name in self.known:
+                    call = f"{self.known[fn_e.name]}(__map_in.d[{idx}])"
+                else:
+                    fn_c, _ = self.gen_expr(fn_e)
+                    call = (
+                        f"({{ TerseClos *_tc = (TerseClos*)({fn_c}); {c_elem} _mr; "
+                        f"if (_tc->env) _mr = (({c_elem}(*)(void*, {c_elem}))(_tc->fn))(_tc->env, __map_in.d[{idx}]); "
+                        f"else _mr = (({c_elem}(*)({c_elem}))(_tc->fn))(__map_in.d[{idx}]); "
+                        f"_mr; }})"
+                    )
                 return (
                     f"({{ {c_list} __map_in = {coll}; {c_list} {tmp} = list_new_{rt}(__map_in.n); "
                     f"for (int64_t {idx} = 0; {idx} < __map_in.n; {idx}++) "
-                    f"{tmp}.d[{idx}] = {fn_c}(__map_in.d[{idx}]); "
+                    f"{tmp}.d[{idx}] = {call}; "
                     f"{tmp}.n = __map_in.n; "
                     f"{tmp}; }})",
                     lt
                 )
+
             
             if isinstance(e.func, Var) and e.func.name == 'len':
                 a, at = self.gen_expr(e.args[0])
@@ -895,6 +993,19 @@ class CodeGen:
                 f = e.func.field
                 if f == 'drain' and not e.args:
                     return "terse_async_drain()", "long"
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'loop':
+                if e.func.field == 'run' and e.args:
+                    # run a zero-arg ~~> or plain fn to completion (non-server)
+                    fc, _ = self.gen_expr(e.args[0])
+                    return (
+                        f"({{ TerseClos *_tc = (TerseClos*)({fc}); "
+                        f"if (_tc->env) ((int64_t(*)(void*))(_tc->fn))(_tc->env); "
+                        f"else ((int64_t(*)(void))(_tc->fn))(); "
+                        f"INT64_C(0); }})",
+                        "long",
+                    )
+
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'gcc' and e.func.field == 'compile':
                 source, _ = self.gen_expr(e.args[0])
@@ -1112,7 +1223,22 @@ class CodeGen:
                 # Heuristic: if arg is a known record, keep it
             arg_ts = ", ".join(arg_cs) if arg_cs else "void"
             ret_c = self.c_type(ret_ty)
-            return f"(({ret_c}(*)({arg_ts}))({fptr}))({args})", ret_ty
+            # TerseClos*: env NULL => plain fn; else fn(env, args...)
+            if args.strip():
+                env_call = f"(({ret_c}(*)(void*, {arg_ts}))(_tc->fn))(_tc->env, {args})"
+                plain_call = f"(({ret_c}(*)({arg_ts}))(_tc->fn))({args})"
+            else:
+                env_call = f"(({ret_c}(*)(void*))(_tc->fn))(_tc->env)"
+                plain_ts = "void"
+                plain_call = f"(({ret_c}(*)(void))(_tc->fn))()"
+            return (
+                f"({{ TerseClos *_tc = (TerseClos*)({fptr}); "
+                f"{ret_c} _tr; "
+                f"if (_tc->env) _tr = {env_call}; "
+                f"else _tr = {plain_call}; "
+                f"_tr; }})",
+                ret_ty,
+            )
         if isinstance(e, IfExpr):
             # Statement if/else (not C ternary) avoids pointer/integer mismatches when
             # branches have different C types (str assign vs bool assign vs list assign).
@@ -1393,24 +1519,80 @@ class CodeGen:
         if isinstance(e, Lambda):
             self.lam_n += 1
             lname = f"__lambda_{self.lam_n}"
-            # HTTP body handlers often take str body
-            ps_c = []
-            for p in e.params:
-                tn = self.type_name(p.typ) if p.typ else 'long'
-                ps_c.append(f"{self.c_type(tn)} {p.name}")
-            ps = ", ".join(ps_c) or "void"
-            # save env params
+            bound = {p.name for p in e.params}
+            free = [n for n in self._lambda_free_vars(e.body, bound)
+                    if n in self.env or n in self.var_aliases or n in self.known]
+            # drop module/builtin names that are functions
+            free = [n for n in free if n not in self.known and n not in getattr(self, 'async_fns', ())]
+            free = [n for n in free if n in self.env or n in self.var_aliases]
             old_env = self.env.copy()
             old_aliases = self.var_aliases.copy()
             for p in e.params:
                 self.env[p.name] = self.type_name(p.typ) if p.typ else 'long'
                 self.var_aliases.pop(p.name, None)
+            # captures available by name during body gen
             body, bt = self.gen_expr(e.body)
             self.env = old_env
             self.var_aliases = old_aliases
             ret_c = self.c_type(bt)
-            self.extra.append(f"static {ret_c} {lname}({ps}) {{\n  return {body};\n}}\n")
-            return f"(void*){lname}", "fn"
+            if not free:
+                ps_c = []
+                for p in e.params:
+                    tn = self.type_name(p.typ) if p.typ else 'long'
+                    ps_c.append(f"{self.c_type(tn)} {p.name}")
+                ps = ", ".join(ps_c) or "void"
+                self.extra.append(f"static {ret_c} {lname}({ps}) {{\n  return {body};\n}}\n")
+                return f"((void*)terse_clos_new((void*){lname}, NULL))", "fn"
+            # with captures: env struct + (env, params...) function
+            env_ty = f"__env_{self.lam_n}"
+            fields = []
+            fills = []
+            for n in free:
+                tn = self.env.get(n) or self.var_aliases.get(n) or 'long'
+                if not isinstance(tn, str):
+                    tn = 'long'
+                if tn == 'fn' or (isinstance(tn, str) and tn.startswith('fn')):
+                    ct = 'void*'
+                else:
+                    ct = self.c_type(tn)
+                fields.append(f"  {ct} {n};")
+                # read capture from current scope
+                if n in self.var_aliases:
+                    src = self.var_aliases[n]
+                else:
+                    src = n
+                fills.append(f"_e->{n} = ({ct})({src});")
+            # regenerate body with capture loads — re-gen with aliases to env fields
+            old_env = self.env.copy()
+            old_aliases = self.var_aliases.copy()
+            for p in e.params:
+                self.env[p.name] = self.type_name(p.typ) if p.typ else 'long'
+                self.var_aliases.pop(p.name, None)
+            for n in free:
+                tn = old_env.get(n) or 'long'
+                self.env[n] = tn if isinstance(tn, str) else 'long'
+                self.var_aliases[n] = f"((_env)->{n})"
+            body, bt = self.gen_expr(e.body)
+            ret_c = self.c_type(bt)
+            self.env = old_env
+            self.var_aliases = old_aliases
+            ps_c = [f"{env_ty} *_env"]
+            for p in e.params:
+                tn = self.type_name(p.typ) if p.typ else 'long'
+                ps_c.append(f"{self.c_type(tn)} {p.name}")
+            ps = ", ".join(ps_c)
+            self.extra.append(
+                f"typedef struct {{\n" + "\n".join(fields) + f"\n}} {env_ty};\n"
+                f"static {ret_c} {lname}({ps}) {{\n  return {body};\n}}\n"
+            )
+            tmp = self.fresh()
+            fill_s = " ".join(fills).replace("_e->", f"{tmp}->")
+            return (
+                f"({{ {env_ty} *{tmp} = ({env_ty}*)arena_alloc(sizeof({env_ty})); "
+                f"{fill_s} "
+                f"(void*)terse_clos_new((void*){lname}, {tmp}); }})",
+                "fn",
+            )
         if isinstance(e, Block):
             if not e.stmts: return "INT64_C(0)", "long"
             if len(e.stmts) == 1:
@@ -1496,7 +1678,7 @@ class CodeGen:
                 f"}}\n"
             )
             return (
-                f"({{ {slot} = (Rsp(*)(Req))({hc}); "
+                f"({{ TerseClos *_h = (TerseClos*)({hc}); {slot} = (Rsp(*)(Req))(_h ? _h->fn : NULL); "
                 f"sock_nb_srv({port_c}, {wrap}); INT64_C(0); }})",
                 "long",
             )
@@ -1527,8 +1709,212 @@ class CodeGen:
 
 
 
+
+    def _expr_has_loop_await(self, e):
+        from .ast import (
+            AwaitExpr, Block, Call, Binary, Unary, IfExpr, TernaryExpr, LetExpr,
+            RetExpr, AssignExpr, LoopExpr, ForInExpr, ListLit, Member, Lambda,
+        )
+        if e is None:
+            return False
+        if isinstance(e, AwaitExpr) and getattr(e, 'loop', False):
+            return True
+        for attr in ('body', 'value', 'expr', 'then', 'els', 'cond', 'left', 'right',
+                     'func', 'target', 'init', 'post', 'iterable'):
+            child = getattr(e, attr, None)
+            if child is not None and self._expr_has_loop_await(child):
+                return True
+        for attr in ('stmts', 'args', 'items'):
+            for child in getattr(e, attr, None) or []:
+                if self._expr_has_loop_await(child):
+                    return True
+        return False
+
+    def _await_wait_ms_code(self, e):
+        """If e is ~> wait/sleep(ms), return C code for ms; else None."""
+        from .ast import AwaitExpr, Call, Member, Var
+        if not (isinstance(e, AwaitExpr) and getattr(e, 'loop', False)):
+            return None
+        v = e.value
+        if not isinstance(v, Call):
+            return None
+        name = None
+        if isinstance(v.func, Var):
+            name = v.func.name
+        elif isinstance(v.func, Member):
+            name = v.func.field
+        if name in ('wait', 'sleep') and v.args:
+            ms, _ = self.gen_expr(v.args[0])
+            return ms
+        return None
+
+
+    def _linearize_loop_body(self, e):
+        """Flatten body into [('run', expr)] / [('wait', ms_c)] / [('ret', expr)].
+
+        Function bodies are often desugared to nested LetExpr('_', stmt, rest).
+        """
+        from .ast import (
+            AwaitExpr, Block, RetExpr, IfExpr, LetExpr, Call, Member, Var,
+        )
+        ops = []
+        # Unwrap let-chain of statement sequencing
+        while isinstance(e, LetExpr) and e.name in ('_',):
+            ops.extend(self._linearize_loop_body(e.value))
+            e = e.body
+        if e is None:
+            return ops
+        if isinstance(e, Block):
+            for st in e.stmts:
+                ops.extend(self._linearize_loop_body(st))
+            return ops
+        if isinstance(e, RetExpr):
+            if e.value is not None and self._expr_has_loop_await(e.value):
+                ops.extend(self._linearize_loop_body(e.value))
+                return ops
+            ops.append(('ret', e.value if e.value is not None else None))
+            return ops
+        ms = self._await_wait_ms_code(e)
+        if ms is not None:
+            ops.append(('wait', ms))
+            return ops
+        if isinstance(e, AwaitExpr) and getattr(e, 'loop', False):
+            ops.extend(self._linearize_loop_body(e.value))
+            return ops
+        if isinstance(e, LetExpr):
+            ops.extend(self._linearize_loop_body(e.value))
+            # don't re-emit whole let; continue into body
+            if e.body is not None:
+                ops.extend(self._linearize_loop_body(e.body))
+            return ops
+        if not self._expr_has_loop_await(e):
+            ops.append(('run', e))
+            return ops
+        ops.append(('run', e))
+        return ops
+
+    def gen_loop_state_machine(self, f, cname, parse_req_n=None, format_rsp_n=None):
+        """Emit Frame + step for ~~> fn. Returns (make_name, step_name) or None."""
+        from .ast import AwaitExpr
+        if not self._expr_has_loop_await(f.body):
+            return None
+        ops = self._linearize_loop_body(f.body)
+        # refine: re-walk for wait points with sequential states
+        self.lam_n += 1
+        sid = self.lam_n
+        frame = f"__sm_frame_{sid}"
+        step = f"__sm_step_{sid}"
+        make = f"__sm_make_{sid}"
+        is_http = parse_req_n and format_rsp_n and f.params and self.type_name(f.params[0].typ) in ('Req', 'Req')
+        # Build switch cases from ops: merge consecutive runs, waits create boundaries
+        states = []  # list of list of ops for each state; last ends with wait or ret
+        cur = []
+        for op in ops:
+            if op[0] == 'wait':
+                cur.append(op)
+                states.append(cur)
+                cur = []
+            else:
+                cur.append(op)
+        if cur:
+            states.append(cur)
+        if not states:
+            states = [[('run', f.body)]]
+
+        # Frame fields: state + params
+        fields = ["  int state;"]
+        for p in f.params:
+            tn = self.type_name(p.typ) if p.typ else 'long'
+            fields.append(f"  {self.c_type(tn)} {p.name};")
+
+        cases = []
+        for si, st_ops in enumerate(states):
+            lines = [f"  case {si}: {{"]
+            wait_ms = None
+            ret_expr = None
+            for op in st_ops:
+                if op[0] == 'wait':
+                    wait_ms = op[1]
+                elif op[0] == 'ret':
+                    ret_expr = op[1]
+                elif op[0] == 'run':
+                    # gen with params from frame
+                    old_env = self.env.copy()
+                    old_aliases = self.var_aliases.copy()
+                    for p in f.params:
+                        self.env[p.name] = self.type_name(p.typ) if p.typ else 'long'
+                        self.var_aliases[p.name] = f"(f->{p.name})"
+                    # temporarily disable loop await side channel - use suspend
+                    code, _ = self.gen_expr(op[1])
+                    self.env = old_env
+                    self.var_aliases = old_aliases
+                    lines.append(f"    (void)({code});")
+            if wait_ms is not None:
+                next_st = si + 1
+                lines.append(f"    f->state = {next_st};")
+                lines.append(f"    *out_wait_ms = {wait_ms};")
+                lines.append(f"    return NULL;")
+            else:
+                # done
+                if is_http:
+                    if ret_expr is not None:
+                        old_env = self.env.copy()
+                        old_aliases = self.var_aliases.copy()
+                        for p in f.params:
+                            self.env[p.name] = self.type_name(p.typ) if p.typ else 'long'
+                            self.var_aliases[p.name] = f"(f->{p.name})"
+                        rc, _ = self.gen_expr(ret_expr)
+                        self.env = old_env
+                        self.var_aliases = old_aliases
+                        lines.append(f"    return strdup((char*){format_rsp_n}({rc}));")
+                    else:
+                        # last run may have returned via ret in expression - use normal handler
+                        lines.append(f"    {{ Rsp _rs = {cname}(" + ", ".join(f"f->{p.name}" for p in f.params) + f"); return strdup((char*){format_rsp_n}(_rs)); }}")
+                else:
+                    lines.append('    return (char*)"";')
+            lines.append(f"  }}")
+            cases.append("\n".join(lines))
+
+        body_switch = "\n".join(cases)
+        lines_out = []
+        lines_out.append(f"typedef struct {{\n" + "\n".join(fields) + f"\n}} {frame};")
+        if is_http:
+            lines_out.append(f"static void* {make}(const char* raw) {{")
+            lines_out.append(f"  {frame}* f = ({frame}*)malloc(sizeof({frame}));")
+            lines_out.append(f"  if (!f) return NULL;")
+            lines_out.append(f"  f->state = 0;")
+            lines_out.append(f"  f->{f.params[0].name} = {parse_req_n}((char*)raw);")
+            lines_out.append(f"  return f;")
+            lines_out.append(f"}}")
+        else:
+            lines_out.append(f"static void* {make}(void) {{")
+            lines_out.append(f"  {frame}* f = ({frame}*)malloc(sizeof({frame}));")
+            lines_out.append(f"  if (!f) return NULL; f->state = 0; return f;")
+            lines_out.append(f"}}")
+        lines_out.append(f"static char* {step}(void* vf, int event, int64_t* out_wait_ms) {{")
+        lines_out.append(f"  {frame}* f = ({frame}*)vf;")
+        lines_out.append(f"  (void)event;")
+        lines_out.append(f"  *out_wait_ms = -1;")
+        lines_out.append(f"  switch (f->state) {{")
+        lines_out.append(body_switch)
+        lines_out.append(f"  default: return NULL;")
+        lines_out.append(f"  }}")
+        lines_out.append(f"}}")
+        self.extra.append("\n".join(lines_out) + "\n")
+        if not hasattr(self, 'loop_sm'):
+            self.loop_sm = {}
+        self.loop_sm[f.name] = (make, step, is_http)
+        self.loop_sm[cname] = (make, step, is_http)
+        return make, step, is_http
+
+
     def gen_sock_nb_srv_loop(self, port_c, handler_expr, parse_req_n, format_rsp_n, handler_is_cname=True):
-        """handler_expr is C name of Rsp(Req) function, or C expression for function pointer."""
+        """Wire handler to sock_nb_srv_step. Prefer multi-state SM when registered."""
+        sm = getattr(self, 'loop_sm', {}).get(handler_expr) if handler_is_cname else None
+        if sm and sm[2]:
+            make, step, _ = sm
+            return f"(sock_nb_srv_step({port_c}, {make}, {step}), INT64_C(0))", "long"
+        # Fallback: single-shot + held response (one ~> wait)
         frame = "loop_frame_" + self.fresh()
         step = "loop_step_" + self.fresh()
         make = "loop_make_" + self.fresh()
@@ -1567,10 +1953,12 @@ class CodeGen:
         if handler_is_cname:
             return f"(sock_nb_srv_step({port_c}, {make}, {step}), INT64_C(0))", "long"
         return (
-            f"({{ {slot} = (Rsp(*)(Req))({handler_expr}); "
+            f"({{ TerseClos *_h = (TerseClos*)({handler_expr}); "
+            f"{slot} = (Rsp(*)(Req))(_h ? _h->fn : NULL); "
             f"sock_nb_srv_step({port_c}, {make}, {step}); INT64_C(0); }})",
             "long",
         )
+
 
     def gen_async_spawn(self, cname: str, arg_codes: list, arg_ctypes: list, wait: bool) -> str:
         """Spawn cname(args...) on a pthread; wait=True joins."""
@@ -1647,6 +2035,15 @@ class CodeGen:
         body, _ = self.gen_expr(f.body, ret)
         self.current_return_type = old_return_type
         self.env = old_env
+        # Multi-state ~~> (non-HTTP): drive body via terse_loop_run
+        if getattr(f, 'is_async_loop', False) and self._expr_has_loop_await(f.body):
+            try:
+                sm = self.gen_loop_state_machine(f, cname)
+                if sm and not sm[2] and not f.params:
+                    make, step, _ = sm
+                    body = f"(terse_loop_run({make}, {step}), INT64_C(0))"
+            except Exception:
+                pass
         self.emit(f"{crt} {cname}({pstr}) {{")
         self.indent += 1
         self.emit(f"return {body};")
@@ -1798,6 +2195,7 @@ class CodeGen:
             if getattr(f, 'is_async_loop', False):
                 self.async_loop_fns.add(f.name)
                 self.async_loop_fns.add(cname)
+
             self.func_param_types[cname] = pts
             self.func_param_types[f.name] = pts  # single-overload convenience
             self.func_return_types[cname] = ret

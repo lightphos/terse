@@ -164,6 +164,20 @@ static void terse_err(const char *message) {
   static void sock_fini(void) {}
 #endif
 
+
+/* --- closures (fn values may capture) --- */
+typedef struct TerseClos {
+  void *fn;   /* code */
+  void *env;  /* NULL => plain function pointer in fn */
+} TerseClos;
+
+static TerseClos* terse_clos_new(void *fn, void *env) {
+  TerseClos *c = (TerseClos*)arena_alloc(sizeof(TerseClos));
+  c->fn = fn;
+  c->env = env;
+  return c;
+}
+
 /* --- basic TCP sockets (host surface; HTTP lives in lib/http.te) --- */
 
 #ifndef TERSE_NO_TLS
@@ -502,6 +516,33 @@ typedef char* (*sock_nb_handler_fn)(const char* raw);
 
 /* Set by ~> wait inside ~~> handlers; sock_nb_srv_step reads it. */
 static __thread int64_t _terse_loop_wait_ms = -1;
+static __thread int _terse_loop_in_step = 0;
+/* ~> wait: suspend in step server; otherwise sleep so non-server demos work. */
+static int64_t terse_time_sleep_ms(int64_t ms);
+static void terse_loop_run(void* (*make)(void), char* (*step)(void*, int, int64_t*)) {
+  void *frame = make();
+  if (!frame) return;
+  int event = 0;
+  for (;;) {
+    int64_t wait_ms = -1;
+    _terse_loop_in_step = 1;
+    char *resp = step(frame, event, &wait_ms);
+    _terse_loop_in_step = 0;
+    if (resp != NULL) {
+      /* done (ignore payload for void tasks) */
+      free(frame);
+      return;
+    }
+    if (wait_ms < 0) { free(frame); return; }
+    terse_time_sleep_ms(wait_ms);
+    event = 1;
+  }
+}
+
+static int64_t terse_loop_await_wait(int64_t ms) {
+  if (_terse_loop_in_step) { _terse_loop_wait_ms = ms; return INT64_C(0); }
+  return terse_time_sleep_ms(ms);
+}
 
 
 /* Event-loop step: returns response body ownership (malloc/arena) or NULL if suspended.
@@ -717,7 +758,9 @@ static void sock_nb_srv_step(int64_t port,
       if (!conns[i].active || conns[i].st != 2) continue;
       if (conns[i].timer_deadline_ms > 0 && now >= conns[i].timer_deadline_ms) {
         int64_t wait_ms = -1;
+        _terse_loop_in_step = 1;
         char* resp = step(conns[i].task_frame, 1, &wait_ms);
+        _terse_loop_in_step = 0;
         if (resp) {
           free(conns[i].task_frame); conns[i].task_frame = NULL;
           sock_nb_begin_write(&conns[i], resp);
@@ -772,7 +815,9 @@ static void sock_nb_srv_step(int64_t port,
         free(conns[i].in); conns[i].in = NULL;
         if (!frame) { CLOSESOCK(conns[i].fd); conns[i].active = 0; continue; }
         int64_t wait_ms = -1;
+        _terse_loop_in_step = 1;
         char* resp = step(frame, 0, &wait_ms);
+        _terse_loop_in_step = 0;
         if (resp) {
           free(frame);
           sock_nb_begin_write(&conns[i], resp);

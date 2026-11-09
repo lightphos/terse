@@ -432,7 +432,7 @@ class TypeChecker:
                 'keys','values','has','up','low','trim','split','join',
                 'parse','starts','ends','map','fmt','err'
             ): return 'fn'
-            if e.name in ('http','db','tst','fs','gcc','io','sock','arena','time','tim','async'): return 'mod'
+            if e.name in ('http','db','tst','fs','gcc','io','sock','arena','time','tim','async','loop'): return 'mod'
             self.errors.append(f"unknown name '{e.name}'")
             return 'long'
         if isinstance(e, Member):

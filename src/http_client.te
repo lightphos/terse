@@ -15,11 +15,8 @@ go {
   // HTTPS — public site (OpenSSL TLS)
   val hx = http.get("https://example.com/")
   pr(fmt("GET https://example.com/ => ", hx.status, " bytes=", len(hx.body)))
-  if hx.status == 200 {
-    pr("https ok")
-  } else {
-    pr(fmt("https body: ", hx.body))
-  }
+  hx.status == 200 ?  pr("https ok") : pr(fmt("https body: ", hx.body))
+  
 
   // Local HTTP — requires nhttp_srv on :8766
   val r1 = http.get("http://127.0.0.1:8766/")

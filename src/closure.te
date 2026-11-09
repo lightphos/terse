@@ -1,0 +1,22 @@
+// Closures capture outer locals by value into an env (arena).
+//   python3 compiler/tersec.py build src/closure.te -o out/closure -f && ./out/closure
+
+fn apply(f: fn, x: int) -> int = f(x)
+
+fn sum(xs: [int]) -> int {
+  var total: int = 0
+  lp x:xs { total += x }
+  total
+}
+
+go {
+  val k = 10
+  pr(fmt("7+k => ", apply(|n| n + k, 7)))
+
+  val xs: [int] = [1, 2, 3]
+  pr(fmt("map +k sum => ", xs |> map(|n| n + k) |> sum()))
+
+  val a = 2
+  val b = 3
+  pr(fmt("n*a+b => ", apply(|n| n * a + b, 4)))
+}

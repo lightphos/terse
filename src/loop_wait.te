@@ -1,0 +1,66 @@
+// Await without a network server — thread vs event-loop style.
+//
+//   python3 compiler/tersec.py build src/loop_wait.te -o out/loop_wait -f
+//   ./out/loop_wait
+//
+// When to use which:
+//
+//   ~~  /  ~     Thread async
+//     - CPU or blocking work that should overlap (hash, sleep, slow compute)
+//     - Fire-and-forget jobs; use ~ to join, or async.drain() for a batch
+//     - OK to block a worker thread; does NOT share one event loop
+//
+//   ~~> /  ~>    Event-loop async
+//     - Connection / I/O tasks (HTTP handlers, timers on the poll loop)
+//     - ~> tim.wait suspends this task without blocking other loop tasks
+//     - Prefer for many concurrent connections; avoid bare sleep on the loop
+//
+// This file shows both: ~~> section is sequential; ~~ section overlaps.
+
+use time.tim
+
+// --- event-loop tasks (~~> / ~>) ---
+
+~~> fn delayed_hello() {
+  pr(fmt("[loop] before wait t=", tim.mono()))
+  ~> tim.wait(200)
+  pr(fmt("[loop] after wait  t=", tim.mono()))
+}
+
+~~> fn two_steps() {
+  pr(fmt("[loop] step1 t=", tim.mono()))
+  ~> tim.wait(150)
+  pr(fmt("[loop] step2 t=", tim.mono()))
+  ~> tim.wait(150)
+  pr(fmt("[loop] done  t=", tim.mono()))
+}
+
+// --- thread tasks (~~ / ~) ---
+
+~~ fn thr_hello() {
+  pr(fmt("[thr] before wait t=", tim.mono()))
+  tim.wait(200)
+  pr(fmt("[thr] after wait  t=", tim.mono()))
+}
+
+~~ fn thr_steps() {
+  pr(fmt("[thr] step1 t=", tim.mono()))
+  tim.wait(150)
+  pr(fmt("[thr] step2 t=", tim.mono()))
+  tim.wait(150)
+  pr(fmt("[thr] done  t=", tim.mono()))
+}
+
+go {
+  pr("--- event-loop ~~> / ~> (sequential calls) ---")
+  delayed_hello()
+  two_steps()
+  pr("loop section finished")
+  pr("")
+
+  pr("--- threads ~~ (overlapping; drain at end) ---")
+  thr_hello()
+  thr_steps()
+  async.drain()
+  pr("thread section finished")
+}

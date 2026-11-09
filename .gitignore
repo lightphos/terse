@@ -13,3 +13,4 @@ wheels/
 /vscode-terse/out/
 support/terse.db
 /.continue/
+/benchmark/*.txt

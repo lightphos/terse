@@ -1,5 +1,5 @@
 // Phase-1 generics: fn f[T](...) with monomorphization
-//   python3 compiler/tersec.py build src/generic_demo.te -o out/generic_demo
+//   python3 compiler/tersec.py build src/gen.te -o out/gen
 
 fn id[T](x: T) -> T = x
 

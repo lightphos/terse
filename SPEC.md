@@ -555,7 +555,7 @@ python3 tersec.py run main.te
 ### Implemented
 - Arithmetic, comparisons, `val`/`var`, blocks, `ret`, ternary, pipe `|>`  
 - `fix` / `pub fix` (private by default)  
-- Functions, methods, recursion, simple lambdas (no capture)  
+- Functions, methods, recursion, lambdas with **local capture** (by value into a closure env)  
 - Parameter overloading (distinct param type lists)  
 - Records, enums (+ payloads), non-generic traits (implicit satisfaction)  
 - Pattern `if` arms
@@ -569,7 +569,7 @@ python3 tersec.py run main.te
 - Output: `~/.terse/out`; optional `lib` objects (`TERSE_AUTOLIB` for auto-link)  
 
 ### Limited
-- Higher-order / closures with capture  
+- Higher-order / closures with capture (**supported** for outer `val`/`var` locals)  
 - Generics: monomorphized `fn`/`rec`/`en`; specialized pattern names (`Opt__long`); generic trait *params* incomplete  
 - Tuple types/patterns (parsed; not a polished feature)  
 - HTTP via `lib/cnx/http.te` (blocking single-connection `srv`)  
@@ -605,3 +605,15 @@ See `eg.te`, `src/`, `usage/`, and `tst/` alongside the compiler.
 
 Use `~~>` handlers with non-blocking servers. Do not use bare `tim.wait` or `~` (thread join) inside the loop thread.
 
+
+
+### Closures
+
+Lambdas `|params| body` may read outer `val`/`var` locals. Captures are **copied by value** into an arena-allocated env when the lambda is created.
+
+```terse
+val k = 10
+pr(apply(|n| n + k, 7))   // 17
+```
+
+Named functions used as values are wrapped the same way (no env). Nested function definitions are not required for capture.

@@ -1,6 +1,6 @@
 // String + and minimal fmt
-//   python3 compiler/tersec.py build src/fmt_demo.te -o out/fmt_demo
-//   ./out/fmt_demo
+//   python3 compiler/tersec.py build src/fmt.te -o out/fmt
+//   ./out/fmt
 
 fix GREETING: str = "Greetings"
 fix ANSWER: long = 42

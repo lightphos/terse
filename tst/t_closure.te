@@ -1,0 +1,37 @@
+use std.tst
+
+fn apply(f: fn, x: int) -> int = f(x)
+
+fn sum(xs: [int]) -> int {
+  var total: int = 0
+  lp x:xs {
+    total += x
+  }
+  total
+}
+
+fn t_capture_add() {
+  val k = 10
+  tst.eq(apply(|n| n + k, 7), 17)
+}
+
+fn t_capture_mul() {
+  val k = 3
+  tst.eq(apply(|n| n * k, 4), 12)
+}
+
+fn t_capture_map() {
+  val k = 5
+  val xs: [int] = [1, 2, 3]
+  tst.eq(xs |> map(|n| n + k) |> sum(), 21)
+}
+
+fn t_capture_nested() {
+  val a = 2
+  val b = 3
+  tst.eq(apply(|n| n * a + b, 4), 11)
+}
+
+fn t_plain_lambda_still() {
+  tst.eq(apply(|n| n + 100, 7), 107)
+}
