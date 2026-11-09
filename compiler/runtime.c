@@ -500,6 +500,16 @@ static int64_t sock_accept_nb(int64_t listen_fd) {
 
 typedef char* (*sock_nb_handler_fn)(const char* raw);
 
+/* Set by ~> wait inside ~~> handlers; sock_nb_srv_step reads it. */
+static __thread int64_t _terse_loop_wait_ms = -1;
+
+
+/* Event-loop step: returns response body ownership (malloc/arena) or NULL if suspended.
+ * event: 0 = first entry after request read; 1 = timer fired / resume.
+ * On suspend, *out_wait_ms is set to milliseconds until next wake (or -1).
+ */
+typedef char* (*sock_nb_step_fn)(void* frame, int event, int64_t* out_wait_ms);
+
 typedef struct {
   sock_t fd;
   char* in;
@@ -508,12 +518,21 @@ typedef struct {
   char* out;
   int out_off;
   int out_len;
-  int st; /* 0=read 1=write */
+  int st; /* 0=read 1=write 2=wait_timer */
   int active;
+  int64_t timer_deadline_ms; /* mono ms; 0 = none */
+  void* task_frame;
+  sock_nb_step_fn task_step;
 } SockNbConn;
 
 #define SOCK_NB_MAX 256
 #define SOCK_NB_IN_CAP 16384
+
+static int64_t sock_nb_mono_ms(void) {
+  struct timespec ts;
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return INT64_C(0);
+  return (int64_t)ts.tv_sec * INT64_C(1000) + (int64_t)ts.tv_nsec / INT64_C(1000000);
+}
 
 static int sock_nb_request_complete(const char* buf, int n) {
   char* sep = strstr(buf, "\r\n\r\n");
@@ -523,6 +542,14 @@ static int sock_nb_request_complete(const char* buf, int n) {
   const char* cl = strstr(buf, "Content-Length:");
   if (cl) sscanf(cl, "Content-Length: %d", &content_length);
   return n >= header_len + content_length;
+}
+
+static void sock_nb_begin_write(SockNbConn* c, char* resp) {
+  c->out = resp;
+  c->out_off = 0;
+  c->out_len = resp ? (int)strlen(resp) : 0;
+  c->st = 1;
+  c->timer_deadline_ms = 0;
 }
 
 /* Concurrent non-blocking HTTP server. handler(raw_request) -> full response bytes. */
@@ -537,14 +564,45 @@ static void sock_nb_srv(int64_t port, sock_nb_handler_fn handler) {
     FD_ZERO(&rfds); FD_ZERO(&wfds);
     FD_SET(listen_s, &rfds);
     sock_t maxfd = listen_s;
+    int64_t now = sock_nb_mono_ms();
+    int64_t next_timer = INT64_C(-1);
     for (int i = 0; i < SOCK_NB_MAX; i++) {
       if (!conns[i].active) continue;
       if (conns[i].st == 0) FD_SET(conns[i].fd, &rfds);
-      else FD_SET(conns[i].fd, &wfds);
+      else if (conns[i].st == 1) FD_SET(conns[i].fd, &wfds);
       if (conns[i].fd > maxfd) maxfd = conns[i].fd;
+      if (conns[i].st == 2 && conns[i].timer_deadline_ms > 0) {
+        if (next_timer < 0 || conns[i].timer_deadline_ms < next_timer)
+          next_timer = conns[i].timer_deadline_ms;
+      }
     }
     struct timeval tv; tv.tv_sec = 1; tv.tv_usec = 0;
+    if (next_timer > 0) {
+      int64_t delta = next_timer - now;
+      if (delta < 0) delta = 0;
+      tv.tv_sec = (time_t)(delta / 1000);
+      tv.tv_usec = (suseconds_t)((delta % 1000) * 1000);
+    }
     int rc = select((int)maxfd + 1, &rfds, &wfds, NULL, &tv);
+    now = sock_nb_mono_ms();
+    /* Timer resumes */
+    for (int i = 0; i < SOCK_NB_MAX; i++) {
+      if (!conns[i].active || conns[i].st != 2) continue;
+      if (conns[i].timer_deadline_ms > 0 && now >= conns[i].timer_deadline_ms) {
+        int64_t wait_ms = -1;
+        char* resp = NULL;
+        if (conns[i].task_step)
+          resp = conns[i].task_step(conns[i].task_frame, 1, &wait_ms);
+        if (resp) {
+          sock_nb_begin_write(&conns[i], resp);
+        } else if (wait_ms >= 0) {
+          conns[i].timer_deadline_ms = sock_nb_mono_ms() + wait_ms;
+          conns[i].st = 2;
+        } else {
+          sock_nb_begin_write(&conns[i], strdup("HTTP/1.1 500 Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+        }
+      }
+    }
     if (rc < 0) continue;
     if (FD_ISSET(listen_s, &rfds)) {
       for (;;) {
@@ -552,63 +610,199 @@ static void sock_nb_srv(int64_t port, sock_nb_handler_fn handler) {
         if (c == SOCK_NB_AGAIN || c < 0) break;
         int slot = -1;
         for (int i = 0; i < SOCK_NB_MAX; i++) if (!conns[i].active) { slot = i; break; }
-        if (slot < 0) { CLOSESOCK((sock_t)(intptr_t)c); break; }
+        if (slot < 0) { CLOSESOCK((sock_t)(intptr_t)c); continue; }
+        memset(&conns[slot], 0, sizeof(conns[slot]));
         conns[slot].fd = (sock_t)(intptr_t)c;
         conns[slot].in = (char*)malloc(SOCK_NB_IN_CAP);
         conns[slot].in_cap = SOCK_NB_IN_CAP;
         conns[slot].in_n = 0;
-        if (conns[slot].in) conns[slot].in[0] = 0;
-        conns[slot].out = NULL;
-        conns[slot].out_off = 0;
-        conns[slot].out_len = 0;
         conns[slot].st = 0;
         conns[slot].active = 1;
+        if (conns[slot].in) conns[slot].in[0] = 0;
       }
     }
     for (int i = 0; i < SOCK_NB_MAX; i++) {
       if (!conns[i].active) continue;
       if (conns[i].st == 0 && FD_ISSET(conns[i].fd, &rfds)) {
-        if (!conns[i].in) { CLOSESOCK(conns[i].fd); conns[i].active = 0; continue; }
-        int space = conns[i].in_cap - 1 - conns[i].in_n;
-        if (space <= 0) { free(conns[i].in); CLOSESOCK(conns[i].fd); conns[i].active = 0; continue; }
-        int got = (int)recv(conns[i].fd, conns[i].in + conns[i].in_n, space, 0);
+        if (conns[i].in_n + 2048 >= conns[i].in_cap) {
+          int nc = conns[i].in_cap * 2;
+          char* nb = (char*)realloc(conns[i].in, (size_t)nc);
+          if (!nb) { CLOSESOCK(conns[i].fd); free(conns[i].in); conns[i].active = 0; continue; }
+          conns[i].in = nb; conns[i].in_cap = nc;
+        }
+        int got = (int)recv(conns[i].fd, conns[i].in + conns[i].in_n,
+                            (size_t)(conns[i].in_cap - conns[i].in_n - 1), 0);
         if (got <= 0) {
 #ifdef _WIN32
-          int e = WSAGetLastError();
-          if (e == WSAEWOULDBLOCK) continue;
+          if (got < 0 && WSAGetLastError() == WSAEWOULDBLOCK) continue;
 #else
-          if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+          if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
 #endif
-          free(conns[i].in); conns[i].in = NULL; CLOSESOCK(conns[i].fd); conns[i].active = 0; continue;
+          free(conns[i].in); conns[i].in = NULL; CLOSESOCK(conns[i].fd); conns[i].active = 0;
+          continue;
         }
         conns[i].in_n += got;
         conns[i].in[conns[i].in_n] = 0;
-        if (sock_nb_request_complete(conns[i].in, conns[i].in_n)) {
-          char* resp = handler(conns[i].in);
-          if (!resp) resp = (char*)"HTTP/1.1 500 Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-          conns[i].out = resp;
-          conns[i].out_len = (int)strlen(resp);
-          conns[i].out_off = 0;
-          conns[i].st = 1;
+        if (!sock_nb_request_complete(conns[i].in, conns[i].in_n)) continue;
+        char* resp = handler(conns[i].in);
+        free(conns[i].in); conns[i].in = NULL;
+        if (!resp) {
+          CLOSESOCK(conns[i].fd); conns[i].active = 0; continue;
         }
+        /* Magic prefix: SUSPEND\0 then opaque — not used by simple handler */
+        sock_nb_begin_write(&conns[i], resp);
       } else if (conns[i].st == 1 && FD_ISSET(conns[i].fd, &wfds)) {
         int left = conns[i].out_len - conns[i].out_off;
-        if (left <= 0) { CLOSESOCK(conns[i].fd); conns[i].active = 0; continue; }
+        if (left <= 0) {
+          free(conns[i].out); conns[i].out = NULL;
+          CLOSESOCK(conns[i].fd); conns[i].active = 0; continue;
+        }
         int k = (int)send(conns[i].fd, conns[i].out + conns[i].out_off, (size_t)left, 0);
         if (k <= 0) {
 #ifdef _WIN32
-          int e = WSAGetLastError();
-          if (e == WSAEWOULDBLOCK) continue;
+          if (k < 0 && WSAGetLastError() == WSAEWOULDBLOCK) continue;
 #else
-          if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+          if (k < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
 #endif
-          CLOSESOCK(conns[i].fd); conns[i].active = 0; continue;
+          free(conns[i].out); CLOSESOCK(conns[i].fd); conns[i].active = 0; continue;
         }
         conns[i].out_off += k;
         if (conns[i].out_off >= conns[i].out_len) {
-          free(conns[i].in); conns[i].in = NULL;
-          CLOSESOCK(conns[i].fd);
-          conns[i].active = 0;
+          free(conns[i].out); conns[i].out = NULL;
+          CLOSESOCK(conns[i].fd); conns[i].active = 0;
+        }
+      }
+    }
+  }
+}
+
+/* Step-based server for ~~> / ~> handlers. step(frame,ev,&wait_ms) -> response or NULL.
+ * make_frame(raw) allocates a frame for a new request (owned by server until done).
+ */
+static void sock_nb_srv_step(int64_t port,
+                             void* (*make_frame)(const char* raw),
+                             sock_nb_step_fn step) {
+  int64_t lfd = sock_listen_nb(port);
+  sock_t listen_s = (sock_t)(intptr_t)lfd;
+  SockNbConn* conns = (SockNbConn*)calloc(SOCK_NB_MAX, sizeof(SockNbConn));
+  if (!conns) { fprintf(stderr, "sock.nb_srv_step: oom\n"); exit(1); }
+  fprintf(stderr, "sock.nb_srv_step (~~>/~>) on :%lld\n", (long long)port);
+  for (;;) {
+    fd_set rfds, wfds;
+    FD_ZERO(&rfds); FD_ZERO(&wfds);
+    FD_SET(listen_s, &rfds);
+    sock_t maxfd = listen_s;
+    int64_t now = sock_nb_mono_ms();
+    int64_t next_timer = INT64_C(-1);
+    for (int i = 0; i < SOCK_NB_MAX; i++) {
+      if (!conns[i].active) continue;
+      if (conns[i].st == 0) FD_SET(conns[i].fd, &rfds);
+      else if (conns[i].st == 1) FD_SET(conns[i].fd, &wfds);
+      if (conns[i].fd > maxfd) maxfd = conns[i].fd;
+      if (conns[i].st == 2 && conns[i].timer_deadline_ms > 0) {
+        if (next_timer < 0 || conns[i].timer_deadline_ms < next_timer)
+          next_timer = conns[i].timer_deadline_ms;
+      }
+    }
+    struct timeval tv; tv.tv_sec = 1; tv.tv_usec = 0;
+    if (next_timer > 0) {
+      int64_t delta = next_timer - now;
+      if (delta < 0) delta = 0;
+      tv.tv_sec = (time_t)(delta / 1000);
+      tv.tv_usec = (suseconds_t)((delta % 1000) * 1000);
+    }
+    int rc = select((int)maxfd + 1, &rfds, &wfds, NULL, &tv);
+    now = sock_nb_mono_ms();
+    for (int i = 0; i < SOCK_NB_MAX; i++) {
+      if (!conns[i].active || conns[i].st != 2) continue;
+      if (conns[i].timer_deadline_ms > 0 && now >= conns[i].timer_deadline_ms) {
+        int64_t wait_ms = -1;
+        char* resp = step(conns[i].task_frame, 1, &wait_ms);
+        if (resp) {
+          free(conns[i].task_frame); conns[i].task_frame = NULL;
+          sock_nb_begin_write(&conns[i], resp);
+        } else if (wait_ms >= 0) {
+          conns[i].timer_deadline_ms = sock_nb_mono_ms() + wait_ms;
+          conns[i].st = 2;
+        } else {
+          free(conns[i].task_frame); conns[i].task_frame = NULL;
+          sock_nb_begin_write(&conns[i], strdup("HTTP/1.1 500 Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+        }
+      }
+    }
+    if (rc < 0) continue;
+    if (FD_ISSET(listen_s, &rfds)) {
+      for (;;) {
+        int64_t c = sock_accept_nb(lfd);
+        if (c == SOCK_NB_AGAIN || c < 0) break;
+        int slot = -1;
+        for (int i = 0; i < SOCK_NB_MAX; i++) if (!conns[i].active) { slot = i; break; }
+        if (slot < 0) { CLOSESOCK((sock_t)(intptr_t)c); continue; }
+        memset(&conns[slot], 0, sizeof(conns[slot]));
+        conns[slot].fd = (sock_t)(intptr_t)c;
+        conns[slot].in = (char*)malloc(SOCK_NB_IN_CAP);
+        conns[slot].in_cap = SOCK_NB_IN_CAP;
+        conns[slot].active = 1;
+        if (conns[slot].in) conns[slot].in[0] = 0;
+      }
+    }
+    for (int i = 0; i < SOCK_NB_MAX; i++) {
+      if (!conns[i].active) continue;
+      if (conns[i].st == 0 && FD_ISSET(conns[i].fd, &rfds)) {
+        if (conns[i].in_n + 2048 >= conns[i].in_cap) {
+          int nc = conns[i].in_cap * 2;
+          char* nb = (char*)realloc(conns[i].in, (size_t)nc);
+          if (!nb) { CLOSESOCK(conns[i].fd); free(conns[i].in); conns[i].active = 0; continue; }
+          conns[i].in = nb; conns[i].in_cap = nc;
+        }
+        int got = (int)recv(conns[i].fd, conns[i].in + conns[i].in_n,
+                            (size_t)(conns[i].in_cap - conns[i].in_n - 1), 0);
+        if (got <= 0) {
+#ifdef _WIN32
+          if (got < 0 && WSAGetLastError() == WSAEWOULDBLOCK) continue;
+#else
+          if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+#endif
+          free(conns[i].in); CLOSESOCK(conns[i].fd); conns[i].active = 0; continue;
+        }
+        conns[i].in_n += got;
+        conns[i].in[conns[i].in_n] = 0;
+        if (!sock_nb_request_complete(conns[i].in, conns[i].in_n)) continue;
+        void* frame = make_frame(conns[i].in);
+        free(conns[i].in); conns[i].in = NULL;
+        if (!frame) { CLOSESOCK(conns[i].fd); conns[i].active = 0; continue; }
+        int64_t wait_ms = -1;
+        char* resp = step(frame, 0, &wait_ms);
+        if (resp) {
+          free(frame);
+          sock_nb_begin_write(&conns[i], resp);
+        } else if (wait_ms >= 0) {
+          conns[i].task_frame = frame;
+          conns[i].task_step = step;
+          conns[i].timer_deadline_ms = sock_nb_mono_ms() + wait_ms;
+          conns[i].st = 2;
+        } else {
+          free(frame);
+          sock_nb_begin_write(&conns[i], strdup("HTTP/1.1 500 Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+        }
+      } else if (conns[i].st == 1 && FD_ISSET(conns[i].fd, &wfds)) {
+        int left = conns[i].out_len - conns[i].out_off;
+        if (left <= 0) {
+          free(conns[i].out); CLOSESOCK(conns[i].fd); conns[i].active = 0; continue;
+        }
+        int k = (int)send(conns[i].fd, conns[i].out + conns[i].out_off, (size_t)left, 0);
+        if (k <= 0) {
+#ifdef _WIN32
+          if (k < 0 && WSAGetLastError() == WSAEWOULDBLOCK) continue;
+#else
+          if (k < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
+#endif
+          free(conns[i].out); CLOSESOCK(conns[i].fd); conns[i].active = 0; continue;
+        }
+        conns[i].out_off += k;
+        if (conns[i].out_off >= conns[i].out_len) {
+          free(conns[i].out); conns[i].out = NULL;
+          CLOSESOCK(conns[i].fd); conns[i].active = 0;
         }
       }
     }
@@ -616,56 +810,33 @@ static void sock_nb_srv(int64_t port, sock_nb_handler_fn handler) {
 }
 
 
-
 /* --- time --- */
 static int64_t terse_time_now_ms(void) {
   struct timespec ts;
-#if defined(CLOCK_REALTIME)
   if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return INT64_C(0);
   return (int64_t)ts.tv_sec * INT64_C(1000) + (int64_t)ts.tv_nsec / INT64_C(1000000);
-#else
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  return (int64_t)tv.tv_sec * INT64_C(1000) + (int64_t)tv.tv_usec / INT64_C(1000);
-#endif
 }
-
 static int64_t terse_time_now_s(void) {
   return terse_time_now_ms() / INT64_C(1000);
 }
-
-/* Monotonic milliseconds (for durations; not wall-clock). */
 static int64_t terse_time_mono_ms(void) {
   struct timespec ts;
-#if defined(CLOCK_MONOTONIC)
   if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return INT64_C(0);
   return (int64_t)ts.tv_sec * INT64_C(1000) + (int64_t)ts.tv_nsec / INT64_C(1000000);
-#else
-  return terse_time_now_ms();
-#endif
 }
-
 static int64_t terse_time_sleep_ms(int64_t ms) {
   if (ms <= 0) return INT64_C(0);
   struct timespec ts;
   ts.tv_sec = (time_t)(ms / 1000);
   ts.tv_nsec = (long)((ms % 1000) * 1000000L);
-  while (nanosleep(&ts, &ts) != 0) {
-    /* EINTR: continue with remaining */
-  }
+  while (nanosleep(&ts, &ts) != 0) { }
   return INT64_C(0);
 }
-
-/* Format unix seconds with strftime. fmt e.g. "%Y-%m-%d %H:%M:%S". */
 static char* terse_time_fmt(const char* fmt, int64_t unix_s) {
   if (!fmt) fmt = "%Y-%m-%d %H:%M:%S";
-  time_t t = (time_t)unix_s;
+  time_t tt = (time_t)unix_s;
   struct tm tmv;
-#if defined(_WIN32)
-  localtime_s(&tmv, &t);
-#else
-  localtime_r(&t, &tmv);
-#endif
+  localtime_r(&tt, &tmv);
   char buf[128];
   size_t n = strftime(buf, sizeof(buf), fmt, &tmv);
   if (n == 0) { char* e = (char*)arena_alloc(1); e[0]=0; return e; }
@@ -673,8 +844,6 @@ static char* terse_time_fmt(const char* fmt, int64_t unix_s) {
   memcpy(out, buf, n + 1);
   return out;
 }
-
-/* Parse "YYYY-MM-DD HH:MM:SS" (local) → unix seconds, or -1 on failure. */
 static int64_t terse_time_parse(const char* s) {
   if (!s || !*s) return INT64_C(-1);
   int Y=0,M=0,D=0,h=0,m=0,sec=0;
@@ -689,9 +858,9 @@ static int64_t terse_time_parse(const char* s) {
   tmv.tm_min = m;
   tmv.tm_sec = sec;
   tmv.tm_isdst = -1;
-  time_t t = mktime(&tmv);
-  if (t == (time_t)-1) return INT64_C(-1);
-  return (int64_t)t;
+  time_t tt = mktime(&tmv);
+  if (tt == (time_t)-1) return INT64_C(-1);
+  return (int64_t)tt;
 }
 
 /* --- async (pthread) --- */

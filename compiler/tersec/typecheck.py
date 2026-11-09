@@ -510,6 +510,7 @@ class TypeChecker:
                 return 'long'
             return 'bool' if e.op in ('==','!=','<','>','<=','>=','&&','||') else 'long'
         if isinstance(e, AwaitExpr):
+            # ~> and ~ both type as their inner expression
             return self.check(e.value)
         if isinstance(e, Unary): return self.check(e.expr)
         if isinstance(e, RetExpr):

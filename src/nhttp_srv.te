@@ -1,29 +1,20 @@
-// Non-blocking HTTP demo (cnx.nhttp)
+// Non-blocking HTTP with event-loop await (~~> / ~>)
 //   python3 compiler/tersec.py build src/nhttp_srv.te -o out/nhttp_srv -f
 //   ./out/nhttp_srv
 //
-//   curl -s http://127.0.0.1:8766/
-//   curl -s http://127.0.0.1:8766/api
-//   curl -s -X POST -d 'hi' http://127.0.0.1:8766/echo
-//
-// /api schedules slow work on a ~~ worker and returns immediately so the
-// select loop stays free under concurrent load (see src/bench.te).
+// /api uses ~> tim.wait(100): suspend this connection, select keeps serving others.
+// / stays fast under concurrent /api load.
 
 use cnx.nhttp
 use cnx.http.*
 use time.tim
 
-// Worker-thread sleep — do not ~ from the handler (would block select).
-~~ fn slow_job() {
-  tim.wait(100)
-}
-
-fn handle(r: Req) -> Rsp {
+~~> fn handle(r: Req) -> Rsp {
   if r.get() {
     "/" => ret success("hello nonblock\n", TXT_PLAIN)
     "/api" => {
-      slow_job()
-      ret success("{\"ok\":true,\"queued\":true}\n", APP_JSON)
+      ~> tim.wait(100)
+      ret success("{\"ok\":true}\n", APP_JSON)
     }
   }
   if r.post() {
@@ -33,6 +24,6 @@ fn handle(r: Req) -> Rsp {
 }
 
 go {
-  pr("nhttp non-blocking on :8766 (GET / /api  POST /echo)")
+  pr("nhttp ~~>/~> on :8766 (GET / /api  POST /echo)")
   nhttp.asrv(8766, handle)
 }

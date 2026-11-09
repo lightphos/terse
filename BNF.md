@@ -278,3 +278,11 @@ fn-name-overloads ::= { fn-decl }   (* same Ident, distinct typed-param lists *)
 - Call resolution: match argument types to one overload (exact, then numeric-width soft match).
 - Duplicate identical signatures → error.
 - Codegen mangles symbols: `terse_<name>__<t0>_<t1>_...` when two or more overloads share a name; a single definition keeps `terse_<name>`.
+
+
+### Event-loop async
+```
+fn_decl    ::= "~~>" "fn" IDENT params ... | "fn" "~~>" IDENT ...
+await_expr ::= "~" unary | "~>" unary
+```
+`~~>` = event-loop task; `~>` = suspend (e.g. `~> tim.wait(ms)`).

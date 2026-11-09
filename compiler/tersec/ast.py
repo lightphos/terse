@@ -56,6 +56,7 @@ class Binary(Expr):
 @dataclass
 class AwaitExpr(Expr):
     value: Expr
+    loop: bool = False  # True => ~> event-loop await; False => ~ thread join
 
 
 @dataclass
@@ -199,6 +200,7 @@ class FnDecl:
     type_params: List[str] = field(default_factory=list)
     type_param_bounds: dict = field(default_factory=dict)
     is_async: bool = False
+    is_async_loop: bool = False  # ~~> event-loop task
 
 
 @dataclass

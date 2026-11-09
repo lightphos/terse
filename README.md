@@ -223,3 +223,8 @@ make bootstrap
 ## License
 
 MIT (for this reference implementation)
+
+
+## Event-loop async (`~~>` / `~>`)
+
+`~~>` marks an event-loop task; `~>` suspends the connection (e.g. `~> tim.wait(100)`). Thread async remains `~~` / `~`. See `src/nhttp_srv.te`.

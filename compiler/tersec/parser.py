@@ -197,6 +197,15 @@ class Parser:
                     if self.match(TT.SEMI): self.adv()
                 else:
                     raise SyntaxError("expected fn, rec, or fix after pub")
+            elif self.match(TT.ASYNC_LOOP):
+                self.adv()
+                if not self.match(TT.FN):
+                    raise SyntaxError("expected fn after ~~>")
+                decl = self.parse_fn(is_async=False, is_async_loop=True)
+                if isinstance(decl, MethodDecl):
+                    methods.append(decl)
+                else:
+                    fs.append(decl)
             elif self.match(TT.ASYNC):
                 self.adv()
                 if not self.match(TT.FN):
@@ -674,9 +683,12 @@ class Parser:
         return e
 
     def parse_unary(self):
+        if self.match(TT.AWAIT_LOOP):
+            self.adv()
+            return AwaitExpr(self.parse_unary(), loop=True)
         if self.match(TT.AWAIT):
             self.adv()
-            return AwaitExpr(self.parse_unary())
+            return AwaitExpr(self.parse_unary(), loop=False)
         if self.match(TT.NOT, TT.MINUS):
             op = self.adv().v
             return Unary(op, self.parse_unary())
@@ -925,11 +937,14 @@ class Parser:
         body = self.parse_expr()
         return MethodDecl(receiver, name, params, ret, body)
 
-    def parse_fn(self, is_async=False):
+    def parse_fn(self, is_async=False, is_async_loop=False):
         if self.match(TT.FN):
             self.adv()
         # Allow both "~~ fn name" (is_async already set) and "fn ~~ name"
-        if self.match(TT.ASYNC):
+        if self.match(TT.ASYNC_LOOP):
+            self.adv()
+            is_async_loop = True
+        elif self.match(TT.ASYNC):
             self.adv()
             is_async = True
         name_tok = self.expect(TT.IDENT)
@@ -945,4 +960,4 @@ class Parser:
             self.adv(); ret = self.parse_type()
         if self.match(TT.ASSIGN): self.adv()
         body = self.parse_expr()
-        return FnDecl(name, params, ret, body, type_params=type_params, type_param_bounds=type_param_bounds, is_async=is_async)
+        return FnDecl(name, params, ret, body, type_params=type_params, type_param_bounds=type_param_bounds, is_async=is_async, is_async_loop=is_async_loop)

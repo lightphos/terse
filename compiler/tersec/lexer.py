@@ -70,6 +70,8 @@ class TT(Enum):
     QUESTION = auto()
     ASYNC = auto()
     AWAIT = auto()
+    ASYNC_LOOP = auto()  # ~~>
+    AWAIT_LOOP = auto()  # ~>
     PR = auto()
     NPR = auto()
 
@@ -218,7 +220,14 @@ class Lexer:
                 self.toks.append(Tok(TT.PIPEGT, '|>', ln, cl))
             elif c == '~' and self.p(1) == '~':
                 self.adv(); self.adv()
-                self.toks.append(Tok(TT.ASYNC, '~~', ln, cl))
+                if self.p(0) == '>':
+                    self.adv()
+                    self.toks.append(Tok(TT.ASYNC_LOOP, '~~>', ln, cl))
+                else:
+                    self.toks.append(Tok(TT.ASYNC, '~~', ln, cl))
+            elif c == '~' and self.p(1) == '>':
+                self.adv(); self.adv()
+                self.toks.append(Tok(TT.AWAIT_LOOP, '~>', ln, cl))
             elif c == '~':
                 self.adv()
                 self.toks.append(Tok(TT.AWAIT, '~', ln, cl))

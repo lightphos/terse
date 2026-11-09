@@ -587,3 +587,21 @@ python3 tersec.py run main.te
 ## 13. Examples
 
 See `eg.te`, `src/`, `usage/`, and `tst/` alongside the compiler.
+
+
+## Async models
+
+### Thread async (`~~` / `~`)
+
+- `~~ fn f(...)` — may run on a host thread
+- `f(...)` without `~` — fire-and-forget (tracked; drain at exit)
+- `~ f(...)` — spawn and join (blocks the calling thread)
+
+### Event-loop async (`~~>` / `~>`)
+
+- `~~> fn handle(...)` — connection task for `sock.nb_srv` / `nhttp.asrv`
+- `~> tim.wait(ms)` — **suspend** this connection; the select loop continues serving others
+- Response is delayed until the wait completes (not a background side-effect)
+
+Use `~~>` handlers with non-blocking servers. Do not use bare `tim.wait` or `~` (thread join) inside the loop thread.
+

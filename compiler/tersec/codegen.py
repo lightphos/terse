@@ -45,6 +45,7 @@ class CodeGen:
         self.extra = []
         self.known = {}
         self.async_fns = set()  # names of ~~ async functions
+        self.async_loop_fns = set()  # ~~> event-loop tasks
         self._await_depth = 0
         self.tmp = 0
         self.env = {}
@@ -428,6 +429,17 @@ class CodeGen:
                 return cmp, "bool"
             return f"({l} {e.op} {r})", ("bool" if e.op in ('==','!=','<','>','<=','>=','&&','||') else "long")
         if isinstance(e, AwaitExpr):
+            if getattr(e, 'loop', False):
+                v = e.value
+                if isinstance(v, Call):
+                    name = None
+                    if isinstance(v.func, Var):
+                        name = v.func.name
+                    elif isinstance(v.func, Member):
+                        name = v.func.field
+                    if name in ('wait', 'sleep') and v.args:
+                        ms, _ = self.gen_expr(v.args[0])
+                        return f"(_terse_loop_wait_ms = ({ms}), INT64_C(0))", "long"
             self._await_depth += 1
             try:
                 return self.gen_expr(e.value)
@@ -1463,12 +1475,24 @@ class CodeGen:
         else:
             hc, ht = self.gen_expr(h)
         if parse_req_n and format_rsp_n:
+            # Always use step server so ~> wait works when handler is ~~>
+            hname = h.name if isinstance(h, Var) else None
+            hc_name = None
+            if hname:
+                hc_name = self.known.get(hname)
+            if hc_name is None and isinstance(h, Var):
+                hc_name = self.known.get(h.name)
+            # Function pointer arg: still wrap via slot; prefer step with dynamic slot
+            if hc_name:
+                return self.gen_sock_nb_srv_loop(port_c, hc_name, parse_req_n, format_rsp_n, True)
+            # Dynamic handler pointer (e.g. nhttp.asrv(port, handler))
+            return self.gen_sock_nb_srv_loop(port_c, hc, parse_req_n, format_rsp_n, False)
             self.extra.append(
                 f"static Rsp (*{slot})(Req) = NULL;\n"
                 f"static char* {wrap}(const char* raw) {{\n"
                 f"  Req rq = {parse_req_n}((char*)raw);\n"
                 f"  Rsp rs = {slot}(rq);\n"
-                f"  return (char*){format_rsp_n}(rs);\n"
+                f"  return strdup((char*){format_rsp_n}(rs));\n"
                 f"}}\n"
             )
             return (
@@ -1499,6 +1523,54 @@ class CodeGen:
         return f"(sock_nb_srv({port_c}, {wrap}), INT64_C(0))", "long"
 
 
+
+
+
+
+    def gen_sock_nb_srv_loop(self, port_c, handler_expr, parse_req_n, format_rsp_n, handler_is_cname=True):
+        """handler_expr is C name of Rsp(Req) function, or C expression for function pointer."""
+        frame = "loop_frame_" + self.fresh()
+        step = "loop_step_" + self.fresh()
+        make = "loop_make_" + self.fresh()
+        slot = "loop_slot_" + self.fresh()
+        call = f"{handler_expr}(f->rq)" if handler_is_cname else f"{slot}(f->rq)"
+        lines = []
+        if not handler_is_cname:
+            lines.append(f"static Rsp (*{slot})(Req) = NULL;")
+        lines.append(f"typedef struct {{ int state; Req rq; char* held_resp; }} {frame};")
+        lines.append(f"static void* {make}(const char* raw) {{")
+        lines.append(f"  {frame}* f = ({frame}*)malloc(sizeof({frame}));")
+        lines.append(f"  if (!f) return NULL;")
+        lines.append(f"  f->state = 0; f->held_resp = NULL;")
+        lines.append(f"  f->rq = {parse_req_n}((char*)raw);")
+        lines.append(f"  return f;")
+        lines.append(f"}}")
+        lines.append(f"static char* {step}(void* vf, int event, int64_t* out_wait_ms) {{")
+        lines.append(f"  {frame}* f = ({frame}*)vf;")
+        lines.append(f"  *out_wait_ms = -1;")
+        lines.append(f"  if (event == 1 || f->state == 1) {{")
+        lines.append(f"    if (f->held_resp) {{ char* r = f->held_resp; f->held_resp = NULL; return r; }}")
+        lines.append(f"    return strdup(\"HTTP/1.1 500 Error\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n\");")
+        lines.append(f"  }}")
+        lines.append(f"  _terse_loop_wait_ms = -1;")
+        lines.append(f"  Rsp rs = {call};")
+        lines.append(f"  if (_terse_loop_wait_ms >= 0) {{")
+        lines.append(f"    int64_t w = _terse_loop_wait_ms; _terse_loop_wait_ms = -1;")
+        lines.append(f"    f->state = 1;")
+        lines.append(f"    f->held_resp = strdup((char*){format_rsp_n}(rs));")
+        lines.append(f"    *out_wait_ms = w;")
+        lines.append(f"    return NULL;")
+        lines.append(f"  }}")
+        lines.append(f"  return strdup((char*){format_rsp_n}(rs));")
+        lines.append(f"}}")
+        self.extra.append("\n".join(lines) + "\n")
+        if handler_is_cname:
+            return f"(sock_nb_srv_step({port_c}, {make}, {step}), INT64_C(0))", "long"
+        return (
+            f"({{ {slot} = (Rsp(*)(Req))({handler_expr}); "
+            f"sock_nb_srv_step({port_c}, {make}, {step}); INT64_C(0); }})",
+            "long",
+        )
 
     def gen_async_spawn(self, cname: str, arg_codes: list, arg_ctypes: list, wait: bool) -> str:
         """Spawn cname(args...) on a pthread; wait=True joins."""
@@ -1723,6 +1795,9 @@ class CodeGen:
             if getattr(f, 'is_async', False):
                 self.async_fns.add(f.name)
                 self.async_fns.add(cname)
+            if getattr(f, 'is_async_loop', False):
+                self.async_loop_fns.add(f.name)
+                self.async_loop_fns.add(cname)
             self.func_param_types[cname] = pts
             self.func_param_types[f.name] = pts  # single-overload convenience
             self.func_return_types[cname] = ret
