@@ -557,7 +557,7 @@ static int terse_poll_fd(int64_t fd, int want_write, int64_t timeout_ms) {
   struct timeval tv;
   if (timeout_ms < 0) timeout_ms = 60000;
   tv.tv_sec = (time_t)(timeout_ms / 1000);
-  tv.tv_usec = (suseconds_t)((timeout_ms % 1000) * 1000);
+  tv.tv_usec = (long)((timeout_ms % 1000) * 1000);
   int rc;
   if (want_write)
     rc = select((int)s + 1, NULL, &fds, NULL, &tv);
@@ -741,7 +741,7 @@ static void sock_nb_srv(int64_t port, sock_nb_handler_fn handler) {
       int64_t delta = next_timer - now;
       if (delta < 0) delta = 0;
       tv.tv_sec = (time_t)(delta / 1000);
-      tv.tv_usec = (suseconds_t)((delta % 1000) * 1000);
+      tv.tv_usec = (long)((delta % 1000) * 1000);
     }
     int rc = select((int)maxfd + 1, &rfds, &wfds, NULL, &tv);
     now = sock_nb_mono_ms();
@@ -869,7 +869,7 @@ static void sock_nb_srv_step(int64_t port,
       int64_t delta = next_timer - now;
       if (delta < 0) delta = 0;
       tv.tv_sec = (time_t)(delta / 1000);
-      tv.tv_usec = (suseconds_t)((delta % 1000) * 1000);
+      tv.tv_usec = (long)((delta % 1000) * 1000);
     }
     int rc = select((int)maxfd + 1, &rfds, &wfds, NULL, &tv);
     now = sock_nb_mono_ms();
