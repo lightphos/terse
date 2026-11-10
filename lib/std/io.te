@@ -1,0 +1,44 @@
+// Standard I/O + awaitable sockets for the event loop.
+//
+// File helpers (host):
+//   io.in(path) / io.out(path, text) / io.append(path, text)
+//
+// Sockets (blocking if called without ~>; awaitable under ~~> with ~>):
+//   fd = io.connect(host, port)
+//   n  = ~> io.send(fd, data)
+//   s  = ~> io.recv(fd)
+//   ~> io.wait(ms)
+//   io.close(fd)
+//
+// Prefer ~~> handlers + ~> for concurrent I/O; use plain calls for simple scripts.
+
+// These are host-backed; signatures document the surface for use std.io / use std.io.*
+
+pub fn wait(ms: long) -> long {
+  // host: terse_loop_await_wait
+  ret 0
+}
+
+pub fn recv(fd: long) -> str {
+  ret ""
+}
+
+pub fn send(fd: long, data: str) -> long {
+  ret 0
+}
+
+pub fn connect(host: str, port: long) -> long {
+  ret -1
+}
+
+pub fn listen(port: long) -> long {
+  ret -1
+}
+
+pub fn accept(fd: long) -> long {
+  ret -1
+}
+
+pub fn close(fd: long) -> long {
+  ret 0
+}

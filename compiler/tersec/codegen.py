@@ -417,7 +417,11 @@ class CodeGen:
             return f"(({rec_name}){{ {', '.join(parts)} }})", rec_name
         if isinstance(e, Var):
             if e.name in self.var_aliases:
-                return self.var_aliases[e.name], self.env.get(e.name, "long")
+                al = self.var_aliases[e.name]
+                ty = self.env.get(e.name, "long")
+                if "_s)" in al or al.rstrip(")").endswith("_s"):
+                    ty = "str"
+                return al, ty
             if e.name in self.known:
                 return f"((void*)terse_clos_new((void*){self.known[e.name]}, NULL))", "fn"
             if e.name in self.env:
@@ -526,13 +530,42 @@ class CodeGen:
                 v = e.value
                 if isinstance(v, Call):
                     name = None
+                    mod = None
                     if isinstance(v.func, Var):
                         name = v.func.name
                     elif isinstance(v.func, Member):
                         name = v.func.field
+                        if isinstance(v.func.obj, Var):
+                            mod = v.func.obj.name
+                    # ~> wait / io.wait / tim.wait
                     if name in ('wait', 'sleep') and v.args:
                         ms, _ = self.gen_expr(v.args[0])
                         return f"terse_loop_await_wait({ms})", "long"
+                    # ~> io.recv(fd) or ~> recv(fd)
+                    if name == 'recv' and v.args and (mod in (None, 'io', 'sock') or mod == 'io'):
+                        fd, _ = self.gen_expr(v.args[0])
+                        # value is available after resume via result_str; in SM next state uses it
+                        return (
+                            f"({{ (void)terse_loop_await_recv({fd}); "
+                            f"terse_loop_result_str(); }})",
+                            "str",
+                        )
+                    if name == 'send' and len(v.args) >= 2:
+                        fd, _ = self.gen_expr(v.args[0])
+                        data, _ = self.gen_expr(v.args[1])
+                        return (
+                            f"({{ (void)terse_loop_await_send({fd}, {data}); "
+                            f"terse_loop_result_long(); }})",
+                            "long",
+                        )
+                    if name == 'connect' and len(v.args) >= 2:
+                        host, _ = self.gen_expr(v.args[0])
+                        port, _ = self.gen_expr(v.args[1])
+                        return (
+                            f"({{ (void)terse_loop_await_connect({host}, {port}); "
+                            f"terse_loop_result_long(); }})",
+                            "long",
+                        )
             self._await_depth += 1
             try:
                 return self.gen_expr(e.value)
@@ -932,6 +965,30 @@ class CodeGen:
                     path, _ = self.gen_expr(e.args[0])
                     text, _ = self.gen_expr(e.args[1])
                     return f"fs_append_text({path}, {text})", "long"
+
+                if e.func.field == 'wait' and e.args:
+                    ms, _ = self.gen_expr(e.args[0])
+                    return f"terse_loop_await_wait({ms})", "long"
+                if e.func.field == 'recv' and e.args:
+                    fd, _ = self.gen_expr(e.args[0])
+                    return f"terse_loop_await_recv({fd})", "str"
+                if e.func.field == 'send' and len(e.args) >= 2:
+                    fd, _ = self.gen_expr(e.args[0])
+                    data, _ = self.gen_expr(e.args[1])
+                    return f"terse_loop_await_send({fd}, {data})", "long"
+                if e.func.field == 'connect' and len(e.args) >= 2:
+                    host, _ = self.gen_expr(e.args[0])
+                    port, _ = self.gen_expr(e.args[1])
+                    return f"terse_loop_await_connect({host}, {port})", "long"
+                if e.func.field == 'listen' and e.args:
+                    port, _ = self.gen_expr(e.args[0])
+                    return f"sock_listen({port})", "long"
+                if e.func.field == 'accept' and e.args:
+                    fd, _ = self.gen_expr(e.args[0])
+                    return f"sock_accept({fd})", "long"
+                if e.func.field == 'close' and e.args:
+                    fd, _ = self.gen_expr(e.args[0])
+                    return f"sock_close({fd})", "long"
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'arena':
                 f = e.func.field
@@ -1710,7 +1767,31 @@ class CodeGen:
 
 
 
+    def _collect_let_names(self, e, out=None):
+        from .ast import LetExpr, Block, IfExpr, AwaitExpr, Call, Binary, Unary, RetExpr
+        if out is None:
+            out = []
+        if e is None:
+            return out
+        if isinstance(e, LetExpr):
+            if e.name and e.name != '_':
+                out.append(e.name)
+            self._collect_let_names(e.value, out)
+            self._collect_let_names(e.body, out)
+            return out
+        if isinstance(e, Block):
+            for st in e.stmts:
+                self._collect_let_names(st, out)
+            return out
+        for attr in ('body', 'value', 'expr', 'then', 'els', 'cond', 'left', 'right', 'func'):
+            self._collect_let_names(getattr(e, attr, None), out)
+        for attr in ('stmts', 'args', 'items'):
+            for c in getattr(e, attr, None) or []:
+                self._collect_let_names(c, out)
+        return out
+
     def _expr_has_loop_await(self, e):
+
         from .ast import (
             AwaitExpr, Block, Call, Binary, Unary, IfExpr, TernaryExpr, LetExpr,
             RetExpr, AssignExpr, LoopExpr, ForInExpr, ListLit, Member, Lambda,
@@ -1748,6 +1829,31 @@ class CodeGen:
             return ms
         return None
 
+    def _await_io_kind(self, e):
+        """('wait', arg_ast) | ('recv', fd_ast) | ('send', fd, data) | ('connect', host, port) | None.
+        Args are AST nodes; C is generated later with frame aliases in scope.
+        """
+        from .ast import AwaitExpr, Call, Member, Var
+        if not (isinstance(e, AwaitExpr) and getattr(e, 'loop', False)):
+            return None
+        v = e.value
+        if not isinstance(v, Call):
+            return None
+        name = None
+        if isinstance(v.func, Var):
+            name = v.func.name
+        elif isinstance(v.func, Member):
+            name = v.func.field
+        if name in ('wait', 'sleep') and v.args:
+            return ('wait', v.args[0])
+        if name == 'recv' and v.args:
+            return ('recv', v.args[0])
+        if name == 'send' and len(v.args) >= 2:
+            return ('send', v.args[0], v.args[1])
+        if name == 'connect' and len(v.args) >= 2:
+            return ('connect', v.args[0], v.args[1])
+        return None
+
 
     def _linearize_loop_body(self, e):
         """Flatten body into [('run', expr)] / [('wait', ms_c)] / [('ret', expr)].
@@ -1758,10 +1864,30 @@ class CodeGen:
             AwaitExpr, Block, RetExpr, IfExpr, LetExpr, Call, Member, Var,
         )
         ops = []
-        # Unwrap let-chain of statement sequencing
-        while isinstance(e, LetExpr) and e.name in ('_',):
-            ops.extend(self._linearize_loop_body(e.value))
-            e = e.body
+        from .ast import LetExpr as _LE, Block as _B, RetExpr as _RE, AwaitExpr as _AE
+        # Unwrap let-chain: "_" is sequencing; named lets bind await results
+        while isinstance(e, LetExpr):
+            if e.name in ('_',):
+                ops.extend(self._linearize_loop_body(e.value))
+                e = e.body
+                continue
+            io = self._await_io_kind(e.value)
+            if io is not None:
+                ops.append(io)
+                # bind result into frame local after resume
+                if io[0] in ('recv',):
+                    ops.append(('bind_s', e.name))
+                else:
+                    ops.append(('bind_i', e.name))
+                e = e.body
+                continue
+            if self._expr_has_loop_await(e.value):
+                ops.extend(self._linearize_loop_body(e.value))
+                e = e.body
+                continue
+            # plain let: run assignment then body
+            ops.append(('run', e))
+            return ops
         if e is None:
             return ops
         if isinstance(e, Block):
@@ -1774,18 +1900,12 @@ class CodeGen:
                 return ops
             ops.append(('ret', e.value if e.value is not None else None))
             return ops
-        ms = self._await_wait_ms_code(e)
-        if ms is not None:
-            ops.append(('wait', ms))
+        io = self._await_io_kind(e)
+        if io is not None:
+            ops.append(io)
             return ops
         if isinstance(e, AwaitExpr) and getattr(e, 'loop', False):
             ops.extend(self._linearize_loop_body(e.value))
-            return ops
-        if isinstance(e, LetExpr):
-            ops.extend(self._linearize_loop_body(e.value))
-            # don't re-emit whole let; continue into body
-            if e.body is not None:
-                ops.extend(self._linearize_loop_body(e.body))
             return ops
         if not self._expr_has_loop_await(e):
             ops.append(('run', e))
@@ -1810,7 +1930,7 @@ class CodeGen:
         states = []  # list of list of ops for each state; last ends with wait or ret
         cur = []
         for op in ops:
-            if op[0] == 'wait':
+            if op[0] in ('wait', 'recv', 'send', 'connect'):
                 cur.append(op)
                 states.append(cur)
                 cur = []
@@ -1826,33 +1946,93 @@ class CodeGen:
         for p in f.params:
             tn = self.type_name(p.typ) if p.typ else 'long'
             fields.append(f"  {self.c_type(tn)} {p.name};")
+        let_names = self._collect_let_names(f.body)
+        str_lets = {op[1] for op in ops if op and op[0] == "bind_s"}
+        # ensure string binds always use _s in frame
+        # default locals to long or str pointer storage
+        for ln in let_names:
+            if ln in [p.name for p in f.params]:
+                continue
+            fields.append(f"  int64_t {ln}_i;")
+            fields.append(f"  const char* {ln}_s;")
 
         cases = []
         for si, st_ops in enumerate(states):
             lines = [f"  case {si}: {{"]
             wait_ms = None
             ret_expr = None
+            io_suspend = None
             for op in st_ops:
                 if op[0] == 'wait':
-                    wait_ms = op[1]
+                    wait_ms = 0
+                    io_suspend = ('wait', op[1])
+                elif op[0] == 'recv':
+                    io_suspend = op
+                    wait_ms = 0
+                elif op[0] == 'send':
+                    io_suspend = op
+                    wait_ms = 0
+                elif op[0] == 'connect':
+                    io_suspend = op
+                    wait_ms = 0
+                elif op[0] == 'bind_i':
+                    lines.append(f"    f->{op[1]}_i = terse_loop_result_long();")
+                elif op[0] == 'bind_s':
+                    str_lets.add(op[1])
+                    lines.append(f"    f->{op[1]}_s = terse_loop_result_str();")
                 elif op[0] == 'ret':
                     ret_expr = op[1]
                 elif op[0] == 'run':
-                    # gen with params from frame
                     old_env = self.env.copy()
                     old_aliases = self.var_aliases.copy()
                     for p in f.params:
                         self.env[p.name] = self.type_name(p.typ) if p.typ else 'long'
                         self.var_aliases[p.name] = f"(f->{p.name})"
-                    # temporarily disable loop await side channel - use suspend
-                    code, _ = self.gen_expr(op[1])
+                    for ln in let_names:
+                        if ln in str_lets:
+                            self.env[ln] = 'str'
+                            self.var_aliases[ln] = f"(f->{ln}_s)"
+                        else:
+                            self.env[ln] = 'long'
+                            self.var_aliases[ln] = f"(f->{ln}_i)"
+                    code, ct = self.gen_expr(op[1])
                     self.env = old_env
                     self.var_aliases = old_aliases
                     lines.append(f"    (void)({code});")
-            if wait_ms is not None:
+            if wait_ms is not None or io_suspend is not None:
                 next_st = si + 1
+                old_env = self.env.copy()
+                old_aliases = self.var_aliases.copy()
+                for p in f.params:
+                    self.env[p.name] = self.type_name(p.typ) if p.typ else 'long'
+                    self.var_aliases[p.name] = f"(f->{p.name})"
+                for ln in let_names:
+                    if ln in str_lets:
+                        self.env[ln] = 'str'
+                        self.var_aliases[ln] = f"(f->{ln}_s)"
+                    else:
+                        self.env[ln] = 'long'
+                        self.var_aliases[ln] = f"(f->{ln}_i)"
+                if io_suspend and io_suspend[0] == 'recv':
+                    fd_c, _ = self.gen_expr(io_suspend[1])
+                    lines.append(f"    (void)terse_loop_await_recv({fd_c});")
+                elif io_suspend and io_suspend[0] == 'send':
+                    fd_c, _ = self.gen_expr(io_suspend[1])
+                    data_c, _ = self.gen_expr(io_suspend[2])
+                    lines.append(f"    (void)terse_loop_await_send({fd_c}, {data_c});")
+                elif io_suspend and io_suspend[0] == 'connect':
+                    h_c, _ = self.gen_expr(io_suspend[1])
+                    p_c, _ = self.gen_expr(io_suspend[2])
+                    lines.append(f"    (void)terse_loop_await_connect({h_c}, {p_c});")
+                elif io_suspend and io_suspend[0] == 'wait':
+                    ms_c, _ = self.gen_expr(io_suspend[1])
+                    lines.append(f"    (void)terse_loop_await_wait({ms_c});")
+                elif wait_ms is not None:
+                    lines.append(f"    (void)terse_loop_await_wait({wait_ms});")
+                self.env = old_env
+                self.var_aliases = old_aliases
                 lines.append(f"    f->state = {next_st};")
-                lines.append(f"    *out_wait_ms = {wait_ms};")
+                lines.append(f"    *out_wait_ms = 0;")
                 lines.append(f"    return NULL;")
             else:
                 # done

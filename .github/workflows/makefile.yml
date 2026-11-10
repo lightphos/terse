@@ -8,15 +8,23 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
 
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install C toolchain + OpenSSL
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libssl-dev
+
     - name: Run verify
       run: make verify
 
-    - name: Run check
+    - name: Run tests
       run: make tst
-

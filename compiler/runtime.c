@@ -517,8 +517,92 @@ typedef char* (*sock_nb_handler_fn)(const char* raw);
 /* Set by ~> wait inside ~~> handlers; sock_nb_srv_step reads it. */
 static __thread int64_t _terse_loop_wait_ms = -1;
 static __thread int _terse_loop_in_step = 0;
-/* ~> wait: suspend in step server; otherwise sleep so non-server demos work. */
+
+/* Awaitable I/O for ~> (event-loop). Kinds: */
+enum {
+  TERSE_AWAIT_NONE = 0,
+  TERSE_AWAIT_TIMER = 1,
+  TERSE_AWAIT_RECV = 2,
+  TERSE_AWAIT_SEND = 3,
+  TERSE_AWAIT_CONNECT = 4
+};
+static __thread int _terse_await_kind = TERSE_AWAIT_NONE;
+static __thread int64_t _terse_await_fd = -1;
+static __thread int64_t _terse_await_ms = 0;
+static __thread char* _terse_await_send_data = NULL;
+static __thread char _terse_await_host[256];
+static __thread int64_t _terse_await_port = 0;
+static __thread char* _terse_await_result_str = NULL;
+static __thread int64_t _terse_await_result_long = 0;
+
 static int64_t terse_time_sleep_ms(int64_t ms);
+static void sock_set_nonblock(sock_t s);
+static char* sock_recv(int64_t fd);
+static int64_t sock_send(int64_t fd, const char* data);
+static int64_t sock_connect(const char* host, int64_t port);
+
+
+static char* terse_loop_result_str(void) {
+  return _terse_await_result_str ? _terse_await_result_str : (char*)"";
+}
+static int64_t terse_loop_result_long(void) {
+  return _terse_await_result_long;
+}
+
+static int terse_poll_fd(int64_t fd, int want_write, int64_t timeout_ms) {
+  sock_t s = (sock_t)(intptr_t)fd;
+  fd_set fds;
+  FD_ZERO(&fds);
+  FD_SET(s, &fds);
+  struct timeval tv;
+  if (timeout_ms < 0) timeout_ms = 60000;
+  tv.tv_sec = (time_t)(timeout_ms / 1000);
+  tv.tv_usec = (suseconds_t)((timeout_ms % 1000) * 1000);
+  int rc;
+  if (want_write)
+    rc = select((int)s + 1, NULL, &fds, NULL, &tv);
+  else
+    rc = select((int)s + 1, &fds, NULL, NULL, &tv);
+  return rc > 0 && FD_ISSET(s, &fds);
+}
+
+static void terse_loop_complete_await(void) {
+  if (_terse_await_kind == TERSE_AWAIT_TIMER) {
+    if (_terse_await_ms > 0) terse_time_sleep_ms(_terse_await_ms);
+  } else if (_terse_await_kind == TERSE_AWAIT_RECV) {
+    sock_set_nonblock((sock_t)(intptr_t)_terse_await_fd);
+    if (!terse_poll_fd(_terse_await_fd, 0, 30000)) {
+      _terse_await_result_str = (char*)"";
+    } else {
+      /* temporary blocking read for full-ish chunk */
+#ifdef _WIN32
+      u_long mode = 0;
+      ioctlsocket((sock_t)(intptr_t)_terse_await_fd, FIONBIO, &mode);
+#else
+      int fl = fcntl((int)_terse_await_fd, F_GETFL, 0);
+      if (fl >= 0) fcntl((int)_terse_await_fd, F_SETFL, fl & ~O_NONBLOCK);
+#endif
+      _terse_await_result_str = sock_recv(_terse_await_fd);
+    }
+  } else if (_terse_await_kind == TERSE_AWAIT_SEND) {
+    sock_set_nonblock((sock_t)(intptr_t)_terse_await_fd);
+    terse_poll_fd(_terse_await_fd, 1, 30000);
+#ifdef _WIN32
+    { u_long mode = 0; ioctlsocket((sock_t)(intptr_t)_terse_await_fd, FIONBIO, &mode); }
+#else
+    { int fl = fcntl((int)_terse_await_fd, F_GETFL, 0);
+      if (fl >= 0) fcntl((int)_terse_await_fd, F_SETFL, fl & ~O_NONBLOCK); }
+#endif
+    _terse_await_result_long = sock_send(_terse_await_fd,
+      _terse_await_send_data ? _terse_await_send_data : "");
+  } else if (_terse_await_kind == TERSE_AWAIT_CONNECT) {
+    /* connect is currently blocking; still exposed as await for API uniformity */
+    _terse_await_result_long = sock_connect(_terse_await_host, _terse_await_port);
+  }
+  _terse_await_kind = TERSE_AWAIT_NONE;
+  _terse_loop_wait_ms = -1;
+}
+
 static void terse_loop_run(void* (*make)(void), char* (*step)(void*, int, int64_t*)) {
   void *frame = make();
   if (!frame) return;
@@ -529,19 +613,54 @@ static void terse_loop_run(void* (*make)(void), char* (*step)(void*, int, int64_
     char *resp = step(frame, event, &wait_ms);
     _terse_loop_in_step = 0;
     if (resp != NULL) {
-      /* done (ignore payload for void tasks) */
       free(frame);
       return;
     }
+    if (_terse_await_kind != TERSE_AWAIT_NONE) {
+      terse_loop_complete_await();
+      event = 1;
+      continue;
+    }
     if (wait_ms < 0) { free(frame); return; }
-    terse_time_sleep_ms(wait_ms);
+    if (wait_ms > 0) terse_time_sleep_ms(wait_ms);
     event = 1;
   }
 }
 
 static int64_t terse_loop_await_wait(int64_t ms) {
-  if (_terse_loop_in_step) { _terse_loop_wait_ms = ms; return INT64_C(0); }
+  if (_terse_loop_in_step) {
+    _terse_await_kind = TERSE_AWAIT_TIMER;
+    _terse_await_ms = ms;
+    _terse_loop_wait_ms = ms;
+    return INT64_C(0);
+  }
   return terse_time_sleep_ms(ms);
+}
+
+static char* terse_loop_await_recv(int64_t fd) {
+  if (!_terse_loop_in_step) return sock_recv(fd);
+  _terse_await_kind = TERSE_AWAIT_RECV;
+  _terse_await_fd = fd;
+  _terse_loop_wait_ms = 0;
+  return (char*)""; /* filled on resume via terse_loop_result_str */
+}
+
+static int64_t terse_loop_await_send(int64_t fd, const char* data) {
+  if (!_terse_loop_in_step) return sock_send(fd, data ? data : "");
+  _terse_await_kind = TERSE_AWAIT_SEND;
+  _terse_await_fd = fd;
+  _terse_await_send_data = (char*)(data ? data : "");
+  _terse_loop_wait_ms = 0;
+  return INT64_C(0);
+}
+
+static int64_t terse_loop_await_connect(const char* host, int64_t port) {
+  if (!_terse_loop_in_step) return sock_connect(host, port);
+  _terse_await_kind = TERSE_AWAIT_CONNECT;
+  snprintf(_terse_await_host, sizeof(_terse_await_host), "%s", host ? host : "");
+  _terse_await_port = port;
+  _terse_loop_wait_ms = 0;
+  return INT64_C(0);
 }
 
 

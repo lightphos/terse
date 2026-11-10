@@ -1,0 +1,45 @@
+// Awaitable I/O via host std.io surface (event-loop with ~>).
+//
+//   python3 compiler/tersec.py build src/io_await.te -o out/io_await -f
+//   ./out/io_await
+
+use time.tim
+
+~~ fn serve_once() {
+  val ls = io.listen(18765)
+  if ls < 0 {
+    pr("listen failed")
+    ret
+  }
+  val c = io.accept(ls)
+  if c < 0 {
+    pr("accept failed")
+    io.close(ls)
+    ret
+  }
+  val got = io.recv(c)
+  io.send(c, "echo:" + got)
+  io.close(c)
+  io.close(ls)
+}
+
+~~> fn client() {
+  ~> io.wait(80)
+  val fd = ~> io.connect("127.0.0.1", 18765)
+  if fd < 0 {
+    pr("connect failed")
+    ret
+  }
+  val n = ~> io.send(fd, "hello")
+  val resp = ~> io.recv(fd)
+  pr(fmt("sent=", n, " resp=", resp))
+  io.close(fd)
+}
+
+go {
+  pr("io_await: thread server + ~~> client with ~> io.*")
+  serve_once()
+  client()
+  async.drain()
+  pr("done")
+}

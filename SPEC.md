@@ -617,3 +617,14 @@ pr(apply(|n| n + k, 7))   // 17
 ```
 
 Named functions used as values are wrapped the same way (no env). Nested function definitions are not required for capture.
+
+
+### Awaitable I/O (`std.io`)
+
+| Call | Blocking | With `~>` in `~~>` |
+|------|----------|---------------------|
+| `io.wait(ms)` | sleep | suspend timer |
+| `io.connect(host, port)` | connect | await connect |
+| `io.send(fd, data)` | send | await writable + send |
+| `io.recv(fd)` | recv | await readable + recv |
+| `io.listen` / `accept` / `close` | host sockets | same (typically not awaited) |

@@ -330,6 +330,13 @@ def _load_source_modules(program, source_path):
             if parent:
                 candidates.append(os.path.join(parent, 'lib', relative + '.te'))
                 candidates.append(os.path.join(parent, relative + '.te'))
+        # Installed libs (~/.terse/lib or TERSE_LIB)
+        try:
+            home_lib = os.environ.get("TERSE_LIB") or os.path.join(terse_home(), "lib")
+            home_lib = os.path.expanduser(home_lib)
+            candidates.append(os.path.join(home_lib, relative + '.te'))
+        except Exception:
+            pass
         candidates.append(os.path.join(module_root, 'lib', relative + '.te'))
         candidates.append(os.path.join(module_root, relative + '.te'))
         candidates.append(os.path.join(os.getcwd(), 'lib', relative + '.te'))
