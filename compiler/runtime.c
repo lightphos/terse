@@ -1000,7 +1000,17 @@ static char* terse_time_fmt(const char* fmt, int64_t unix_s) {
   if (!fmt) fmt = "%Y-%m-%d %H:%M:%S";
   time_t tt = (time_t)unix_s;
   struct tm tmv;
-  localtime_r(&tt, &tmv);
+  memset(&tmv, 0, sizeof(tmv));
+#if defined(_WIN32)
+  /* MSVC/MinGW: localtime_s(tm, time); POSIX has localtime_r(time, tm) */
+  if (localtime_s(&tmv, &tt) != 0) {
+    char* e = (char*)arena_alloc(1); e[0]=0; return e;
+  }
+#else
+  if (!localtime_r(&tt, &tmv)) {
+    char* e = (char*)arena_alloc(1); e[0]=0; return e;
+  }
+#endif
   char buf[128];
   size_t n = strftime(buf, sizeof(buf), fmt, &tmv);
   if (n == 0) { char* e = (char*)arena_alloc(1); e[0]=0; return e; }
