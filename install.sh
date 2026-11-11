@@ -61,6 +61,32 @@ if ! command -v cc >/dev/null 2>&1 && ! command -v gcc >/dev/null 2>&1 && ! comm
   echo "warning: no C compiler (cc/gcc/clang) on PATH — builds will fail until one is installed" >&2
 fi
 
+# OpenSSL (optional but required for HTTPS). Compiler auto-detects; install if missing.
+_openssl_ok=0
+if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists openssl 2>/dev/null; then
+  _openssl_ok=1
+elif [ -f /usr/include/openssl/ssl.h ] || [ -f /usr/local/include/openssl/ssl.h ]; then
+  _openssl_ok=1
+elif [ -f /opt/homebrew/opt/openssl@3/include/openssl/ssl.h ] || [ -f /opt/homebrew/opt/openssl/include/openssl/ssl.h ]; then
+  _openssl_ok=1
+elif [ -f /usr/local/opt/openssl@3/include/openssl/ssl.h ]; then
+  _openssl_ok=1
+fi
+if [ "$_openssl_ok" -eq 0 ]; then
+  echo ""
+  echo "note: OpenSSL development files not detected."
+  echo "  HTTPS (sock.connect_tls) needs headers + libs; plain TCP/HTTP still works."
+  echo "  Install:"
+  echo "    macOS:   brew install openssl"
+  echo "    Debian:  sudo apt install libssl-dev"
+  echo "    Fedora:  sudo dnf install openssl-devel"
+  echo "    Windows: pacman -S mingw-w64-ucrt-x86_64-openssl   # MSYS2"
+  echo "             or: choco install openssl"
+  echo "  Skip TLS:  export TERSE_NO_TLS=1"
+  echo "  Override:  export OPENSSL_ROOT_DIR=/path/to/openssl"
+  echo ""
+fi
+
 mkdir -p "${COMPILER_DIR}" "${BIN_DIR}" "${LIB_DIR}" "${TERSE_HOME}/out"
 
 # Sync compiler package

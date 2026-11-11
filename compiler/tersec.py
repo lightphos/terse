@@ -672,20 +672,163 @@ def ensure_module_lib(module_file, use_path, verbose=False, force=False):
         return None
     return lib_obj_path(key) if os.path.isfile(lib_obj_path(key)) else None
 
-def _tls_link_flags():
-    """OpenSSL + pthread link flags. TERSE_NO_TLS=1 skips OpenSSL."""
-    flags = []
-    if os.environ.get("TERSE_NO_TLS", "").strip() in ("1", "true", "yes"):
-        flags.append("-DTERSE_NO_TLS")
+_openssl_cache = None  # None=unset, False=missing, dict={inc,lib,cflags,libs}
+
+def _openssl_probe():
+    """Locate OpenSSL headers + libs. Returns dict or False. Cached."""
+    global _openssl_cache
+    if _openssl_cache is not None:
+        return _openssl_cache
+    env = os.environ
+    if env.get("TERSE_NO_TLS", "").strip().lower() in ("1", "true", "yes"):
+        _openssl_cache = False
+        return False
+    if env.get("TERSE_TLS", "").strip().lower() in ("0", "false", "no"):
+        _openssl_cache = False
+        return False
+
+    cc = env.get("CC", "gcc" if sys.platform == "win32" else "cc")
+    inc, lib = [], []
+
+    # Explicit overrides
+    if env.get("OPENSSL_ROOT_DIR"):
+        root = env["OPENSSL_ROOT_DIR"]
+        inc.append(os.path.join(root, "include"))
+        lib.append(os.path.join(root, "lib"))
+    if env.get("OPENSSL_INCLUDE_DIR"):
+        inc.append(env["OPENSSL_INCLUDE_DIR"])
+    if env.get("OPENSSL_LIB_DIR"):
+        lib.append(env["OPENSSL_LIB_DIR"])
+
+    # pkg-config
+    try:
+        r = subprocess.run(
+            ["pkg-config", "--cflags", "--libs", "openssl"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            cflags, libs = [], []
+            for tok in r.stdout.split():
+                if tok.startswith("-I"):
+                    inc.append(tok[2:])
+                    cflags.append(tok)
+                elif tok.startswith("-L"):
+                    lib.append(tok[2:])
+                    libs.append(tok)
+                elif tok.startswith("-l"):
+                    libs.append(tok)
+            # quick compile probe
+            if _openssl_try_compile(cc, cflags, libs):
+                _openssl_cache = {"inc": inc, "lib": lib, "cflags": cflags, "libs": libs}
+                return _openssl_cache
+    except Exception:
+        pass
+
+    # Common install locations
+    candidates = []
+    if sys.platform == "darwin":
+        for prefix in (
+            "/opt/homebrew/opt/openssl@3",
+            "/opt/homebrew/opt/openssl",
+            "/usr/local/opt/openssl@3",
+            "/usr/local/opt/openssl",
+            "/opt/homebrew",
+            "/usr/local",
+        ):
+            candidates.append(prefix)
     elif sys.platform == "win32":
-        flags += ["-lssl", "-lcrypto", "-lws2_32", "-lcrypt32"]
+        for prefix in (
+            r"C:\msys64\ucrt64",
+            r"C:\msys64\mingw64",
+            r"C:\msys64\clang64",
+            r"C:\Program Files\OpenSSL-Win64",
+            r"C:\Program Files\OpenSSL",
+            r"C:\OpenSSL-Win64",
+            os.path.expanduser(r"~\scoop\apps\openssl\current"),
+        ):
+            candidates.append(prefix)
     else:
-        flags += ["-lssl", "-lcrypto"]
-    if sys.platform != "win32":
+        for prefix in ("/usr", "/usr/local", "/opt/openssl"):
+            candidates.append(prefix)
+
+    for root in candidates:
+        ih = os.path.join(root, "include", "openssl", "ssl.h")
+        if not os.path.isfile(ih):
+            # Homebrew sometimes uses include/openssl directly under opt
+            ih2 = os.path.join(root, "include", "openssl", "ssl.h")
+            if not os.path.isfile(ih2):
+                continue
+        i_dir = os.path.join(root, "include")
+        # lib dir variants
+        for ld in ("lib", "lib64", os.path.join("lib", "mingw"), "bin"):
+            l_dir = os.path.join(root, ld)
+            if os.path.isdir(l_dir):
+                cflags = [f"-I{i_dir}"]
+                libs = [f"-L{l_dir}", "-lssl", "-lcrypto"]
+                if _openssl_try_compile(cc, cflags, libs):
+                    _openssl_cache = {
+                        "inc": [i_dir], "lib": [l_dir],
+                        "cflags": cflags, "libs": libs,
+                    }
+                    return _openssl_cache
+
+    # Default system paths (no extra -I/-L)
+    if _openssl_try_compile(cc, [], ["-lssl", "-lcrypto"]):
+        _openssl_cache = {"inc": [], "lib": [], "cflags": [], "libs": ["-lssl", "-lcrypto"]}
+        return _openssl_cache
+
+    _openssl_cache = False
+    return False
+
+def _openssl_try_compile(cc, cflags, libs):
+    """Return True if a tiny SSL program compiles and links."""
+    import tempfile
+    src = b"#include <openssl/ssl.h>\nint main(void){return sizeof(SSL*)>0;}\n"
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            c_path = os.path.join(td, "t.c")
+            o_path = os.path.join(td, "t.out")
+            with open(c_path, "wb") as f:
+                f.write(src)
+            cmd = [cc, "-std=c11"] + list(cflags) + [c_path, "-o", o_path] + list(libs)
+            r = subprocess.run(cmd, capture_output=True, timeout=15)
+            return r.returncode == 0
+    except Exception:
+        return False
+
+def _tls_enabled():
+    return _openssl_probe() is not False
+
+def _tls_cflags():
+    """Compile flags: -DTERSE_NO_TLS and/or -I for OpenSSL."""
+    if os.environ.get("TERSE_NO_TLS", "").strip().lower() in ("1", "true", "yes"):
+        return ["-DTERSE_NO_TLS"]
+    info = _openssl_probe()
+    if not info:
+        return ["-DTERSE_NO_TLS"]
+    return list(info.get("cflags") or [])
+
+def _tls_link_flags():
+    """Link flags for OpenSSL + pthread. Adds -DTERSE_NO_TLS when unavailable."""
+    flags = list(_tls_cflags())
+    info = _openssl_probe()
+    if info:
+        flags.extend(info.get("libs") or ["-lssl", "-lcrypto"])
+        if sys.platform == "win32":
+            for extra in ("-lws2_32", "-lcrypt32", "-lgdi32"):
+                if extra not in flags:
+                    flags.append(extra)
+    if "-lpthread" not in flags:
         flags.append("-lpthread")
-    else:
-        flags.append("-lpthread")  # mingw often provides pthread
     return flags
+
+def _tls_hint():
+    """User-facing install hint when OpenSSL is missing."""
+    if sys.platform == "darwin":
+        return "macOS: brew install openssl  (compiler auto-detects Homebrew paths)"
+    if sys.platform == "win32":
+        return "Windows: install MSYS2 mingw openssl, or choco install openssl, or set TERSE_NO_TLS=1"
+    return "Linux: sudo apt install libssl-dev   OR   sudo dnf install openssl-devel"
 
 
 def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
@@ -752,7 +895,8 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             cc = os.environ.get("CC", "gcc")
             r = subprocess.run(
                 [cc, "-O0", "-std=c11", "-c", c_file, "-o", out_obj,
-                 "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value"],
+                 "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value"]
+                + _tls_cflags(),
                 capture_output=True, text=True)
             if r.returncode != 0:
                 print("C compile failed:", file=sys.stderr)
@@ -817,20 +961,23 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             main_obj = out_bin + ".o"
             r = subprocess.run(
                 [cc, "-O0", "-std=c11", "-c", c_file, "-o", main_obj,
-                 "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value", "-Wno-parentheses"],
+                 "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value", "-Wno-parentheses"]
+                + _tls_cflags(),
                 capture_output=True, text=True)
             if r.returncode != 0:
                 print("C compile failed:", file=sys.stderr)
                 err = (r.stderr or r.stdout or "").strip()
                 if err:
-                    # First real error line for quicker scan
                     for line in err.splitlines():
                         if "error:" in line.lower():
                             print(line, file=sys.stderr)
                             break
                     print(err, file=sys.stderr)
+                if "openssl/ssl.h" in err or "openssl/err.h" in err:
+                    print("hint: OpenSSL headers not found. " + _tls_hint(), file=sys.stderr)
+                    print("      Or disable TLS: TERSE_NO_TLS=1", file=sys.stderr)
                 return 1
-            cmd_l = [cc, "-O0", "-std=c11", "-o", gcc_out, main_obj] + link_objs + [f for f in _tls_link_flags() if f.startswith("-l")]
+            cmd_l = [cc, "-O0", "-std=c11", "-o", gcc_out, main_obj] + link_objs + _tls_link_flags()
             if sys.platform == "win32":
                 cmd_l.extend(["-lws2_32", "-mconsole"])
             r = subprocess.run(cmd_l, capture_output=True, text=True)

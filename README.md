@@ -24,8 +24,25 @@ From a local clone: `sh install.sh`. Overrides: `TERSE_HOME`, `TERSE_REPO`, `TER
 
 - Python 3.12+
 - `gcc` or `clang` on `PATH`
-- OpenSSL headers (optional, for HTTPS): `libssl-dev` / `openssl-devel` / `brew install openssl`  
-  Without them, builds still work (`TERSE_NO_TLS` / auto-detect).
+- **OpenSSL development files** (needed for HTTPS; optional otherwise)
+
+The compiler **probes** for OpenSSL and passes `-I`/`-L` automatically (Homebrew, MSYS2, system paths, `pkg-config`). If none is found, it builds with `-DTERSE_NO_TLS` (no HTTPS).
+
+| Platform | Install OpenSSL |
+|----------|-----------------|
+| macOS | `brew install openssl` |
+| Debian/Ubuntu/WSL | `sudo apt install libssl-dev` |
+| Fedora | `sudo dnf install openssl-devel` |
+| Windows (MSYS2) | `pacman -S mingw-w64-ucrt-x86_64-openssl` |
+| Windows (choco) | `choco install openssl` |
+
+```bash
+# force no TLS
+export TERSE_NO_TLS=1
+
+# or point at a custom OpenSSL
+export OPENSSL_ROOT_DIR=/path/to/openssl
+```
 
 ## From a clone
 

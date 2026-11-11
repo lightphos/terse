@@ -148,14 +148,20 @@ static void terse_err(const char *message) {
     if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) { fprintf(stderr, "WSAStartup failed\n"); exit(1); }
   }
   static void sock_fini(void) { WSACleanup(); }
+#ifndef TERSE_NO_TLS
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#endif
 #else
   #include <unistd.h>
   #include <sys/socket.h>
   #include <netinet/in.h>
 #include <netdb.h>
+  #include <arpa/inet.h>
+#ifndef TERSE_NO_TLS
 #include <openssl/ssl.h>
 #include <openssl/err.h>
-  #include <arpa/inet.h>
+#endif
   #include <signal.h>
   typedef int sock_t;
   #define CLOSESOCK close
