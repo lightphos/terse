@@ -1,3 +1,5 @@
+use std.str
+
 // Recursion
 fn fib(n: long, a: long, b: long) -> long {
   if (n <= 0) {
@@ -8,5 +10,7 @@ fn fib(n: long, a: long, b: long) -> long {
 
 
 go {
- fib(7, 0, 1)
+ val n = arg(1) == "" ? 7 : str.parse(arg(1))
+ val r = fib(n, 0, 1)
+ pr("fib(" + n + ") = " + r)
 }

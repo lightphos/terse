@@ -721,6 +721,57 @@ def _augment_path_env(env=None):
     return env
 
 
+
+def _program_needs_tls(program, source_path=None):
+    """True only when this program (or a direct use) needs OpenSSL.
+
+    Policy: enable TLS iff some `use` path is `cnx.http` (HTTPS client).
+    Override with TERSE_NO_TLS=1 (off) or TERSE_FORCE_TLS=1 (on).
+    """
+    env = os.environ
+    if env.get("TERSE_NO_TLS", "").strip().lower() in ("1", "true", "yes"):
+        return False
+    if env.get("TERSE_FORCE_TLS", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    if env.get("TERSE_TLS", "").strip().lower() in ("0", "false", "no"):
+        return False
+
+    def needs(path):
+        if not path:
+            return False
+        # use cnx.http  or  use cnx.http.something
+        return path == "cnx.http" or path.startswith("cnx.http.")
+
+    seen = set()
+
+    def walk(prog):
+        if prog is None:
+            return False
+        for use in getattr(prog, "uses", None) or []:
+            path = getattr(use, "path", None)
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            if needs(path):
+                return True
+        return False
+
+    if walk(program):
+        return True
+
+    # Also scan source text for `use cnx.http` if AST uses were empty/partial
+    if source_path and os.path.isfile(source_path):
+        try:
+            with open(source_path, encoding="utf-8") as f:
+                text = f.read()
+            import re
+            if re.search(r"(?m)^\s*use\s+cnx\.http\b", text):
+                return True
+        except OSError:
+            pass
+    return False
+
+
 _openssl_cache = None  # None=unset, False=missing, dict={inc,lib,cflags,libs}
 
 def _openssl_probe():
@@ -858,8 +909,10 @@ def _openssl_try_compile(cc, cflags, libs):
 def _tls_enabled():
     return _openssl_probe() is not False
 
-def _tls_cflags():
-    """Compile flags: -DTERSE_NO_TLS and/or -I for OpenSSL."""
+def _tls_cflags(need_tls=False):
+    """Compile flags: -DTERSE_NO_TLS unless this program needs OpenSSL (use cnx.http)."""
+    if not need_tls:
+        return ["-DTERSE_NO_TLS"]
     if os.environ.get("TERSE_NO_TLS", "").strip().lower() in ("1", "true", "yes"):
         return ["-DTERSE_NO_TLS"]
     info = _openssl_probe()
@@ -867,16 +920,17 @@ def _tls_cflags():
         return ["-DTERSE_NO_TLS"]
     return list(info.get("cflags") or [])
 
-def _tls_link_flags():
-    """Link flags for OpenSSL + pthread + platform. Adds -DTERSE_NO_TLS when unavailable."""
-    flags = list(_tls_cflags())
-    info = _openssl_probe()
-    if info:
-        flags.extend(info.get("libs") or ["-lssl", "-lcrypto"])
-        if _is_windows():
-            for extra in ("-lcrypt32", "-lgdi32"):
-                if extra not in flags:
-                    flags.append(extra)
+def _tls_link_flags(need_tls=False):
+    """Link flags for pthread/platform; OpenSSL only when need_tls (use cnx.http)."""
+    flags = list(_tls_cflags(need_tls))
+    if need_tls:
+        info = _openssl_probe()
+        if info:
+            flags.extend(info.get("libs") or ["-lssl", "-lcrypto"])
+            if _is_windows():
+                for extra in ("-lcrypt32", "-lgdi32"):
+                    if extra not in flags:
+                        flags.append(extra)
     if "-lpthread" not in flags:
         flags.append("-lpthread")
     # Windows system libs always (sockets + console subsystem)
@@ -904,6 +958,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
         if verbose:
             print("tokens:", [(t.t.name, t.v) for t in toks[:40]])
         prog = _load_source_modules(Parser(toks).parse_program(), source_path)
+        need_tls = _program_needs_tls(prog, source_path)
         if prog.toplevel is None and _is_test_source(source_path):
             prog.toplevel = _auto_test_toplevel(prog)
         if verbose:
@@ -960,7 +1015,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             r = subprocess.run(
                 [cc, "-O0", "-std=c11", "-c", c_file, "-o", out_obj,
                  "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value"]
-                + _tls_cflags(),
+                + _tls_cflags(need_tls),
                 capture_output=True, text=True)
             if r.returncode != 0:
                 print("C compile failed:", file=sys.stderr)
@@ -1031,7 +1086,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             r = subprocess.run(
                 [cc, "-O0", "-std=c11", "-c", c_file, "-o", main_obj,
                  "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value", "-Wno-parentheses"]
-                + _tls_cflags(),
+                + _tls_cflags(need_tls),
                 capture_output=True, text=True, env=run_env)
             if r.returncode != 0:
                 print("C compile failed:", file=sys.stderr)
@@ -1046,7 +1101,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
                     print("hint: OpenSSL headers not found. " + _tls_hint(), file=sys.stderr)
                     print("      Or disable TLS: TERSE_NO_TLS=1", file=sys.stderr)
                 return 1
-            cmd_l = [cc, "-O0", "-std=c11", "-o", gcc_out, main_obj] + link_objs + _tls_link_flags()
+            cmd_l = [cc, "-O0", "-std=c11", "-o", gcc_out, main_obj] + link_objs + _tls_link_flags(need_tls)
             if os.environ.get("TERSE_VERBOSE") or verbose:
                 print("gcc:", " ".join(cmd_l), file=sys.stderr)
             r = subprocess.run(cmd_l, capture_output=True, text=True, env=run_env)
@@ -1057,7 +1112,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
         else:
             cmd = [cc, "-O0", "-std=c11",
                    "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value",
-                   "-Wno-parentheses", c_file, "-o", gcc_out] + _tls_link_flags()
+                   "-Wno-parentheses", c_file, "-o", gcc_out] + _tls_link_flags(need_tls)
             if os.environ.get("TERSE_VERBOSE") or verbose:
                 print("gcc:", " ".join(cmd), file=sys.stderr)
             r = subprocess.run(cmd, capture_output=True, text=True, env=run_env)
