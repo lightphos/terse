@@ -6,9 +6,9 @@ export CC ?= clang
 # Host Python compiler and sources (adjust if your layout differs)
 PYTHON   ?= python3
 TERSEC   ?= compiler/tersec.py
-TERSEC_TEST   ?= compiler/test_compiler.py
+TERSEC_TEST ?= compiler/test_compiler.py
 TC_SRC   ?= compiler/tc.te
-OUT      ?= ~/.terse/out
+OUT      ?= $(HOME)/.terse/out
 
 STAGE0   := $(OUT)/tc-stage0
 STAGE1   := $(OUT)/tc-stage1
@@ -18,15 +18,18 @@ TC       := $(OUT)/tc
 dir ?= src
 tdir ?= tst
 
+define RUN_OUT
+	@if [ -f "$(1).exe" ]; then "$(1).exe"; \
+	 elif [ -f "$(1)" ]; then "$(1)"; \
+	 else echo "missing $(1) (.exe)"; exit 1; fi
+endef
+
 help:
 	@echo "Targets:"
-	@echo "  make tcc         - host build stage0 (Python tersec -> out/tc-stage0)"
-	@echo "  make tcc1        - host builds stage1 (reliable)\n  make tcc1-native - stage0 compiles tc.te (may OOM)"
-	@echo "  make bootstrap   - stage1 compiles tc.te -> out/tc"
-	@echo "  make terse.NAME  - compile src/NAME.te with out/tc and run it"
 	@echo "  make run.NAME    - compile and run src/NAME.te with host tersec and run"
 	@echo "  make tst.NAME    - tst/t_NAME.te"
 	@echo "  make tst         - run all tst t_*.te file"
+	@echo "  make verify      - run compiler/test_compiler.py"
 	@echo "  make clean"
 	@echo "CC=$(CC)  (export CC=... to change C compiler used by tc stages)"
 
@@ -65,7 +68,6 @@ bootstrap: tcc1
 	  $(PYTHON) $(TERSEC) build $(TC_SRC) -o $(TC) --no-libs; \
 	fi
 
-
 # Smoke: host builds stage0; stage0 compiles a tiny program (not full tc.te)
 bootstrap-verify: tcc
 	@mkdir -p $(OUT)
@@ -90,19 +92,21 @@ te.%:
 # Host Python compiler
 bld.%:
 	@mkdir -p $(OUT)
-	$(PYTHON) $(TERSEC) build $(dir)/$*.te -o $(OUT)/$*
+	$(PYTHON) $(TERSEC) build $(dir)/$*.te -o $(OUT)/$* -f
 
 run.%: bld.%
-	$(OUT)/$*
+	$(call RUN_OUT,$(OUT)/$*)
+
 
 tst.%:
 	@@mkdir -p $(OUT)
 	@$(PYTHON) $(TERSEC) build $(tdir)/$*.te -f -o $(OUT)/$*
-	@$(OUT)/$*
+	$(call RUN_OUT,$(OUT)/$*)
 
 # --- VS Code extension / tests ------------------------------------------
 
 vscode-terse:
+	npm install -g @vscode/vsce
 	cd vscode-terse && npm install && npm run compile && npm run package
 
 install-vscode-terse:

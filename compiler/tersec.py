@@ -672,6 +672,55 @@ def ensure_module_lib(module_file, use_path, verbose=False, force=False):
         return None
     return lib_obj_path(key) if os.path.isfile(lib_obj_path(key)) else None
 
+
+def _is_windows():
+    """True on native Windows, MinGW, MSYS, Git Bash Python."""
+    if sys.platform == "win32" or os.name == "nt":
+        return True
+    ms = os.environ.get("MSYSTEM", "")
+    if ms.upper().startswith(("MINGW", "MSYS", "CLANG", "UCRT")):
+        return True
+    return False
+
+def _windows_toolchain_bins():
+    """Candidate MinGW/Git bin dirs so gcc and runtime DLLs resolve."""
+    roots = []
+    for key in ("OPENSSL_ROOT_DIR", "MSYSTEM_PREFIX", "MINGW_PREFIX"):
+        v = os.environ.get(key)
+        if v:
+            roots.append(v)
+    pf = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+    pf86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
+    for rel in (
+        os.path.join(pf, "Git", "mingw64"),
+        os.path.join(pf86, "Git", "mingw64"),
+        r"C:\msys64\ucrt64",
+        r"C:\msys64\mingw64",
+        r"C:\ProgramData\mingw64\mingw64",
+    ):
+        roots.append(rel)
+    bins = []
+    for r in roots:
+        b = os.path.join(r, "bin") if not r.lower().endswith("bin") else r
+        if os.path.isdir(b) and b not in bins:
+            bins.append(b)
+    return bins
+
+def _augment_path_env(env=None):
+    """Prepend Windows toolchain bins so gcc and libwinpthread DLLs are found."""
+    env = dict(env or os.environ)
+    if not _is_windows():
+        return env
+    prefix = [b for b in _windows_toolchain_bins() if b]
+    if prefix:
+        sep = ";" if (sys.platform == "win32" or os.name == "nt") else ":"
+        # Git Bash Python often wants : but native win32 wants ;
+        # Use os.pathsep which is correct for the Python runtime
+        sep = os.pathsep
+        env["PATH"] = sep.join(prefix + [env.get("PATH", "")])
+    return env
+
+
 _openssl_cache = None  # None=unset, False=missing, dict={inc,lib,cflags,libs}
 
 def _openssl_probe():
@@ -687,7 +736,7 @@ def _openssl_probe():
         _openssl_cache = False
         return False
 
-    cc = env.get("CC", "gcc" if sys.platform == "win32" else "cc")
+    cc = env.get("CC", "gcc" if _is_windows() else "cc")
     inc, lib = [], []
 
     # Explicit overrides
@@ -736,8 +785,10 @@ def _openssl_probe():
             "/usr/local",
         ):
             candidates.append(prefix)
-    elif sys.platform == "win32":
+    elif _is_windows():
         for prefix in (
+            r"C:\Program Files\Git\mingw64",
+            r"C:\Program Files (x86)\Git\mingw64",
             r"C:\msys64\ucrt64",
             r"C:\msys64\mingw64",
             r"C:\msys64\clang64",
@@ -747,6 +798,14 @@ def _openssl_probe():
             os.path.expanduser(r"~\scoop\apps\openssl\current"),
         ):
             candidates.append(prefix)
+        # Git Bash relative path if present
+        for rel in (
+            os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Git", "mingw64"),
+            os.path.join(os.environ.get("MSYSTEM_PREFIX", ""),) if os.environ.get("MSYSTEM_PREFIX") else None,
+        ):
+            if rel and os.path.isdir(rel):
+                candidates.append(rel)
+
     else:
         for prefix in ("/usr", "/usr/local", "/opt/openssl"):
             candidates.append(prefix)
@@ -809,24 +868,29 @@ def _tls_cflags():
     return list(info.get("cflags") or [])
 
 def _tls_link_flags():
-    """Link flags for OpenSSL + pthread. Adds -DTERSE_NO_TLS when unavailable."""
+    """Link flags for OpenSSL + pthread + platform. Adds -DTERSE_NO_TLS when unavailable."""
     flags = list(_tls_cflags())
     info = _openssl_probe()
     if info:
         flags.extend(info.get("libs") or ["-lssl", "-lcrypto"])
-        if sys.platform == "win32":
-            for extra in ("-lws2_32", "-lcrypt32", "-lgdi32"):
+        if _is_windows():
+            for extra in ("-lcrypt32", "-lgdi32"):
                 if extra not in flags:
                     flags.append(extra)
     if "-lpthread" not in flags:
         flags.append("-lpthread")
+    # Windows system libs always (sockets + console subsystem)
+    if _is_windows():
+        for extra in ("-lws2_32", "-mconsole"):
+            if extra not in flags:
+                flags.append(extra)
     return flags
 
 def _tls_hint():
     """User-facing install hint when OpenSSL is missing."""
     if sys.platform == "darwin":
         return "macOS: brew install openssl  (compiler auto-detects Homebrew paths)"
-    if sys.platform == "win32":
+    if _is_windows():
         return "Windows: install MSYS2 mingw openssl, or choco install openssl, or set TERSE_NO_TLS=1"
     return "Linux: sudo apt install libssl-dev   OR   sudo dnf install openssl-devel"
 
@@ -892,7 +956,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             c_file = os.path.join(module_lib_dir(key), "module.c")
             with open(c_file, "w", encoding="utf-8") as f:
                 f.write(c_code)
-            cc = os.environ.get("CC", "gcc")
+            cc = os.environ.get("CC") or ("gcc" if _is_windows() else "cc")
             r = subprocess.run(
                 [cc, "-O0", "-std=c11", "-c", c_file, "-o", out_obj,
                  "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value"]
@@ -910,9 +974,10 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             return 0
 
         out_bin = resolve_output_path(source_path, out_bin)
+        # Windows: PE binaries need a .exe suffix. Keep it as the real output.
+        if _is_windows() and os.path.splitext(out_bin)[1].lower() != ".exe":
+            out_bin = out_bin + ".exe"
         gcc_out = out_bin
-        if sys.platform == "win32" and os.path.splitext(out_bin)[1].lower() != ".exe":
-            gcc_out = out_bin + ".exe"
 
         if not force and os.path.isfile(gcc_out) and deps:
             try:
@@ -931,7 +996,11 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
         if verbose:
             print("----- C -----"); print(c_code[:1200]); print("-----")
 
-        cc = os.environ.get("CC", "gcc")
+        cc = os.environ.get("CC") or ("gcc" if _is_windows() else "cc")
+        # Windows: `cc` often is a stub; MinGW builds need real gcc for -mconsole/-lpthread
+        if _is_windows() and cc in ("cc", "clang", "clang++"):
+            cc = "gcc"
+        run_env = _augment_path_env()
         link_objs = []
         if link_libs:
             preferred = getattr(prog, "_link_objs", None) or []
@@ -963,7 +1032,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
                 [cc, "-O0", "-std=c11", "-c", c_file, "-o", main_obj,
                  "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value", "-Wno-parentheses"]
                 + _tls_cflags(),
-                capture_output=True, text=True)
+                capture_output=True, text=True, env=run_env)
             if r.returncode != 0:
                 print("C compile failed:", file=sys.stderr)
                 err = (r.stderr or r.stdout or "").strip()
@@ -978,9 +1047,9 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
                     print("      Or disable TLS: TERSE_NO_TLS=1", file=sys.stderr)
                 return 1
             cmd_l = [cc, "-O0", "-std=c11", "-o", gcc_out, main_obj] + link_objs + _tls_link_flags()
-            if sys.platform == "win32":
-                cmd_l.extend(["-lws2_32", "-mconsole"])
-            r = subprocess.run(cmd_l, capture_output=True, text=True)
+            if os.environ.get("TERSE_VERBOSE") or verbose:
+                print("gcc:", " ".join(cmd_l), file=sys.stderr)
+            r = subprocess.run(cmd_l, capture_output=True, text=True, env=run_env)
             if r.returncode != 0:
                 print("C link failed:", file=sys.stderr); print(r.stderr, file=sys.stderr); return 1
             try: os.remove(main_obj)
@@ -989,9 +1058,9 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             cmd = [cc, "-O0", "-std=c11",
                    "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-value",
                    "-Wno-parentheses", c_file, "-o", gcc_out] + _tls_link_flags()
-            if sys.platform == "win32":
-                cmd.extend(["-lws2_32", "-mconsole"])
-            r = subprocess.run(cmd, capture_output=True, text=True)
+            if os.environ.get("TERSE_VERBOSE") or verbose:
+                print("gcc:", " ".join(cmd), file=sys.stderr)
+            r = subprocess.run(cmd, capture_output=True, text=True, env=run_env)
             if r.returncode != 0:
                 print("C compile failed:", file=sys.stderr)
                 err = (r.stderr or r.stdout or "").strip()
@@ -1004,10 +1073,6 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
                     print(err, file=sys.stderr)
                 return 1
 
-        if sys.platform == "win32" and gcc_out != out_bin and os.path.exists(gcc_out):
-            shutil.copy2(gcc_out, out_bin)
-            try: os.remove(gcc_out)
-            except OSError: pass
         if not keep_c:
             try: os.remove(c_file)
             except OSError: pass
@@ -1015,7 +1080,8 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             os.chmod(out_bin, 0o755)
         except OSError:
             pass
-        if verbose: print(f"Compiled -> {out_bin}")
+        if verbose or os.environ.get("TERSE_VERBOSE"):
+            print(f"Compiled -> {out_bin}", file=sys.stderr)
         return 0
     except SyntaxError as e:
         print(f"Syntax error: {e}", file=sys.stderr)
@@ -1070,8 +1136,42 @@ def main():
     if args.command == "run":
         code = compile_terse(src, args.output, args.keep_c, args.verbose, args.source,
                              as_lib=False, link_libs=not args.no_libs, force=args.force)
-        if code != 0: sys.exit(code)
-        sys.exit(subprocess.run([os.path.abspath(resolve_output_path(args.source, args.output))]).returncode)
+        if code != 0:
+            sys.exit(code)
+        base = os.path.abspath(os.path.expanduser(resolve_output_path(args.source, args.output)))
+        candidates = [base]
+        if not base.lower().endswith(".exe"):
+            candidates.append(base + ".exe")
+        bin_path = next((c for c in candidates if os.path.isfile(c)), None)
+        if not bin_path:
+            print("missing binary after build; tried:", file=sys.stderr)
+            for c in candidates:
+                print(f"  {c}", file=sys.stderr)
+            sys.exit(127)
+        env = _augment_path_env()
+        if os.environ.get("TERSE_VERBOSE"):
+            print(f"run: {bin_path}", file=sys.stderr)
+            print(f"PATH[0:3]={os.pathsep.join(env.get('PATH','').split(os.pathsep)[:3])}", file=sys.stderr)
+        try:
+            # Normalize path for Windows CreateProcess
+            bin_path = os.path.normpath(bin_path)
+            r = subprocess.run([bin_path], env=env, cwd=os.path.dirname(bin_path) or None)
+            if r.returncode == 127:
+                print(f"exit 127 from {bin_path}", file=sys.stderr)
+                print("hint: MinGW runtime DLL missing? Put Git mingw64\\bin on PATH", file=sys.stderr)
+                print("  e.g. export PATH=\"/c/Program Files/Git/mingw64/bin:$PATH\"", file=sys.stderr)
+            sys.exit(r.returncode)
+        except OSError as e:
+            print(f"failed to execute {bin_path}: {e}", file=sys.stderr)
+            print("hint: ensure MinGW bin is on PATH (libwinpthread-1.dll)", file=sys.stderr)
+            # last resort: cmd /c on Windows
+            if _is_windows():
+                try:
+                    r = subprocess.run(["cmd", "/c", bin_path], env=env)
+                    sys.exit(r.returncode)
+                except OSError as e2:
+                    print(f"cmd /c also failed: {e2}", file=sys.stderr)
+            sys.exit(127)
 
 
 if __name__ == "__main__":

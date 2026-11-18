@@ -2,8 +2,8 @@ use std.io
 use std.str
 
 fn lineCount() -> [str] {
-  io.out("/tmp/terse_lines.txt", "alpha\nbeta\ngamma\nalphabet")
-  val read = io.in("/tmp/terse_lines.txt")
+  io.out("./tmp/terse_lines.txt", "alpha\nbeta\ngamma\nalphabet")
+  val read = io.in("./tmp/terse_lines.txt")
   val lines = str.split(read, "\n")
   var act: [str] = []
   lp line: lines {

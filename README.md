@@ -9,16 +9,22 @@ curl -fsSL https://raw.githubusercontent.com/lightphos/terse/main/install.sh | s
 export PATH="$HOME/.terse/bin:$PATH"
 ```
 
-Places the host compiler in `~/.terse/compiler`, libs in `~/.terse/lib`, and `tc` in `~/.terse/bin`.
+Places the host compiler in `$HOME/.terse/compiler`, libs in `$HOME/.terse/lib`, and `tc` in `$HOME/.terse/bin`.
 
+### Quick start
 ```bash
-tc build app.te -o ~/.terse/out/app
-~/.terse/out/app
-# or
-tc run app.te
+#app.te
+
+go {
+  pr("This is terse!")
+}
 ```
 
-From a local clone: `sh install.sh`. Overrides: `TERSE_HOME`, `TERSE_REPO`, `TERSE_REF`.
+### Build & Run
+
+```
+./tc app.te
+```
 
 ## Prerequisites
 
@@ -44,15 +50,13 @@ export TERSE_NO_TLS=1
 export OPENSSL_ROOT_DIR=/path/to/openssl
 ```
 
-## From a clone
+## Test
 
 ```bash
-python3 compiler/tersec.py build src/hi.te -o ~/.terse/out/hi
-~/.terse/out/hi
-
-make run.hi
 make verify    # host unit tests
 make tst       # tst/t_*.te
+
+WIP:
 make tcc && make tcc1 && make bootstrap   # native frontend stages
 ```
 
@@ -63,7 +67,7 @@ compiler/     Host compiler (tersec.py, runtime.c, tc.te)
 lib/          Standard and optional packages
 src/          Examples
 tst/          Tests (t_*.te)
-install.sh    Install tc → ~/.terse/
+install.sh    Install tc → $HOME/.terse/
 SPEC.md       Language specification
 BNF.md        Grammar
 benchmark/    HTTP concurrency notes

@@ -1,5 +1,5 @@
 #!/bin/sh
-set -eu
+# set -eu
 
 root_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 caller_dir=$PWD
@@ -52,7 +52,7 @@ if [ -z "$output_path" ]; then
   case "$file_name" in
     *.*) file_name=${file_name%.*} ;;
   esac
-  output_path="$root_dir/out/$file_name"
+  output_path="$HOME/.terse/out/$file_name"
 else
   case "$output_path" in
     /*) ;;
@@ -60,23 +60,27 @@ else
   esac
 fi
 
-cd "$root_dir"
-mkdir -p out
-if [ ! -x out/tc-stage0 ] ||
-   [ compiler/tc.te -nt out/tc-stage0 ] ||
-   [ compiler/tersec.py -nt out/tc-stage0 ]; then
-  python3 compiler/tersec.py build compiler/tc.te -o out/tc-stage0 >/dev/null
+# cd "$root_dir"
+# mkdir -p $HOME/.terse/out
+# if [ ! -x out/tc-stage0 ] ||
+#    [ compiler/tc.te -nt $HOME/.terse/out/tc-stage0 ] ||
+#    [ compiler/tersec.py -nt $HOME/.terse/out/tc-stage0 ]; then
+#   python3 compiler/tersec.py build compiler/tc.te -o $HOME/.terse/out/tc-stage0 >/dev/null
+# fi
+
+# stage1_log=$HOME/.terse/tc-stage1.log
+# if TERSE_SOURCE=$source_path TERSE_OUTPUT=$output_path $HOME/.terse/out/tc-stage0 >"$stage1_log" 2>&1; then
+#   if grep -q '^TC_OK$' "$stage1_log"; then
+#     rm -f "$stage1_log"
+#     printf 'tc: compiled with the Terse frontend: %s\n' "$output_path"
+#     exit 0
+#   fi
+# fi
+# rm -f "$stage1_log"
+
+python3 compiler/tersec.py build "$source_path" -o "$output_path" -f
+if [ -f "${output_path}.exe" ]; then "${output_path}.exe"; 
+	 elif [ -f "${output_path}" ]; then "${output_path}"; 
 fi
 
-stage1_log=out/.tc-stage1.log
-if TERSE_SOURCE=$source_path TERSE_OUTPUT=$output_path out/tc-stage0 >"$stage1_log" 2>&1; then
-  if grep -q '^TC_OK$' "$stage1_log"; then
-    rm -f "$stage1_log"
-    printf 'tc: compiled with the Terse frontend: %s\n' "$output_path"
-    exit 0
-  fi
-fi
-rm -f "$stage1_log"
 
-printf 'tc: falling back to tersec.py for syntax outside the Terse frontend subset\n' >&2
-exec python3 compiler/tersec.py build "$source_path" -o "$output_path"

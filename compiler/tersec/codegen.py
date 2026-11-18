@@ -2561,6 +2561,7 @@ class CodeGen:
             out += [
                 "",
                 "int main(int argc, char** argv) {",
+                "  terse_stdio_init();",
                 "  terse_argc = argc;",
                 "  terse_argv = argv;",
                 f"  int64_t result = {self.known[entry_name]}();",

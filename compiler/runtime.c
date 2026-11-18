@@ -1441,7 +1441,21 @@ static void print_list_str(List_str L) {
 
 static void print_i64(int64_t x) { _terse_did_print = 1; printf("%lld\n", (long long)x); }
 static void print_bool(bool v) { _terse_did_print = 1; printf(v ? "true\n" : "false\n"); }
-static void print_str(const char* s) { _terse_did_print = 1; printf("%s\n", s ? s : ""); fflush(stdout); }
+static void terse_stdio_init(void) {
+  /* Unbuffered stdout helps Git Bash / Make see pr() immediately. */
+  setvbuf(stdout, NULL, _IONBF, 0);
+  setvbuf(stderr, NULL, _IONBF, 0);
+}
+
+static void print_str(const char* s) {
+  _terse_did_print = 1;
+  fputs(s ? s : "", stdout);
+  fputc('\n', stdout);
+  fflush(stdout);
+}
+
+
+
 static void print_str_nnl(const char* s) {
   _terse_did_print = 1;
   fputs(s ? s : "", stdout);
