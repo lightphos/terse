@@ -14,4 +14,4 @@ wheels/
 support/terse.db
 /.continue/
 /benchmark/*.txt
-/tmp/
+/tmp/*.*

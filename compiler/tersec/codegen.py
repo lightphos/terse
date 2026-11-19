@@ -21,10 +21,54 @@ from .utils import (
     _subst_type_name, _subst_type_node, _mangle_generic,
 )
 
-def get_runtime() -> str:
+def get_runtime(need_tls: bool = False) -> str:
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runtime.c")
     with open(path, encoding="utf-8") as f:
-        return f.read()
+        rt = f.read()
+    if not need_tls:
+        # Strip all #ifndef TERSE_NO_TLS ... #endif blocks, keeping the #else
+        # branch when one is present (e.g. the non-TLS `void *ssl = NULL;`).
+        # Preprocessor-aware: handles nested #if/#endif inside the blocks.
+        lines = rt.splitlines(keepends=True)
+        out = []
+        i, n = 0, len(lines)
+        while i < n:
+            line = lines[i]
+            if line.strip() == '#ifndef TERSE_NO_TLS':
+                # Collect until matching #endif, tracking nesting depth
+                depth = 1
+                i += 1
+                body = []
+                else_body = []
+                seen_else = False
+                while i < n and depth > 0:
+                    s = lines[i].strip()
+                    if s.startswith('#if'):
+                        depth += 1
+                    elif s.startswith('#endif'):
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    elif s == '#else' and depth == 1:
+                        seen_else = True
+                        i += 1
+                        continue
+                    if depth == 1:
+                        if seen_else:
+                            else_body.append(lines[i])
+                        else:
+                            body.append(lines[i])
+                    i += 1
+                # i now at the matching #endif; skip it
+                if i < n:
+                    i += 1
+                # Keep only the #else branch (non-TLS path)
+                out.extend(else_body)
+            else:
+                out.append(line)
+                i += 1
+        rt = ''.join(out)
+    return rt
 
 class CodeGen:
 
@@ -2231,7 +2275,7 @@ class CodeGen:
         self.emit("}")
         self.emit()
 
-    def generate(self, prog: Program, source_path: Optional[str] = None, as_lib: bool = False, skip_runtime: bool = False) -> str:
+    def generate(self, prog: Program, source_path: Optional[str] = None, as_lib: bool = False, skip_runtime: bool = False, need_tls: Optional[bool] = None) -> str:
         self.generic_traits = {
             sig.name: sig for sig in prog.sigs if getattr(sig, 'type_params', None)
         }
@@ -2405,7 +2449,7 @@ class CodeGen:
         if prog.toplevel is not None:
             register_tuple_literals(prog.toplevel)
 
-        out = [get_runtime(), ""]
+        out = [get_runtime(need_tls), ""]
         # Emit top-level fix constants
         for c in self.const_decls:
             tn = self.env.get(c.name, 'long')

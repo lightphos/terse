@@ -933,8 +933,11 @@ def _tls_link_flags(need_tls=False):
                         flags.append(extra)
     if "-lpthread" not in flags:
         flags.append("-lpthread")
-    # Windows system libs always (sockets + console subsystem)
+    # Windows: link the pthread runtime statically so the exe needs no
+    # libwinpthread-1.dll at runtime (avoids stale/conflicting DLLs on PATH).
     if _is_windows():
+        if "-static" not in flags:
+            flags.append("-static")
         for extra in ("-lws2_32", "-mconsole"):
             if extra not in flags:
                 flags.append(extra)
@@ -1043,7 +1046,7 @@ def compile_terse(src, out_bin, keep_c=False, verbose=False, source_path=None,
             except OSError:
                 pass
 
-        c_code = CodeGen(source_path).generate(prog, source_path=source_path, as_lib=False, skip_runtime=False)
+        c_code = CodeGen(source_path).generate(prog, source_path=source_path, as_lib=False, skip_runtime=False, need_tls=need_tls)
         c_file = out_bin + ".c"
         os.makedirs(os.path.dirname(os.path.abspath(c_file)) or ".", exist_ok=True)
         with open(c_file, "w", encoding="utf-8") as f:

@@ -58,6 +58,9 @@ make tst       # tst/t_*.te
 
 WIP:
 make tcc && make tcc1 && make bootstrap   # native frontend stages
+
+C Intermediate:
+python3 compiler/tersec.py build src/hi.te -o out/hi --keep-c
 ```
 
 ## Layout
