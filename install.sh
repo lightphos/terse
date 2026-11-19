@@ -137,8 +137,8 @@ echo "  export PATH=\"${BIN_DIR}:\$PATH\""
 echo "  export TERSE_HOME=\"${TERSE_HOME}\""
 echo ""
 echo "Then:"
-echo "  tc build path/to/app.te -o ~/.terse/out/app"
-echo "  tc run path/to/app.te"
+echo "  tc build path/to/app.te -o $HOME/.terse/out/app"
+echo "  $HOME/.terse/out/app(.exe)"
 echo ""
 
 # Smoke check
