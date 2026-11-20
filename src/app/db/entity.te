@@ -1,0 +1,13 @@
+use obj.value
+
+pub fn createUser(name: str, email: str, password: str) -> User {
+    val user = User { id: 0, name: name, email: email }
+    // Here you would normally hash the password and store it securely
+    val credential = Credential { user_id: user.id, password_hash: password }
+    ret user
+}
+
+go {
+    val user = createUser("Alice", "alice@example.com", "password")
+    pr("Created user: " + user.name + " with email: " + user.email)
+}

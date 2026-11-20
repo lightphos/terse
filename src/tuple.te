@@ -9,7 +9,14 @@ fn xpair() -> int {
     ret a + b
 }
 
+fn triple() -> (int, int, str) {
+    ret (1, 2, "three")
+}
+
 go {
     pr(pair())
     pr(xpair())
+    pr(triple())
+    val _, b, s = triple()
+    pr(s)
 }

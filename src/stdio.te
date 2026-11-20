@@ -5,6 +5,5 @@ fn uio() -> str {
   ret io.in("/tmp/terse_out.txt")
 }
 
-go {
-  pr(uio())
-}
+go pr(uio())
+

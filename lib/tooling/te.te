@@ -1,0 +1,27 @@
+
+
+fn build() {
+    pr("building...")
+}
+
+fn run() {
+    pr("running...")
+}
+
+fn test() {
+    pr("testing...")
+}
+
+go {
+    if arg(1) {
+        "-c" => {
+            build()
+        }
+        "-r" => {
+            run()
+        }
+        "-t" => {
+            test()
+        }
+    }
+}

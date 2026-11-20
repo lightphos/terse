@@ -38,3 +38,8 @@ fn t_tuple_literal_destructure() {
     tst.eq(count, 7)
     tst.eq(label, "items")
 }
+
+fn t_destruct_placeholder() {
+    val _, value = labeled()
+    tst.eq(value, 42)
+}

@@ -134,9 +134,9 @@ async function runCommand() {
     try {
         outputChannel.clear();
         outputChannel.show(true);
-        outputChannel.appendLine(`Compiling ${path.basename(document.fileName)} -> ${outPath}`);
+        // outputChannel.appendLine(`Compiling ${path.basename(document.fileName)} -> ${outPath}`);
         await buildTerse(sourcePath, outFsPath, workspace.uri.fsPath);
-        outputChannel.appendLine(`Running ${outPath}`);
+        // outputChannel.appendLine(`Running ${outPath}`);
         await runOutput(outFsPath, workspace.uri.fsPath);
         vscode.window.showInformationMessage(`Ran ${outPath}`);
     }

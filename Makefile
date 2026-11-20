@@ -106,7 +106,7 @@ tst.%:
 # --- VS Code extension / tests ------------------------------------------
 
 vscode-terse:
-	npm install -g @vscode/vsce
+ 	npm install -g @vscode/vsce || true
 	cd vscode-terse && npm install && npm run compile && npm run package
 
 install-vscode-terse:

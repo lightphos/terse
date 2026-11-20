@@ -1,0 +1,25 @@
+use cnx.nhttp
+use cnx.http.*
+use domain.user
+use obj.value
+
+fn getUser() -> str {
+    val u = user.getUser()
+    ret u.name + " <" + u.email + ">"
+}
+
+~~> fn handle(r: Req) -> Rsp {
+  if r.get() {
+    "/" => ret success("app server\n", TXT_PLAIN)
+    "/user" => ret success(getUser(), TXT_PLAIN)
+  }
+  if r.post() {
+    "/echo" => ret success(r.body + "\n", TXT_PLAIN)
+  }
+  ret fail(Status.not_found, "not found\n", TXT_PLAIN)
+}
+
+go {
+  pr("app server listening on port 8777")
+  nhttp.asrv(8777, handle)
+}

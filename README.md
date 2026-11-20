@@ -1,6 +1,6 @@
 # Terse
 
-Compact, statically typed language that compiles to native binaries via a C backend.
+A compact, statically typed language that compiles to native binaries. 
 
 ## Install
 
@@ -9,21 +9,31 @@ curl -fsSL https://raw.githubusercontent.com/lightphos/terse/main/install.sh | s
 export PATH="$HOME/.terse/bin:$PATH"
 ```
 
-Places the host compiler in `$HOME/.terse/compiler`, libs in `$HOME/.terse/lib`, and `tc` in `$HOME/.terse/bin`.
+Places the host compiler in `$HOME/.terse/compiler`, libs in `$HOME/.terse/lib`, and `tc|tersec` in `$HOME/.terse/bin`.
 
-### Quick start
+## Quick start
 ```bash
-#app.te
+# app.te
 
 go {
   pr("This is terse!")
 }
+
+or
+
+go pr("This is terse!")
 ```
 
 ### Build & Run
 
-```
-./tc app.te
+```bash
+# build
+tersec app.te
+or
+tc app.te
+
+# run
+$HOME/.terse/out/app
 ```
 
 ## Prerequisites
@@ -32,23 +42,9 @@ go {
 - `gcc` or `clang` on `PATH`
 - **OpenSSL development files** (needed for HTTPS; optional otherwise)
 
-The compiler **probes** for OpenSSL and passes `-I`/`-L` automatically (Homebrew, MSYS2, system paths, `pkg-config`). If none is found, it builds with `-DTERSE_NO_TLS` (no HTTPS).
 
-| Platform | Install OpenSSL |
-|----------|-----------------|
-| macOS | `brew install openssl` |
-| Debian/Ubuntu/WSL | `sudo apt install libssl-dev` |
-| Fedora | `sudo dnf install openssl-devel` |
-| Windows (MSYS2) | `pacman -S mingw-w64-ucrt-x86_64-openssl` |
-| Windows (choco) | `choco install openssl` |
-
-```bash
-# force no TLS
-export TERSE_NO_TLS=1
-
-# or point at a custom OpenSSL
-export OPENSSL_ROOT_DIR=/path/to/openssl
-```
+> Aim:
+> Native compiler written in terse which produces machine code
 
 ## Test
 
@@ -80,6 +76,7 @@ benchmark/    HTTP concurrency notes
 
 Details live in **[SPEC.md](./SPEC.md)** and **[BNF.md](./BNF.md)**. Topics covered there:
 
+- Keywords
 - Types and primitives (`long`, `int`, `str`, lists, maps, …)
 - Functions, methods, modules (`use` / `pub`)
 - Control flow, pattern `if`, loops
@@ -88,18 +85,20 @@ Details live in **[SPEC.md](./SPEC.md)** and **[BNF.md](./BNF.md)**. Topics cove
 - Pipe `|>`
 - Thread async `~~` / `~` and event-loop `~~>` / `~>`
 - Awaitable I/O (`io.wait`, `io.recv`, `io.send`, `io.connect`)
-- Arena, sockets, HTTP (`lib/cnx`)
-- Compiler pipeline and status
+- Arena, sockets, HTTP
 
-Examples: `src/` · tests: `tst/` · async demo: `src/loop_wait.te` · I/O: `src/io_await.te`.
+## Tooling
 
-## Benchmarks
-
-See **[benchmark/BENCH.md](./benchmark/BENCH.md)** (blocking `http.srv` vs non-blocking `nhttp.asrv`).
+- tersec | tec
+  - build 
+- terser | ter
+  - run
+  - test
+- te -c -r -t
 
 ## Roadmap
 
-**[roadmap.md](./roadmap.md)** — next work and native-lift plan (if present in tree).
+**[roadmap.md](./roadmap.md)** 
 
 ## License
 

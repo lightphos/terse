@@ -12,6 +12,4 @@ pub fn add_dbl(a: dbl, b: dbl) -> dbl {
   ret a + b
 }
 
-go {
-  pr(0)
-}
+go pr(times2(3.0))

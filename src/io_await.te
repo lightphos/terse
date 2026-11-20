@@ -5,8 +5,11 @@
 
 use time.tim
 
+fix PRT = 18765
+
 ~~ fn serve_once() {
-  val ls = io.listen(18765)
+  pr("server: listening...")
+  val ls = io.listen(PRT)
   if ls < 0 {
     pr("listen failed")
     ret
@@ -24,13 +27,14 @@ use time.tim
 }
 
 ~~> fn client() {
-  ~> io.wait(80)
-  val fd = ~> io.connect("127.0.0.1", 18765)
+  pr("client: sending...")
+  // ~> io.wait(80)
+  val fd = ~> io.connect("127.0.0.1", PRT)
   if fd < 0 {
     pr("connect failed")
     ret
   }
-  val n = ~> io.send(fd, "hello")
+  val n = ~> io.send(fd, "hello there")
   val resp = ~> io.recv(fd)
   pr(fmt("sent=", n, " resp=", resp))
   io.close(fd)
@@ -39,6 +43,7 @@ use time.tim
 go {
   pr("io_await: thread server + ~~> client with ~> io.*")
   serve_once()
+  io.wait(100)  // give server a chance to start
   client()
   async.drain()
   pr("done")

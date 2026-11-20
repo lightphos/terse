@@ -1,0 +1,8 @@
+
+use db.entity
+use obj.value
+
+pub fn getUser() -> User {
+    val user = entity.createUser("Alice", "alice@example.com", "password")
+    ret user
+}

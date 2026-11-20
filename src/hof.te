@@ -14,8 +14,4 @@ fn useAdd(a: long) -> long {
   ret apply(|x| x + 100, a)
 }
 
-go {
-  val r1 = useDouble(5) // 10
-  val r2 = useAdd(7) // 107
-  r1 + r2 // 149
-}
+go useDouble(5) + useAdd(7) // 117

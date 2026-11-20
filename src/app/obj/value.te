@@ -1,0 +1,10 @@
+pub rec User {
+    id: int
+    name: str
+    email: str
+}
+
+pub rec Credential {
+    user_id: int
+    password_hash: str
+}

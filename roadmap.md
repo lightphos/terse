@@ -1,7 +1,7 @@
 # Terse Roadmap
 
 Living plan for the next work items.  
-**Reference compiler:** `tersec.py` (host) · **Grammar/spec:** `TERSE_BNF.md`, `SPEC.md` (0.3) · **Native:** `tc.te` (subset)
+**Reference compiler:** `tersec.py` (host) · **Grammar/spec:** `BNF.md`, `SPEC.md` (0.3) · **Native:** `tc.te` (subset)
 
 Status legend: **Done** · **Next** · **Later** · **Parked**
 
@@ -277,3 +277,20 @@ Terse is **usable** when:
 3. Gaps vs host are documented (this file), not accidental.
 
 Ship host features that move the four usability needles; lift into **`tc.te` only at the triggers in §3**.
+
+
+### TO DO
+te -c -r -t
+compile, run, test
+
+test -> mocker
+
+proc -> run a process
+
+uuid -> 
+
+json -> 
+
+crypto ->
+
+svr -> hdlr -> entity -> db | msg
