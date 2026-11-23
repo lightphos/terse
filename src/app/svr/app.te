@@ -1,17 +1,17 @@
 use cnx.nhttp
 use cnx.http.*
-use domain.user
-use obj.value
+use domain.model
+use proc.process
 
 fn getUser() -> str {
-    val u = user.getUser()
+    val u = process.getUser()
     ret u.name + " <" + u.email + ">"
 }
 
 ~~> fn handle(r: Req) -> Rsp {
   if r.get() {
     "/" => ret success("app server\n", TXT_PLAIN)
-    "/user" => ret success(getUser(), TXT_PLAIN)
+    "/user" => ret success(getUser() + "\n", TXT_PLAIN)
   }
   if r.post() {
     "/echo" => ret success(r.body + "\n", TXT_PLAIN)

@@ -1,0 +1,8 @@
+
+use db.access
+use domain.model
+
+pub fn getUser() -> User {
+    val user = access.createUser("Alice", "alice@example.com", "password")
+    ret user
+}

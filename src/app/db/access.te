@@ -1,4 +1,4 @@
-use obj.value
+use domain.model
 
 pub fn createUser(name: str, email: str, password: str) -> User {
     val user = User { id: 0, name: name, email: email }
