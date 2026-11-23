@@ -11,6 +11,9 @@ export PATH="$HOME/.terse/bin:$PATH"
 
 Places the host compiler in `$HOME/.terse/compiler`, libs in `$HOME/.terse/lib`, and `tc|tersec` in `$HOME/.terse/bin`.
 
+Currently requires python and C compiler, see below.
+
+
 ## Quick start
 ```bash
 # app.te
@@ -18,9 +21,9 @@ Places the host compiler in `$HOME/.terse/compiler`, libs in `$HOME/.terse/lib`,
 go {
   pr("This is terse!")
 }
-
+```
 or
-
+```
 go pr("This is terse!")
 ```
 
@@ -29,11 +32,11 @@ go pr("This is terse!")
 ```bash
 # build
 tersec app.te
+```
 or
-tc app.te
-
-# run
-$HOME/.terse/out/app
+```
+te app
+> This is terse!
 ```
 
 ## Prerequisites
@@ -42,17 +45,36 @@ $HOME/.terse/out/app
 - `gcc` or `clang` on `PATH`
 - **OpenSSL development files** (needed for HTTPS; optional otherwise)
 
+```
+> Goal: Native compiler written in terse which produces machine code
+```
+### Install dependencies
 
-> Aim:
-> Native compiler written in terse which produces machine code
+On ubuntu like distros:
 
-## Test
+```bash
+sudo apt
+sudo apt install python3
+sudo apt install gcc
+sudo apt install build-essential
+```
+On windows:
+
+```bash
+install choco
+
+then as admin:
+
+choco install mingw -y
+```
+
+## Test Suite
 
 ```bash
 make verify    # host unit tests
 make tst       # tst/t_*.te
 
-WIP:
+WIP Native compiler:
 make tcc && make tcc1 && make bootstrap   # native frontend stages
 
 C Intermediate:
@@ -89,12 +111,12 @@ Details live in **[SPEC.md](./SPEC.md)** and **[BNF.md](./BNF.md)**. Topics cove
 
 ## Tooling
 
-- tersec | tec
+- tersec | te -c
   - build 
-- terser | ter
+- terser | te -r | te
   - run
   - test
-- te -c -r -t
+- te [-r|-c|t] app
 
 ## Roadmap
 
