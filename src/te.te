@@ -1,0 +1,38 @@
+
+use std.prc
+use std.str
+
+fn build() {
+    pr("building...")
+}
+
+fn run(code: str) {
+    val cd = str.trim(code)
+    pr("running: " + code)
+    val r = prc.exec("terse run src/hi.te")
+//    pr("Output: " + r)
+
+}
+
+fn test() {
+    pr("testing...")
+}
+
+go {
+    val cmd = arg(1)
+    val code = arg(2)
+    if cmd {
+        "-b" => {
+            build()
+        }
+        "-r" => {
+            run(code)
+        }
+        "-t" => {
+            test()
+        }
+        _ => {
+            run(cmd)
+        }
+    }
+}

@@ -1,0 +1,5 @@
+
+pub fn exec(cmd: str) -> str {
+//    val output = process.exec(cmd)
+    ret "Compiler failed"
+}

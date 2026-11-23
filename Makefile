@@ -9,7 +9,7 @@ TERSEC   ?= compiler/tersec.py
 TERSEC_TEST ?= compiler/test_compiler.py
 TC_SRC   ?= compiler/tc.te
 OUT      ?= $(HOME)/.terse/out
-
+BIN	     ?= $(HOME)/.terse/bin	
 STAGE0   := $(OUT)/tc-stage0
 STAGE1   := $(OUT)/tc-stage1
 TC       := $(OUT)/tc

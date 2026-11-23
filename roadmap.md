@@ -294,3 +294,76 @@ json ->
 crypto ->
 
 svr -> hdlr -> entity -> db | msg
+
+---
+
+## Phase A — Reliability (0.3)
+
+**Goal:** `hi` / `make run.hi` / `make tst` behave the same on a clean Linux box and a clean Windows Git Bash.
+
+| Step | Action |
+|------|--------|
+| A1 | One doc block: install → `PATH` (MinGW on Windows) → `tc` or `python3 tersec.py run` → expected `Hi, …` |
+| A2 | Driver: TLS only with `use cnx.http`, `.exe`, `-mconsole`. Keep thin Makefile; platform logic stays in the driver |
+| A3 | On run failure 127 / missing DLL: print a one-line MinGW `PATH` hint |
+| A4 | CI or local checklist: Linux `make tst`; Windows notes in README when automation is not available |
+
+**Done when:** a second machine gets printout without hand-tuning `gcc` flags.
+
+**Not in this phase:** automated stdout smoke targets (revisit later if silent binaries return).
+
+---
+
+## Phase B — Tuples (0.3)
+
+**Goal:** close the Limited tuple row; SPEC / BNF / tests agree.
+
+| Step | Action |
+|------|--------|
+| B1 | SPEC §3: tuple = **Implemented** for literals, returns, local `val a, b = …`, `_` wildcard; state what is *not* supported (e.g. full match patterns) unless implemented |
+| B2 | Tests in `tst/t_tuple.te`: arity mismatch error; `val a, _ = …` / `val _, b = …`; nested only if supported |
+| B3 | Typecheck: hard error on wrong arity / type mismatch — no silent `long` fill |
+| B4 | BNF: production for tuple bind + `_` |
+
+**Done when:** no “parsed but half-real” tuple story.
+
+---
+
+## Phase C — Closures / HOF (0.3)
+
+**Goal:** lambdas and `|>` are trustworthy without reading codegen.
+
+| Step | Action |
+|------|--------|
+| C1 | SPEC: what may be captured (outer `val`/`var` only), by value; not functions/globals unless intended |
+| C2 | Tests: `tst/t_closure.te` / `t_lambda.te` — capture, nested lambda, `|>` + lambda |
+| C3 | Reject or document: capturing `var` mutated after closure creation |
+| C4 | Mark SPEC Limited → Implemented **only** for rules covered by tests |
+
+**Done when:** users can rely on lambdas in `map` / `|>` under documented rules.
+
+---
+
+## Phase D — Diagnostics (0.3, parallel slices)
+
+**Goal:** wrong programs fail **before** gcc with a location.
+
+| Step | Action |
+|------|--------|
+| D1 | Every hard error: `path:line:col: message` (thread lexer line/col through checker) |
+| D2 | Ban silent default-to-`long` on real mismatches (list element, ret type) |
+| D3 | Terse error first; optional secondary `C backend: …` line |
+
+**Done when:** at least one error class (e.g. unknown name) is end-to-end with line:col; then expand.
+
+---
+
+## Out of scope until after A–D
+
+- More `nhttp` / event-loop features as the main track  
+- OpenSSL/install complexity beyond current opt-in  
+- `tc.te` feature growth / host parity  
+- Ownership, full trait constraints, LSP  
+
+**Suggested order:** A1–A3 → B1–B4 → C1–C2 → D1, then expand D.
+
