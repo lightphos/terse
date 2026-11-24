@@ -74,6 +74,7 @@ class TT(Enum):
     AWAIT_LOOP = auto()  # ~>
     PR = auto()
     NPR = auto()
+    DRAIN = auto()
 
 
 KW = {
@@ -83,7 +84,7 @@ KW = {
     'use': TT.USE, 'type': TT.TYPE, 'go': TT.GO, 'tr': TT.TR, 'pub': TT.PUB,
     'en': TT.EN,
     'val': TT.VAL, 'var': TT.VAR, 'fix': TT.FIX, 'rec': TT.REC,
-    'brk': TT.BRK, 'skip': TT.SKIP,
+    'brk': TT.BRK, 'skip': TT.SKIP, 'drain': TT.DRAIN,
 }
 
 

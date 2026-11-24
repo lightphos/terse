@@ -32,7 +32,7 @@ ident ::= [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
 ### Keywords (reserved)
-`fn`, `val`, `var`, `fix`, `type`, `if`, `else`, `use`, `ret`, `true`, `false`, `rec`, `en`, `tr`, `self`, `pub`, `lp`, `brk`, `skip`, `go`, `pr`, `npr`
+`fn`, `val`, `var`, `fix`, `type`, `if`, `else`, `use`, `ret`, `true`, `false`, `rec`, `en`, `tr`, `self`, `pub`, `lp`, `brk`, `skip`, `go`, `pr`, `npr`, `drain`
 
 
 ### Literals
@@ -423,9 +423,20 @@ map `has(m, k)` requires a map as first argument (overload by type).
 
 ### `std.io`
 ```
-io.in(path) -> str       // read text file
-io.out(path, text) -> long
+io.in(path) -> str              // read text file
+io.out(path, text) -> long      // write text file
+io.append(path, text) -> long   // append text file
+io.listen(port) -> long         // TCP listen fd (or -1)
+io.accept(fd) -> long           // accept client fd (or -1)
+io.connect(host, port) -> long  // TCP connect (or -1)
+io.send(fd, data) -> long       // bytes sent
+io.recv(fd) -> str              // received data
+io.close(fd) -> long
+io.wait(ms) -> long             // sleep / event-loop timer
 ```
+Bodies in `lib/std/io.te` are stubs. The host lowers `io.*` / `sock.*` / `fs.*` to a **closed
+runtime set** in `runtime.c`: `fs_*`, `sock_*`, and `terse_loop_await_*` (for `~>` under `~~>`).
+Do not add new host I/O without updating this list and `lib/std/io.te`.
 
 ### `std.err`
 ```
@@ -594,8 +605,9 @@ See `eg.te`, `src/`, `usage/`, and `tst/` alongside the compiler.
 ### Thread async (`~~` / `~`)
 
 - `~~ fn f(...)` — may run on a host thread
-- `f(...)` without `~` — fire-and-forget (tracked; drain at exit)
+- `f(...)` without `~` — fire-and-forget (tracked; auto-drain at process exit)
 - `~ f(...)` — spawn and join (blocks the calling thread)
+- `drain` — join all outstanding `~~` tasks now (keyword; no arguments)
 
 ### Event-loop async (`~~>` / `~>`)
 

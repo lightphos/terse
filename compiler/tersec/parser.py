@@ -513,6 +513,9 @@ class Parser:
         if self.match(TT.SKIP):
             self.adv()
             return JumpExpr('skip', None)
+        if self.match(TT.DRAIN):
+            self.adv()
+            return Call(Var("drain"), [])
         if self.match(TT.LPAREN):
             self.adv()
             if self.match(TT.RPAREN):
@@ -584,7 +587,7 @@ class Parser:
         if self.match(TT.RBRACE):
             self.adv()
             return IntLit(0)
-        if self.match(TT.VAL, TT.VAR, TT.IF, TT.LP, TT.RET, TT.BRK, TT.SKIP,
+        if self.match(TT.VAL, TT.VAR, TT.IF, TT.LP, TT.RET, TT.BRK, TT.SKIP, TT.DRAIN,
                       TT.FN, TT.GO, TT.FIX):
             self.i = save
             return self.parse_block()

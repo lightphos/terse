@@ -59,7 +59,7 @@ fn benchPar(url: str, n: long, conc: long) {
       fetch(url)
       f += 1
     }
-    async.drain()
+    drain
     done += wave
   }
   val ms = tim.elapsed(t0)
@@ -76,7 +76,7 @@ fn benchConc(url: str, n: long) {
     fetch(url)
     j += 1
   }
-  async.drain()
+  drain
   val ms = tim.elapsed(t0)
   val rps = ms > 0 ? (n * 1000) / ms : 0
   pr(fmt(url, " in_flight=", n, " ms=", ms, " req/s≈", rps))

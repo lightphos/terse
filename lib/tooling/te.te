@@ -1,17 +1,11 @@
 
-use std.prc
-use std.str
 
 fn build() {
     pr("building...")
 }
 
-fn run(code: str) {
-    val cd = str.trim(code)
-    pr("running: " + code)
-    val r = prc.exec("terse run src/hi.te")
-//    pr("Output: " + r)
-
+fn run() {
+    pr("running...")
 }
 
 fn test() {
@@ -19,20 +13,15 @@ fn test() {
 }
 
 go {
-    val cmd = arg(1)
-    val code = arg(2)
-    if cmd {
-        "-b" => {
+    if arg(1) {
+        "-c" => {
             build()
         }
         "-r" => {
-            run(code)
+            run()
         }
         "-t" => {
             test()
-        }
-        _ => {
-            run(cmd)
         }
     }
 }

@@ -45,6 +45,6 @@ go {
   serve_once()
   io.wait(100)  // give server a chance to start
   client()
-  async.drain()
+  drain
   pr("done")
 }

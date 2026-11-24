@@ -1,21 +1,28 @@
-// Standard I/O + awaitable sockets for the event loop.
+// std.io — public I/O surface (files + sockets).
 //
-// File helpers (host):
+// Implementation: host intrinsics in compiler/runtime.c only.
+// lib/std/io.te documents the API; bodies are stubs. Codegen maps
+// io.* (and sock.* / fs.*) to the closed host set below.
+//
+// Host intrinsics (runtime.c) — do not grow without SPEC note:
+//   Files:   fs_read_text, fs_write_text, fs_append_text
+//   Sockets: sock_listen, sock_accept, sock_connect, sock_connect_tls,
+//            sock_send, sock_recv, sock_recv_all, sock_close
+//   Await:   terse_loop_await_wait, terse_loop_await_recv,
+//            terse_loop_await_send, terse_loop_await_connect
+//            (suspend/resume under ~~> + ~>; plain calls block via sock_*)
+//
+// File helpers:
 //   io.in(path) / io.out(path, text) / io.append(path, text)
 //
-// Sockets (blocking if called without ~>; awaitable under ~~> with ~>):
-//   fd = io.connect(host, port)
-//   n  = ~> io.send(fd, data)
-//   s  = ~> io.recv(fd)
-//   ~> io.wait(ms)
-//   io.close(fd)
+// Sockets:
+//   Blocking (plain call):  io.listen / accept / connect / send / recv / close
+//   Awaitable (~~> + ~>):   ~> io.connect / ~> io.send / ~> io.recv / ~> io.wait
 //
-// Prefer ~~> handlers + ~> for concurrent I/O; use plain calls for simple scripts.
-
-// These are host-backed; signatures document the surface for use std.io / use std.io.*
+// Prefer ~~> handlers + ~> for concurrent I/O; plain calls for simple scripts.
+// Higher-level HTTP lives in lib/cnx/http.te — not here.
 
 pub fn wait(ms: long) -> long {
-  // host: terse_loop_await_wait
   ret 0
 }
 
@@ -40,5 +47,18 @@ pub fn accept(fd: long) -> long {
 }
 
 pub fn close(fd: long) -> long {
+  ret 0
+}
+
+// File surface (also host-backed)
+pub fn in(path: str) -> str {
+  ret ""
+}
+
+pub fn out(path: str, text: str) -> long {
+  ret 0
+}
+
+pub fn append(path: str, text: str) -> long {
   ret 0
 }

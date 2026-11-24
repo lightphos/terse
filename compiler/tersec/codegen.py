@@ -82,6 +82,75 @@ class CodeGen:
             'map_str_long': 'map_str_i64',
         }.get(t, t)
 
+
+    # --- Host I/O intrinsics (runtime.c only) ---------------------------------
+    # Public surface is lib/std/io.te. Codegen maps io.*/sock.*/fs.* to this set.
+    # Await (~>) uses terse_loop_await_*; plain calls use sock_* / fs_*.
+    _HOST_IO_MODS = frozenset({"io", "sock", "fs"})
+
+    def gen_host_io(self, mod, name, args, loop_await=False):
+        """Map io/sock/fs call to runtime.c. args: list of already-generated C exprs.
+        Returns (c_code, type) or None if not a host I/O op.
+        """
+        if mod not in (None, "io", "sock", "fs", "tim", "time") and mod is not None:
+            return None
+        n = name
+        # File I/O (always blocking host)
+        if n in ("in", "read_text") and len(args) >= 1 and mod in ("io", "fs", None):
+            return f"fs_read_text({args[0]})", "str"
+        if n in ("out", "write_text") and len(args) >= 2 and mod in ("io", "fs", None):
+            return f"fs_write_text({args[0]}, {args[1]})", "long"
+        if n in ("append", "append_text") and len(args) >= 2 and mod in ("io", "fs", None):
+            return f"fs_append_text({args[0]}, {args[1]})", "long"
+        # Sockets / wait
+        if n in ("wait", "sleep") and len(args) >= 1:
+            return f"terse_loop_await_wait({args[0]})", "long"
+        if n == "listen" and len(args) >= 1:
+            return f"sock_listen({args[0]})", "long"
+        if n == "accept" and len(args) >= 1:
+            return f"sock_accept({args[0]})", "long"
+        if n == "close" and len(args) >= 1:
+            return f"sock_close({args[0]})", "long"
+        if n in ("connect_tls", "connecttls") and len(args) >= 2:
+            return f"sock_connect_tls({args[0]}, {args[1]})", "long"
+        if n in ("recv_all", "recvall") and len(args) >= 1:
+            return f"sock_recv_all({args[0]})", "str"
+        if loop_await:
+            if n == "recv" and len(args) >= 1:
+                return (
+                    f"({{ (void)terse_loop_await_recv({args[0]}); "
+                    f"terse_loop_result_str(); }})",
+                    "str",
+                )
+            if n == "send" and len(args) >= 2:
+                return (
+                    f"({{ (void)terse_loop_await_send({args[0]}, {args[1]}); "
+                    f"terse_loop_result_long(); }})",
+                    "long",
+                )
+            if n == "connect" and len(args) >= 2:
+                return (
+                    f"({{ (void)terse_loop_await_connect({args[0]}, {args[1]}); "
+                    f"terse_loop_result_long(); }})",
+                    "long",
+                )
+        else:
+            # Plain calls: blocking sock_* (await helpers also fall back when not in step)
+            if n == "recv" and len(args) >= 1:
+                if mod == "io":
+                    return f"terse_loop_await_recv({args[0]})", "str"
+                return f"sock_recv({args[0]})", "str"
+            if n == "send" and len(args) >= 2:
+                if mod == "io":
+                    return f"terse_loop_await_send({args[0]}, {args[1]})", "long"
+                return f"sock_send({args[0]}, {args[1]})", "long"
+            if n == "connect" and len(args) >= 2:
+                if mod == "io":
+                    return f"terse_loop_await_connect({args[0]}, {args[1]})", "long"
+                return f"sock_connect({args[0]}, {args[1]})", "long"
+        return None
+
+
     def __init__(self, source_path=None):
         self.lines = []
         self.indent = 0
@@ -581,35 +650,11 @@ class CodeGen:
                         name = v.func.field
                         if isinstance(v.func.obj, Var):
                             mod = v.func.obj.name
-                    # ~> wait / io.wait / tim.wait
-                    if name in ('wait', 'sleep') and v.args:
-                        ms, _ = self.gen_expr(v.args[0])
-                        return f"terse_loop_await_wait({ms})", "long"
-                    # ~> io.recv(fd) or ~> recv(fd)
-                    if name == 'recv' and v.args and (mod in (None, 'io', 'sock') or mod == 'io'):
-                        fd, _ = self.gen_expr(v.args[0])
-                        # value is available after resume via result_str; in SM next state uses it
-                        return (
-                            f"({{ (void)terse_loop_await_recv({fd}); "
-                            f"terse_loop_result_str(); }})",
-                            "str",
-                        )
-                    if name == 'send' and len(v.args) >= 2:
-                        fd, _ = self.gen_expr(v.args[0])
-                        data, _ = self.gen_expr(v.args[1])
-                        return (
-                            f"({{ (void)terse_loop_await_send({fd}, {data}); "
-                            f"terse_loop_result_long(); }})",
-                            "long",
-                        )
-                    if name == 'connect' and len(v.args) >= 2:
-                        host, _ = self.gen_expr(v.args[0])
-                        port, _ = self.gen_expr(v.args[1])
-                        return (
-                            f"({{ (void)terse_loop_await_connect({host}, {port}); "
-                            f"terse_loop_result_long(); }})",
-                            "long",
-                        )
+                    if name:
+                        args_c = [self.gen_expr(a)[0] for a in v.args]
+                        hit = self.gen_host_io(mod, name, args_c, loop_await=True)
+                        if hit is not None:
+                            return hit
             self._await_depth += 1
             try:
                 return self.gen_expr(e.value)
@@ -957,6 +1002,8 @@ class CodeGen:
             if isinstance(e.func, Var) and e.func.name == 'parse' and len(e.args) >= 1:
                 a, at = self.gen_expr(e.args[0])
                 return f"str_parse_i64({a})", "long"
+            if isinstance(e.func, Var) and e.func.name == 'drain' and not e.args:
+                return "terse_async_drain()", "long"
             if isinstance(e.func, Var) and e.func.name == 'join' and len(e.args) >= 2:
                 a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
                 return f"str_join({a}, {b})", "str"
@@ -996,43 +1043,11 @@ class CodeGen:
                     return f"str_join({a}, {b})", "str"
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name in ('io', 'fs'):
-                # std.io — io.in(path) / io.out(path, text)
-                # fs.read_text / fs.write_text remain as aliases
-                if e.func.field in ('in', 'read_text'):
-                    path, _ = self.gen_expr(e.args[0])
-                    return f"fs_read_text({path})", "str"
-                if e.func.field == 'out' or e.func.field == 'write_text':
-                    path, _ = self.gen_expr(e.args[0])
-                    text, _ = self.gen_expr(e.args[1])
-                    return f"fs_write_text({path}, {text})", "long"
-                if e.func.field == 'append' or e.func.field == 'append_text':
-                    path, _ = self.gen_expr(e.args[0])
-                    text, _ = self.gen_expr(e.args[1])
-                    return f"fs_append_text({path}, {text})", "long"
-
-                if e.func.field == 'wait' and e.args:
-                    ms, _ = self.gen_expr(e.args[0])
-                    return f"terse_loop_await_wait({ms})", "long"
-                if e.func.field == 'recv' and e.args:
-                    fd, _ = self.gen_expr(e.args[0])
-                    return f"terse_loop_await_recv({fd})", "str"
-                if e.func.field == 'send' and len(e.args) >= 2:
-                    fd, _ = self.gen_expr(e.args[0])
-                    data, _ = self.gen_expr(e.args[1])
-                    return f"terse_loop_await_send({fd}, {data})", "long"
-                if e.func.field == 'connect' and len(e.args) >= 2:
-                    host, _ = self.gen_expr(e.args[0])
-                    port, _ = self.gen_expr(e.args[1])
-                    return f"terse_loop_await_connect({host}, {port})", "long"
-                if e.func.field == 'listen' and e.args:
-                    port, _ = self.gen_expr(e.args[0])
-                    return f"sock_listen({port})", "long"
-                if e.func.field == 'accept' and e.args:
-                    fd, _ = self.gen_expr(e.args[0])
-                    return f"sock_accept({fd})", "long"
-                if e.func.field == 'close' and e.args:
-                    fd, _ = self.gen_expr(e.args[0])
-                    return f"sock_close({fd})", "long"
+                # Public API: lib/std/io.te — lower to host intrinsics in runtime.c
+                args_c = [self.gen_expr(a)[0] for a in e.args]
+                hit = self.gen_host_io(e.func.obj.name, e.func.field, args_c, loop_await=False)
+                if hit is not None:
+                    return hit
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'arena':
                 f = e.func.field
@@ -1045,32 +1060,12 @@ class CodeGen:
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'sock':
                 f = e.func.field
-                if f == 'listen' and e.args:
-                    a, _ = self.gen_expr(e.args[0])
-                    return f"sock_listen({a})", "long"
-                if f == 'accept' and e.args:
-                    a, _ = self.gen_expr(e.args[0])
-                    return f"sock_accept({a})", "long"
-                if f == 'recv' and e.args:
-                    a, _ = self.gen_expr(e.args[0])
-                    return f"sock_recv({a})", "str"
-                if f == 'send' and len(e.args) >= 2:
-                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
-                    return f"sock_send({a}, {b})", "long"
-                if f == 'close' and e.args:
-                    a, _ = self.gen_expr(e.args[0])
-                    return f"sock_close({a})", "long"
-                if f == 'connect' and len(e.args) >= 2:
-                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
-                    return f"sock_connect({a}, {b})", "long"
-                if f in ('connect_tls', 'connecttls') and len(e.args) >= 2:
-                    a, _ = self.gen_expr(e.args[0]); b, _ = self.gen_expr(e.args[1])
-                    return f"sock_connect_tls({a}, {b})", "long"
-                if f in ('recv_all', 'recvall') and e.args:
-                    a, _ = self.gen_expr(e.args[0])
-                    return f"sock_recv_all({a})", "str"
                 if f in ('nb_srv', 'nb_serve') and len(e.args) >= 2:
                     return self.gen_sock_nb_srv(e)
+                args_c = [self.gen_expr(a)[0] for a in e.args]
+                hit = self.gen_host_io('sock', f, args_c, loop_await=False)
+                if hit is not None:
+                    return hit
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name in ('time', 'tim'):
                 f = e.func.field

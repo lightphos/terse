@@ -9,7 +9,7 @@ TERSEC   ?= compiler/tersec.py
 TERSEC_TEST ?= compiler/test_compiler.py
 TC_SRC   ?= compiler/tc.te
 OUT      ?= $(HOME)/.terse/out
-BIN	     ?= $(HOME)/.terse/bin	
+
 STAGE0   := $(OUT)/tc-stage0
 STAGE1   := $(OUT)/tc-stage1
 TC       := $(OUT)/tc
@@ -74,11 +74,11 @@ bootstrap-verify: tcc
 	@echo "==> host stage0"
 	@test -x "$(STAGE0)" || test -f "$(STAGE0)" || (echo "missing $(STAGE0)" && exit 1)
 	@printf '%s\n' 'go { pr(42) }' > $(OUT)/_bv_hi.te
-	@echo "==> stage0 compile smoke"
+	@echo "==> stage0 compile"
 	@CC=$(CC) $(STAGE0) $(OUT)/_bv_hi.te $(OUT)/_bv_hi && \
 	  test -f $(OUT)/_bv_hi -o -f $(OUT)/_bv_hi.exe && \
 	  echo "bootstrap-verify: OK" || \
-	  (echo "bootstrap-verify: stage0 smoke failed (use host if OOM on full tc.te)" && exit 1)
+	  (echo "bootstrap-verify: stage0 failed (use host if OOM on full tc.te)" && exit 1)
 
 # --- Compile & run apps -------------------------------------------------
 

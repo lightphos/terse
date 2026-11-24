@@ -204,7 +204,7 @@
 <ret-expr>      ::= "ret" [ <expr> ]
 
 <jump-expr>     ::= "brk" [ <expr> ]
-                  | "skip"
+                  | "skip" | "drain"
 
 
 (* Blocks, bindings, assignment *)
@@ -279,6 +279,14 @@ fn-name-overloads ::= { fn-decl }   (* same Ident, distinct typed-param lists *)
 - Duplicate identical signatures → error.
 - Codegen mangles symbols: `terse_<name>__<t0>_<t1>_...` when two or more overloads share a name; a single definition keeps `terse_<name>`.
 
+
+### Thread join-all
+
+```
+drain_stmt  ::= "drain"
+```
+
+`drain` joins all outstanding `~~` (thread) tasks. Process exit also drains.
 
 ### Event-loop async
 ```

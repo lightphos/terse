@@ -7,7 +7,7 @@
 //
 //   ~~  /  ~     Thread async
 //     - CPU or blocking work that should overlap (hash, sleep, slow compute)
-//     - Fire-and-forget jobs; use ~ to join, or async.drain() for a batch
+//     - Fire-and-forget jobs; use ~ to join, or drain for a batch
 //     - OK to block a worker thread; does NOT share one event loop
 //
 //   ~~> /  ~>    Event-loop async
@@ -61,6 +61,6 @@ go {
   pr("--- threads ~~ (overlapping; drain at end) ---")
   thr_hello()
   thr_steps()
-  async.drain()
+  drain
   pr("thread section finished")
 }

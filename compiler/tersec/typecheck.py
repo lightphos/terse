@@ -548,7 +548,7 @@ class TypeChecker:
             if isinstance(e.func, Var):
                 n = e.func.name
                 builtins = {'pr','npr','pr_','len','env','str','push','substr','arg','keys','values',
-                            'has','up','low','trim','split','join','parse','starts','ends','map','fmt','err'}
+                            'has','up','low','trim','split','join','parse','starts','ends','map','fmt','err','drain'}
                 if (n not in self.funcs and n not in builtins and n not in self.env
                         and n not in getattr(self, 'generic_fns', {})):
                     self.errors.append(f"unknown function '{n}'")
