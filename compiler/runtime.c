@@ -1693,3 +1693,27 @@ static int64_t fs_append_text(const char* path, const char* text) {
     if (written != size || fclose(file) != 0) fs_io_fail("append", path);
     return (int64_t)written;
 }
+
+static int64_t terse_prc_exec(const char* cmd) {
+    FILE* pipe = popen(cmd, "r");
+    if (!pipe) return -1;
+    size_t cap = 4096;
+    size_t len = 0;
+    char* buf = (char*)arena_alloc(cap);
+    buf[0] = 0;
+    char chunk[1024];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof(chunk), pipe)) > 0) {
+        if (len + n + 1 > cap) {
+            cap *= 2;
+            buf = (char*)arena_alloc(cap);
+        }
+        memcpy(buf + len, chunk, n);
+        len += n;
+        buf[len] = 0;
+    }
+    int status = pclose(pipe);
+    (void)status;
+    const char* out = buf;
+    return (int64_t)(intptr_t)out;
+}

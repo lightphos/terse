@@ -9,7 +9,7 @@ fn build() {
 fn run(code: str) {
     val cd = str.trim(code)
     pr("running: " + code)
-    val r = prc.exec("terse run src/hi.te")
+    val r = prc.exec("python3 --version")
 //    pr("Output: " + r)
 
 }

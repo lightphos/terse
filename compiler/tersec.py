@@ -81,6 +81,10 @@ def _rewrite_module_expr(e, local_functions, imported_modules):
                         'trim', 'split', 'up', 'low', 'rpl', 'rpt') \
                         and e.field in exports:
                     return Var(exports[e.field])
+                # Modules whose lib/std/*.te functions are compiled normally
+                # (not host-overridden by codegen): resolve to the mangled fn.
+                if builtin_module == 'prc' and e.field in exports:
+                    return Var(exports[e.field])
                 return Member(Var(builtin_module), e.field)
             if e.field not in exports:
                 raise SyntaxError(f"module '{e.obj.name}' has no function '{e.field}'")

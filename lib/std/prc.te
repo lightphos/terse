@@ -1,5 +1,6 @@
 
 pub fn exec(cmd: str) -> str {
 //    val output = process.exec(cmd)
-    ret "Compiler failed"
+//    terse_prc_exec(cmd)
+    ret "-"
 }

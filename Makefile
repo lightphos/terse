@@ -113,6 +113,7 @@ install-vscode-terse:
 	cd vscode-terse && code --install-extension vscode-terse-0.0.1.vsix
 
 tst:
+	mkdir tmp || true
 	@echo "Running all tst/t_*.te tests"
 	@rm -rf $(OUT)
 	@for f in tst/t_*.te; do \

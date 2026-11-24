@@ -1049,6 +1049,14 @@ class CodeGen:
                 if hit is not None:
                     return hit
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
+                    and e.func.obj.name == 'prc' and e.func.field == 'exec':
+                # std.prc — process spawn from lib/std/prc.te (compiled fn)
+                cname = self.known.get(f"__module_std_std_prc_exec")
+                if cname is None:
+                    raise SyntaxError("prc.exec requires 'use std.prc'")
+                args = [self.gen_expr(a)[0] for a in e.args]
+                return f"{cname}({', '.join(args)})", "str"
+            if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'arena':
                 f = e.func.field
                 if f == 'used':
