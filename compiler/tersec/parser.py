@@ -268,10 +268,16 @@ class Parser:
 
     def parse_binding(self):
         self.adv()  # consume val/var
-        names = [self.expect(TT.IDENT).v]
+        def parse_binding_name():
+            if self.match(TT.UNDERSCORE):
+                self.adv()
+                return "_"
+            return self.expect(TT.IDENT).v
+
+        names = [parse_binding_name()]
         while self.match(TT.COMMA):
             self.adv()
-            names.append(self.expect(TT.IDENT).v)
+            names.append(parse_binding_name())
         name = names if len(names) > 1 else names[0]
         typ = None
         if self.match(TT.COLON):

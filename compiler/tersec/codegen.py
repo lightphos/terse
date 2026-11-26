@@ -1611,6 +1611,8 @@ class CodeGen:
             old_env = self.env.copy()
             declarations = []
             for i, (name, item_type) in enumerate(zip(e.names, item_types)):
+                if name == "_":
+                    continue
                 self.env[name] = item_type
                 declarations.append(
                     f"{self.c_type(item_type)} {name} = {tmp}.v{i};"

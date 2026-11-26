@@ -902,7 +902,8 @@ class TypeChecker:
                 item_types = ['long'] * len(e.names)
             old_values = {name: self.env.get(name) for name in e.names}
             for name, item_type in zip(e.names, item_types):
-                self.env[name] = item_type
+                if name != "_":
+                    self.env[name] = item_type
             result = self.check(e.body)
             for name, old in old_values.items():
                 if old is None:

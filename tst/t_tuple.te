@@ -42,4 +42,7 @@ fn t_tuple_literal_destructure() {
 fn t_destruct_placeholder() {
     val _, value = labeled()
     tst.eq(value, 42)
+    val s, _ = labeled()
+    tst.eq(s, "answer")
+
 }
