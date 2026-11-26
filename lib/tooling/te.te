@@ -66,8 +66,14 @@ go {
         "-t" => {
             test(code)
         }
+        "-h" => {
+            pr("usage: te -b|-r|-t <code>")
+            pr("or")
+            pr("       te <code>")
+        }
         _ => {
-            pr("usage: make -b|-r|-t <code>")
+            run(cmd)
         }
     }
 }
+
