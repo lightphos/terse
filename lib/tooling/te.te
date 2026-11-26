@@ -57,23 +57,15 @@ go {
     val cmd = arg(1)
     val code = arg(2)
     if cmd {
-        "-b" => {
-            build(code)
-        }
-        "-r" => {
-            run(code)
-        }
-        "-t" => {
-            test(code)
-        }
+        "-b" => build(code)
+        "-r" => run(code)
+        "-t" => test(code)
         "-h" => {
             pr("usage: te -b|-r|-t <code>")
             pr("or")
             pr("       te <code>")
         }
-        _ => {
-            run(cmd)
-        }
+        _ => run(cmd)
     }
 }
 
