@@ -741,6 +741,7 @@ class TypeChecker:
                     and e.func.obj.name in ('io', 'fs'):
                 if e.func.field in ('in', 'read_text'): return 'str'
                 if e.func.field in ('out', 'write_text', 'append', 'append_text'): return 'long'
+                if e.func.field == 'dir': return 'list_str'
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name in ('time', 'tim'):
                 f = e.func.field

@@ -1,5 +1,5 @@
 use std.tst
-use stdio
+use io_file
 
 fn t_io_write_read() {
   tst.eq(uio(), "from std.io")

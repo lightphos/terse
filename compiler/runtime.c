@@ -16,10 +16,14 @@
 #include <setjmp.h>
 #ifdef _WIN32
 #include <process.h>
+#include <io.h>
+#include <direct.h>
 #else
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #endif
 
 
@@ -1694,9 +1698,88 @@ static int64_t fs_append_text(const char* path, const char* text) {
     return (int64_t)written;
 }
 
-static int64_t terse_prc_exec(const char* cmd) {
-    FILE* pipe = popen(cmd, "r");
-    if (!pipe) return -1;
+static char* fs_join_path(const char* base, const char* name) {
+#ifdef _WIN32
+    const char separator = '\\';
+#else
+    const char separator = '/';
+#endif
+    size_t blen = base ? strlen(base) : 0;
+    size_t nlen = name ? strlen(name) : 0;
+    int needs_separator = blen > 0 && base[blen - 1] != separator
+        && base[blen - 1] != '/'
+#ifdef _WIN32
+        && base[blen - 1] != '\\';
+#else
+        ;
+#endif
+    char* joined = (char*)arena_alloc(blen + (needs_separator ? 1 : 0) + nlen + 1);
+    size_t off = 0;
+    if (blen) { memcpy(joined, base, blen); off = blen; }
+    if (needs_separator) joined[off++] = separator;
+    if (nlen) memcpy(joined + off, name, nlen);
+    joined[off + nlen] = 0;
+    return joined;
+}
+
+#ifdef _WIN32
+static List_str fs_dir_recursive(const char* path, List_str out) {
+    char* pattern = fs_join_path(path, "*");
+    struct _finddata_t info;
+    intptr_t handle = _findfirst(pattern, &info);
+    if (handle == -1) return out;
+
+    do {
+        if (strcmp(info.name, ".") == 0 || strcmp(info.name, "..") == 0) continue;
+        char* child = fs_join_path(path, info.name);
+        out = list_push_str(out, child);
+        if ((info.attrib & _A_SUBDIR) != 0) {
+            out = fs_dir_recursive(child, out);
+        }
+    } while (_findnext(handle, &info) == 0);
+
+    _findclose(handle);
+    return out;
+}
+
+static List_str fs_dir(const char* path) {
+    if (!path) path = ".";
+    return fs_dir_recursive(path, list_new_str(0));
+}
+#else
+static List_str fs_dir_recursive(const char* path, List_str out) {
+    DIR* dir = opendir(path);
+    if (!dir) return out;
+
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+        char* child = fs_join_path(path, entry->d_name);
+        out = list_push_str(out, child);
+
+        struct stat st;
+        if (lstat(child, &st) == 0 && S_ISDIR(st.st_mode)) {
+            out = fs_dir_recursive(child, out);
+        }
+    }
+    closedir(dir);
+    return out;
+}
+
+static List_str fs_dir(const char* path) {
+    if (!path || !path[0]) path = ".";
+    return fs_dir_recursive(path, list_new_str(0));
+}
+#endif
+
+static char* terse_prc_exec(const char* cmd) {
+#ifdef _WIN32
+    FILE* pipe = _popen(cmd ? cmd : "", "r");
+#else
+    FILE* pipe = popen(cmd ? cmd : "", "r");
+#endif
+    if (!pipe) return (char*)"";
     size_t cap = 4096;
     size_t len = 0;
     char* buf = (char*)arena_alloc(cap);
@@ -1706,14 +1789,19 @@ static int64_t terse_prc_exec(const char* cmd) {
     while ((n = fread(chunk, 1, sizeof(chunk), pipe)) > 0) {
         if (len + n + 1 > cap) {
             cap *= 2;
-            buf = (char*)arena_alloc(cap);
+            char* grown = (char*)arena_alloc(cap);
+            memcpy(grown, buf, len);
+            buf = grown;
         }
         memcpy(buf + len, chunk, n);
         len += n;
         buf[len] = 0;
     }
+#ifdef _WIN32
+    int status = _pclose(pipe);
+#else
     int status = pclose(pipe);
+#endif
     (void)status;
-    const char* out = buf;
-    return (int64_t)(intptr_t)out;
+    return buf;
 }

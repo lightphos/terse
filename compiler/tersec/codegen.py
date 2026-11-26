@@ -102,6 +102,8 @@ class CodeGen:
             return f"fs_write_text({args[0]}, {args[1]})", "long"
         if n in ("append", "append_text") and len(args) >= 2 and mod in ("io", "fs", None):
             return f"fs_append_text({args[0]}, {args[1]})", "long"
+        if n == "dir" and len(args) >= 1 and mod in ("io", "fs", None):
+            return f"fs_dir({args[0]})", "list_str"
         # Sockets / wait
         if n in ("wait", "sleep") and len(args) >= 1:
             return f"terse_loop_await_wait({args[0]})", "long"
@@ -1050,12 +1052,12 @@ class CodeGen:
                     return hit
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'prc' and e.func.field == 'exec':
-                # std.prc — process spawn from lib/std/prc.te (compiled fn)
+                # std.prc — execute through the operating system shell.
                 cname = self.known.get(f"__module_std_std_prc_exec")
                 if cname is None:
                     raise SyntaxError("prc.exec requires 'use std.prc'")
                 args = [self.gen_expr(a)[0] for a in e.args]
-                return f"{cname}({', '.join(args)})", "str"
+                return f"terse_prc_exec({', '.join(args)})", "str"
             if isinstance(e.func, Member) and isinstance(e.func.obj, Var) \
                     and e.func.obj.name == 'arena':
                 f = e.func.field

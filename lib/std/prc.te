@@ -1,6 +1,5 @@
 
 pub fn exec(cmd: str) -> str {
-//    val output = process.exec(cmd)
-//    terse_prc_exec(cmd)
+// The host codegen lowers prc.exec() directly to the C runtime.
     ret "-"
 }

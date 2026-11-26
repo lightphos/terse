@@ -1,21 +1,56 @@
 
 use std.prc
 use std.str
+use std.io
 
-fn build() {
-    pr("building...")
+fn build(code: str) {
+    if code == "" {
+        pr("no code to build")
+        ret
+    }
+
+    val cd = str.trim(code)
+    pr("building " + cd + "...")
+    val r = prc.exec( "$HOME/.terse/bin/tersec build "+ cd +".te")
+    pr(r)
+    var codep = str.split(cd, "/")
+    val codeplen = len(codep)
+    if codeplen == 0 {
+        codep = str.split(cd, "\\")
+    }
+    val cdd = codep[codeplen - 1]
+    val lr = prc.exec("ls -l $HOME/.terse/out/"+cdd+"*")
+    pr(lr)
 }
 
 fn run(code: str) {
-    val cd = str.trim(code)
-    pr("running: " + code)
-    val r = prc.exec("terse run src/hi.te")
-//    pr("Output: " + r)
-
+    if code == "" {
+        pr("no code to run")
+        ret
+    }
+    var cd = str.trim(code)
+    if (!str.has(cd, ".te")) {
+        cd += ".te"
+    }
+    val r = prc.exec("$HOME/.terse/bin/tersec run " + cd)
+    npr(r)
 }
 
-fn test() {
-    pr("testing...")
+fn test(code: str) {
+    if code == "" {
+        pr("testing all...")
+        val tsts = io.dir("tst")
+        var ran = 0
+        lp tst: tsts {
+            test(tst)
+            ran += 1
+        }
+        pr("ran " + ran + " tests")
+        ret
+    }
+//    if "-v"
+//    pr(code + " ")
+    val r = run(code)
 }
 
 go {
@@ -23,16 +58,16 @@ go {
     val code = arg(2)
     if cmd {
         "-b" => {
-            build()
+            build(code)
         }
         "-r" => {
             run(code)
         }
         "-t" => {
-            test()
+            test(code)
         }
         _ => {
-            run(cmd)
+            pr("usage: make -b|-r|-t <code>")
         }
     }
 }

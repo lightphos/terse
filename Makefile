@@ -130,7 +130,7 @@ wzone:
 	find . -name "*Zone*" -exec rm {} \;
 
 zit:
-	cd .. && zip -r terse.zip terse -x "terse/.venv/*" -x "terse/.vscode/*" -x "terse/vscode-terse/*" -x "terse/.git*/*" -x "terse/.claude/*"
+	cd .. && zip -r terse.zip terse -x "terse/.venv/*" -x "terse/.git*/*" -x "terse/.claude/*"
 
 uzit:
 	cd .. && unzip -o terse-refactored.zip

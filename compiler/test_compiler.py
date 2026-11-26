@@ -547,6 +547,28 @@ class TestIo(unittest.TestCase):
             rc, out, err = compile_and_run(src)
             self.assertIn("hello", out)
 
+    def test_io_dir_recursive(self):
+        with tempfile.TemporaryDirectory(prefix="terse_dir_") as d:
+            nested = os.path.join(d, "nested")
+            os.mkdir(nested)
+            with open(os.path.join(nested, "file.txt"), "w", encoding="utf-8") as f:
+                f.write("hello")
+            root = d.replace("\\", "/")
+            src = (
+                "use std.io\n"
+                "go {\n"
+                f'  val paths: [str] = io.dir("{root}")\n'
+                "  pr(len(paths))\n"
+                "}"
+            )
+            assert_result(self, src, "2")
+
+
+class TestProcess(unittest.TestCase):
+    def test_prc_exec_returns_output(self):
+        src = 'use std.prc\ngo pr(prc.exec("printf terse-prc-ok"))'
+        assert_result(self, src, "terse-prc-ok")
+
 
 class TestMaps(unittest.TestCase):
     def test_map_put_get(self):

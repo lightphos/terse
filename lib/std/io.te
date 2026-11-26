@@ -14,6 +14,7 @@
 //
 // File helpers:
 //   io.in(path) / io.out(path, text) / io.append(path, text)
+//   io.dir(path) recursively returns full paths for entries below path
 //
 // Sockets:
 //   Blocking (plain call):  io.listen / accept / connect / send / recv / close
@@ -61,4 +62,8 @@ pub fn out(path: str, text: str) -> long {
 
 pub fn append(path: str, text: str) -> long {
   ret 0
+}
+
+pub fn dir(path: str) -> [str] {
+  ret []
 }

@@ -1,0 +1,9 @@
+
+use std.prc
+use std.str
+
+
+go {
+   val s = prc.exec("ls -l")
+   pr(s)
+}
